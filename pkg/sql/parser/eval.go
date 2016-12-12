@@ -1372,6 +1372,7 @@ var CmpOps = map[ComparisonOperator]cmpOpOverload{
 		makeEvalTupleIn(TypeDecimal),
 		makeEvalTupleIn(TypeString),
 		makeEvalTupleIn(TypeCollatedString),
+		makeEvalTupleIn(TypeName),
 		makeEvalTupleIn(TypeBytes),
 		makeEvalTupleIn(TypeDate),
 		makeEvalTupleIn(TypeTimestamp),

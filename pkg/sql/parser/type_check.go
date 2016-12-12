@@ -788,32 +788,52 @@ func typeCheckComparisonOp(
 	rightTuple, rightIsTuple := foldedRight.(*Tuple)
 	switch {
 	case foldedOp == In && rightIsTuple:
+		var typedLeft TypedExpr
+		var typedRightExprs []TypedExpr
+		var leftType, rightType Type
+
+		// First try fully homogeneous typing. This is necessary to
+		// properly resolve the case where there is a placeholder on the
+		// left.
 		sameTypeExprs := make([]Expr, 0, len(rightTuple.Exprs)+1)
 		sameTypeExprs = append(sameTypeExprs, foldedLeft)
 		sameTypeExprs = append(sameTypeExprs, rightTuple.Exprs...)
-
 		typedSubExprs, retType, err := typeCheckSameTypedExprs(ctx, TypeAny, sameTypeExprs...)
+		if err == nil {
+			typedLeft = typedSubExprs[0]
+			leftType = retType
+			rightType = retType
+			typedRightExprs = typedSubExprs[1:]
+		} else if _, ok := err.(unexpectedTypeError); ok {
+			// The homogeneous typing failed. Try to type check the RHS first,
+			// and use the type of the values in the tuple to type check the LHS
+			// and find a comparison function.
+			typedLeft, err = foldedLeft.TypeCheck(ctx, TypeAny)
+			if err != nil {
+				return nil, nil, CmpOp{}, fmt.Errorf(unsupportedCompErrFmtWithExprs,
+					left, op, right, err)
+			}
+			leftType = typedLeft.ResolvedType()
+
+			typedRightExprs, rightType, err = typeCheckSameTypedExprs(ctx, leftType, rightTuple.Exprs...)
+		}
 		if err != nil {
 			return nil, nil, CmpOp{}, fmt.Errorf(unsupportedCompErrFmtWithExprs,
 				left, op, right, err)
 		}
 
-		fn, ok := ops.lookupImpl(retType, TypeTuple)
+		fn, ok := ops.lookupImpl(leftType, TypeTuple)
 		if !ok {
-			return nil, nil, CmpOp{}, fmt.Errorf(unsupportedCompErrFmtWithTypes, retType, op, TypeTuple)
+			return nil, nil, CmpOp{}, fmt.Errorf(unsupportedCompErrFmtWithTypes, leftType, op, TypeTuple)
 		}
 
-		typedLeft := typedSubExprs[0]
-		typedSubExprs = typedSubExprs[1:]
-
-		rightTuple.types = make(TTuple, len(typedSubExprs))
-		for i, typedExpr := range typedSubExprs {
+		rightTuple.types = make(TTuple, len(typedRightExprs))
+		for i, typedExpr := range typedRightExprs {
 			rightTuple.Exprs[i] = typedExpr
-			rightTuple.types[i] = retType
+			rightTuple.types[i] = rightType
 		}
-		if switched {
-			return rightTuple, typedLeft, fn, nil
-		}
+		// x IN ... with a tuple on the right cannot be switched by fold above,
+		// so we do not need to swap the operands here.
 		return typedLeft, rightTuple, fn, nil
 	case leftIsTuple && rightIsTuple:
 		fn, ok := ops.lookupImpl(TypeTuple, TypeTuple)
