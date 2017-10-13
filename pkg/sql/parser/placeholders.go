@@ -220,6 +220,7 @@ func (*placeholdersVisitor) VisitPost(expr Expr) Expr { return expr }
 // available value for a placeholder, it is left alone. A nil ctx makes
 // this a no-op and is supported for tests only.
 func replacePlaceholders(expr Expr, ctx *SemaContext) (Expr, error) {
+	return expr, nil
 	// We don't need to recurse through the input if there are no values to
 	// replace, since the walk above will do no work in that case. This happens
 	// during typechecking during the prepare phase. Missing placeholder values

@@ -88,18 +88,20 @@ func (p *planner) selectIndex(
 		return s, nil
 	}
 
+	evalCtx := &p.evalCtx
+
 	if s.filter == nil && analyzeOrdering == nil && s.specifiedIndex == nil {
 		// No where-clause, no ordering, and no specified index.
 		s.initOrdering(0)
 		var err error
-		s.spans, err = makeSpans(nil, s.desc, s.index)
+		s.spans, err = makeSpans(evalCtx, nil, s.desc, s.index)
 		if err != nil {
 			return nil, errors.Wrapf(err, "table ID = %d, index ID = %d", s.desc.ID, s.index.ID)
 		}
 		return s, nil
 	}
 
-	candidates := make([]*indexInfo, 0, len(s.desc.Indexes)+1)
+	candidates := s.indexCandidates[:0]
 	if s.specifiedIndex != nil {
 		// An explicit secondary index was requested. Only add it to the candidate
 		// indexes list.
@@ -163,7 +165,7 @@ func (p *planner) selectIndex(
 		// use.
 
 		for _, c := range candidates {
-			c.analyzeExprs(exprs)
+			c.analyzeExprs(&p.evalCtx, exprs)
 		}
 	}
 
@@ -192,7 +194,7 @@ func (p *planner) selectIndex(
 	for _, c := range candidates {
 		// Compute the prefix of the index for which we have exact constraints. This
 		// prefix is inconsequential for ordering because the values are identical.
-		c.exactPrefix = c.constraints.exactPrefix(&s.p.evalCtx)
+		c.exactPrefix = c.constraints.exactPrefix(evalCtx)
 		if analyzeOrdering != nil {
 			c.analyzeOrdering(ctx, s, analyzeOrdering, preferOrderMatching)
 		}
@@ -214,7 +216,7 @@ func (p *planner) selectIndex(
 	s.specifiedIndex = nil
 	s.isSecondaryIndex = (c.index != &s.desc.PrimaryIndex)
 	var err error
-	s.spans, err = makeSpans(c.constraints, c.desc, c.index)
+	s.spans, err = makeSpans(evalCtx, c.constraints, c.desc, c.index)
 	if err != nil {
 		return nil, errors.Wrapf(err, "constraints = %v, table ID = %d, index ID = %d",
 			c.constraints, s.desc.ID, s.index.ID)
@@ -224,21 +226,26 @@ func (p *planner) selectIndex(
 		return &zeroNode{}, nil
 	}
 
-	s.origFilter = s.filter
-	s.filter = applyIndexConstraints(&p.evalCtx, s.filter, c.constraints)
-	if s.filter != nil {
-		// Constraint propagation may have produced new constant sub-expressions.
-		// Propagate them and check if s.filter can be applied prematurely.
-		var err error
-		s.filter, err = p.evalCtx.NormalizeExpr(s.filter)
-		if err != nil {
-			return nil, err
-		}
-		if s.filter == parser.DBoolFalse {
-			return &zeroNode{}, nil
-		}
-		if s.filter == parser.DBoolTrue {
-			s.filter = nil
+	filter, changed := applyIndexConstraints(evalCtx, s.filter, c.constraints)
+	if changed {
+		newNode := scanNodePool.Get().(*scanNode)
+		*newNode = *s
+		newNode.filter = filter
+		s = newNode
+		if s.filter != nil {
+			// Constraint propagation may have produced new constant sub-expressions.
+			// Propagate them and check if s.filter can be applied prematurely.
+			var err error
+			s.filter, err = evalCtx.NormalizeExpr(s.filter)
+			if err != nil {
+				return nil, err
+			}
+			if s.filter == parser.DBoolFalse {
+				return &zeroNode{}, nil
+			}
+			if s.filter == parser.DBoolTrue {
+				s.filter = nil
+			}
 		}
 	}
 	s.filterVars.Rebind(s.filter, true, false)
@@ -368,8 +375,8 @@ func (v *indexInfo) init(s *scanNode) {
 
 // analyzeExprs examines the range map to determine the cost of using the
 // index.
-func (v *indexInfo) analyzeExprs(exprs []parser.TypedExprs) {
-	if err := v.makeOrConstraints(exprs); err != nil {
+func (v *indexInfo) analyzeExprs(ctx *parser.EvalContext, exprs []parser.TypedExprs) {
+	if err := v.makeOrConstraints(ctx, exprs); err != nil {
 		panic(err)
 	}
 
@@ -464,11 +471,11 @@ func getColVarIdx(expr parser.Expr) (ok bool, colIdx int) {
 // makeOrConstraints populates the indexInfo.constraints field based on the
 // analyzed expressions. Each element of constraints corresponds to one
 // of the top-level disjunctions and is generated using makeIndexConstraint.
-func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
+func (v *indexInfo) makeOrConstraints(ctx *parser.EvalContext, orExprs []parser.TypedExprs) error {
 	constraints := make(orIndexConstraints, len(orExprs))
 	for i, e := range orExprs {
 		var err error
-		constraints[i], err = v.makeIndexConstraints(e)
+		constraints[i], err = v.makeIndexConstraints(ctx, e)
 		if err != nil {
 			return err
 		}
@@ -481,6 +488,16 @@ func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
 
 	v.constraints = constraints
 	return nil
+}
+
+func getDatumOrPlaceholder(ctx *parser.EvalContext, expr parser.Expr) (parser.Datum, error) {
+	switch e := expr.(type) {
+	case parser.Datum:
+		return e.Eval(ctx)
+	case *parser.Placeholder:
+		return e.Eval(ctx)
+	}
+	return nil, nil
 }
 
 // makeIndexConstraints generates constraints for a set of conjunctions (AND
@@ -524,7 +541,7 @@ func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
 // 1", but if we performed this transform in simplifyComparisonExpr it would
 // simplify to "a < 1 OR a >= 2" which is also the same as "a != 1", but not so
 // obvious based on comparisons of the constants.
-func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConstraints, error) {
+func (v *indexInfo) makeIndexConstraints(ctx *parser.EvalContext, andExprs parser.TypedExprs) (indexConstraints, error) {
 	var constraints indexConstraints
 
 	trueStartDone := false
@@ -569,7 +586,10 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 					continue
 				}
 
-				if _, ok := c.Right.(parser.Datum); !ok {
+				right, err := getDatumOrPlaceholder(ctx, c.Right)
+				if err != nil {
+					return nil, err
+				} else if right == nil {
 					continue
 				}
 
@@ -680,13 +700,13 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 					if *startDone || (*startExpr != nil) {
 						continue
 					}
-					if c.Right.(parser.Datum).IsMax() {
+					if right.IsMax() {
 						*startExpr = parser.NewTypedComparisonExpr(
 							parser.EQ,
 							c.TypedLeft(),
 							c.TypedRight(),
 						)
-					} else if nextRightVal, hasNext := c.Right.(parser.Datum).Next(); hasNext {
+					} else if nextRightVal, hasNext := right.Next(); hasNext {
 						*startExpr = parser.NewTypedComparisonExpr(
 							parser.GE,
 							c.TypedLeft(),
@@ -700,13 +720,13 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 						continue
 					}
 					// Transform "<" into "<=".
-					if c.Right.(parser.Datum).IsMin() {
+					if right.IsMin() {
 						*endExpr = parser.NewTypedComparisonExpr(
 							parser.EQ,
 							c.TypedLeft(),
 							c.TypedRight(),
 						)
-					} else if prevRightVal, hasPrev := c.Right.(parser.Datum).Prev(); hasPrev {
+					} else if prevRightVal, hasPrev := right.Prev(); hasPrev {
 						*endExpr = parser.NewTypedComparisonExpr(
 							parser.LE,
 							c.TypedLeft(),
@@ -936,6 +956,7 @@ func encodeEndConstraintDescending(c *parser.ComparisonExpr) logicalKeyPart {
 //
 // Returns the exploded spans.
 func applyInConstraint(
+	evalCtx *parser.EvalContext,
 	spans []logicalSpan, c indexConstraint, firstCol int, index *sqlbase.IndexDescriptor,
 ) ([]logicalSpan, error) {
 	var e *parser.ComparisonExpr
@@ -963,8 +984,12 @@ func applyInConstraint(
 				if err != nil {
 					return nil, err
 				}
+				d, err := t.D[tupleIdx].Eval(evalCtx)
+				if err != nil {
+					return nil, err
+				}
 				parts = append(parts, logicalKeyPart{
-					val:       t.D[tupleIdx],
+					val:       d,
 					dir:       dir,
 					inclusive: true,
 				})
@@ -976,8 +1001,12 @@ func applyInConstraint(
 			if err != nil {
 				return nil, err
 			}
+			d, err := datum.Eval(evalCtx)
+			if err != nil {
+				return nil, err
+			}
 			parts = append(parts, logicalKeyPart{
-				val:       datum,
+				val:       d,
 				dir:       dir,
 				inclusive: true,
 			})
@@ -1020,6 +1049,7 @@ func (a spanEvents) Less(i, j int) bool {
 // merging the spans for the disjunctions (top-level OR branches). The resulting
 // spans are non-overlapping and ordered.
 func makeSpans(
+	evalCtx *parser.EvalContext,
 	constraints orIndexConstraints,
 	tableDesc *sqlbase.TableDescriptor,
 	index *sqlbase.IndexDescriptor,
@@ -1029,7 +1059,7 @@ func makeSpans(
 	}
 	var allLogicalSpans []logicalSpan
 	for _, c := range constraints {
-		s, err := makeLogicalSpansForIndexConstraints(c, tableDesc, index)
+		s, err := makeLogicalSpansForIndexConstraints(evalCtx, c, tableDesc, index)
 		if err != nil {
 			return nil, err
 		}
@@ -1227,6 +1257,7 @@ func mergeAndSortSpans(s roachpb.Spans) roachpb.Spans {
 // an instance of indexConstraints. The resulting spans are non-overlapping (by
 // virtue of the input constraints being disjunct).
 func makeLogicalSpansForIndexConstraints(
+	evalCtx *parser.EvalContext,
 	constraints indexConstraints, tableDesc *sqlbase.TableDescriptor, index *sqlbase.IndexDescriptor,
 ) ([]logicalSpan, error) {
 	// We have one constraint per column, so each contributes something
@@ -1242,7 +1273,7 @@ func makeLogicalSpansForIndexConstraints(
 		if (c.start != nil && c.start.Operator == parser.In) ||
 			(c.end != nil && c.end.Operator == parser.In) {
 			var err error
-			resultSpans, err = applyInConstraint(resultSpans, c, colIdx, index)
+			resultSpans, err = applyInConstraint(evalCtx, resultSpans, c, colIdx, index)
 			if err != nil {
 				return nil, err
 			}
@@ -1413,18 +1444,23 @@ func (oic orIndexConstraints) exactPrefix(evalCtx *parser.EvalContext) int {
 // Note that applyConstraints currently only handles simple cases.
 func applyIndexConstraints(
 	evalCtx *parser.EvalContext, typedExpr parser.TypedExpr, constraints orIndexConstraints,
-) parser.TypedExpr {
+) (parser.TypedExpr, bool) {
 	if len(constraints) != 1 {
 		// We only support simplifying the expressions if there aren't multiple
 		// disjunctions (top-level OR branches).
-		return typedExpr
+		return typedExpr, false
 	}
 	v := &applyConstraintsVisitor{evalCtx: evalCtx}
 	expr := typedExpr.(parser.Expr)
+	changed := false
 	for _, c := range constraints[0] {
 		// Apply the start constraint.
 		v.constraints = expandConstraint(v.constraints, c.start, c.tupleMap)
-		expr, _ = parser.WalkExpr(v, expr)
+		var walkChanged bool
+		expr, walkChanged = parser.WalkExpr(v, expr)
+		if walkChanged {
+			changed = true
+		}
 
 		if c.start != c.end {
 			// If there is a range (x >= 3 AND x <= 10), apply the
@@ -1451,9 +1487,9 @@ func applyIndexConstraints(
 		break
 	}
 	if expr == parser.DBoolTrue {
-		return nil
+		return nil, changed
 	}
-	return expr.(parser.TypedExpr)
+	return expr.(parser.TypedExpr), changed
 }
 
 // expandConstraint transforms a potentially complex constraint
@@ -1583,8 +1619,8 @@ func applyConstraint(
 
 	// applyConstraint() is only defined over comparisons that
 	// have a Datum on the right side.
-	datum, ok := t.Right.(parser.Datum)
-	if !ok {
+	datum, err := getDatumOrPlaceholder(evalCtx, t.Right)
+	if err != nil || datum == nil {
 		return t
 	}
 	cdatum := c.Right.(parser.Datum)

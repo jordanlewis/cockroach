@@ -327,6 +327,10 @@ func expandRenderNode(
 	params.desiredOrdering = translateOrdering(params.desiredOrdering, r)
 
 	var err error
+	newNode := &renderNode{}
+	*newNode = *r
+	r = newNode
+	r.ivarHelper.Reparent(r)
 	r.source.plan, err = doExpandPlan(ctx, p, params, r.source.plan)
 	if err != nil {
 		return r, err

@@ -559,7 +559,7 @@ func (e *Executor) Prepare(
 	if plan == nil {
 		return prepared, nil
 	}
-	defer plan.Close(session.Ctx())
+	//defer plan.Close(session.Ctx())
 	prepared.Columns = planColumns(plan)
 	for _, c := range prepared.Columns {
 		if err := checkResultType(c.Typ); err != nil {
@@ -567,6 +567,11 @@ func (e *Executor) Prepare(
 		}
 	}
 	prepared.Types = planner.semaCtx.Placeholders.Types
+	switch plan.(type) {
+	case *renderNode:
+		prepared.plan = plan
+		prepared.planner = planner
+	}
 	return prepared, nil
 }
 
@@ -679,6 +684,8 @@ func (e *Executor) execPrepared(
 	if stmt.Statement != nil {
 		stmts = StatementList{{
 			AST:           stmt.Statement,
+			Plan:          stmt.plan,
+			Planner:       stmt.planner,
 			ExpectedTypes: stmt.Columns,
 			AnonymizedStr: stmt.AnonymizedStr,
 		}}
@@ -1763,13 +1770,18 @@ func (e *Executor) execStmtInOpenTxn(
 		}
 		pinfo = newPInfo
 		stmt.AST = ps.Statement
+		stmt.Plan = ps.plan
+		stmt.Planner = ps.planner
 		stmt.ExpectedTypes = ps.Columns
 		stmt.AnonymizedStr = ps.AnonymizedStr
 	}
 
 	var p *planner
 	runInParallel := parallelize && !txnState.implicitTxn
-	if runInParallel {
+	if stmt.Plan != nil {
+		p = stmt.Planner
+		session.resetPlanner(p, e, txnState.mu.txn)
+	} else if runInParallel {
 		// Create a new planner from the Session to execute the statement, since
 		// we're executing in parallel.
 		p = session.newPlanner(e, txnState.mu.txn)
@@ -1782,6 +1794,7 @@ func (e *Executor) execStmtInOpenTxn(
 	p.evalCtx.SetTxnTimestamp(txnState.sqlTimestamp)
 	p.evalCtx.SetStmtTimestamp(e.cfg.Clock.PhysicalTime())
 	p.semaCtx.Placeholders.Assign(pinfo)
+	p.evalCtx.Placeholders = &p.semaCtx.Placeholders
 	p.avoidCachedDescriptors = avoidCachedDescriptors
 	p.phaseTimes[plannerStartExecStmt] = timeutil.Now()
 	p.stmt = &stmt
@@ -2135,14 +2148,20 @@ func (e *Executor) execStmt(
 	session := planner.session
 	ctx := session.Ctx()
 
+	var err error
+	var plan planNode
+	cachedPlan := stmt.Plan != nil
 	planner.phaseTimes[plannerStartLogicalPlan] = timeutil.Now()
-	plan, err := planner.makePlan(ctx, stmt)
+	if cachedPlan {
+		plan, err = planner.finishMakingPlan(ctx, stmt, stmt.Plan)
+	} else {
+		plan, err = planner.makePlan(ctx, stmt)
+		defer plan.Close(ctx)
+	}
 	planner.phaseTimes[plannerEndLogicalPlan] = timeutil.Now()
 	if err != nil {
 		return err
 	}
-
-	defer plan.Close(ctx)
 
 	err = initStatementResult(res, stmt, plan)
 	if err != nil {

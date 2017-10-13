@@ -387,6 +387,12 @@ func (d *DInt) Compare(ctx *EvalContext, other Datum) int {
 		v = *t
 	case *DFloat, *DDecimal:
 		return -t.Compare(ctx, d)
+	case *Placeholder:
+		oth, err := t.Eval(ctx)
+		if err != nil {
+			panic(err)
+		}
+		return oth.Compare(ctx, d)
 	default:
 		panic(makeUnsupportedComparisonMessage(d, other))
 	}
@@ -1924,15 +1930,24 @@ func (d *DInterval) Size() uintptr {
 // DTuple is the tuple Datum.
 type DTuple struct {
 	D Datums
+	typ TTuple
 
 	Sorted bool
+}
+
+func makeTupleType(d Datums) TTuple {
+	typ := make(TTuple, len(d))
+	for i, v := range d {
+		typ[i] = v.ResolvedType()
+	}
+	return typ
 }
 
 // NewDTuple creates a *DTuple with the provided datums. When creating a new
 // DTuple with Datums that are known to be sorted in ascending order, chain
 // this call with DTuple.SetSorted.
 func NewDTuple(d ...Datum) *DTuple {
-	return &DTuple{D: d}
+	return &DTuple{D: d, typ: makeTupleType(d)}
 }
 
 // NewDTupleWithLen creates a *DTuple with the provided length.
@@ -1961,11 +1976,10 @@ func AsDTuple(e Expr) (*DTuple, bool) {
 
 // ResolvedType implements the TypedExpr interface.
 func (d *DTuple) ResolvedType() Type {
-	typ := make(TTuple, len(d.D))
-	for i, v := range d.D {
-		typ[i] = v.ResolvedType()
+	if d.typ == nil {
+		d.typ = makeTupleType(d.D)
 	}
-	return typ
+	return d.typ
 }
 
 // Compare implements the Datum interface.

@@ -53,6 +53,9 @@ type PreparedStatement struct {
 	Columns     sqlbase.ResultColumns
 	portalNames map[string]struct{}
 
+	plan planNode
+	planner *planner
+
 	ProtocolMeta interface{} // a field for protocol implementations to hang metadata off of.
 
 	memAcc WrappableMemoryAccount
@@ -69,6 +72,8 @@ func (p *PreparedStatement) close(ctx context.Context, s *Session) {
 // Statement contains a statement with optional expected result columns and metadata.
 type Statement struct {
 	AST           parser.Statement
+	Plan          planNode
+	Planner       *planner
 	ExpectedTypes sqlbase.ResultColumns
 	AnonymizedStr string
 	queryID       uint128.Uint128

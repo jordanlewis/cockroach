@@ -164,6 +164,8 @@ func makeInternalPlanner(
 		p.evalCtx.SetStmtTimestamp(ts)
 	}
 
+	p.evalCtx.Placeholders = &p.semaCtx.Placeholders
+
 	return p
 }
 

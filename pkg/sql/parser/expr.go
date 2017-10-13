@@ -624,7 +624,7 @@ func (node DefaultVal) Format(buf *bytes.Buffer, f FmtFlags) {
 // ResolvedType implements the TypedExpr interface.
 func (DefaultVal) ResolvedType() Type { return nil }
 
-var _ VariableExpr = &Placeholder{}
+//var _ VariableExpr = &Placeholder{}
 
 // Placeholder represents a named placeholder.
 type Placeholder struct {
@@ -633,13 +633,53 @@ type Placeholder struct {
 	typeAnnotation
 }
 
+func (t *Placeholder) AmbiguousFormat() bool {
+	panic("implement me")
+}
+
+func (t *Placeholder) Compare(ctx *EvalContext, other Datum) int {
+	datum, err := t.Eval(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return datum.Compare(ctx, other)
+}
+
+func (t *Placeholder) Prev() (Datum, bool) {
+	panic("implement me")
+}
+
+func (t *Placeholder) IsMin() bool {
+	panic("implement me")
+}
+
+func (t *Placeholder) Next() (Datum, bool) {
+	panic("implement me")
+}
+
+func (t *Placeholder) IsMax() bool {
+	panic("implement me")
+}
+
+func (t *Placeholder) max() (Datum, bool) {
+	panic("implement me")
+}
+
+func (t *Placeholder) min() (Datum, bool) {
+	panic("implement me")
+}
+
+func (t *Placeholder) Size() uintptr {
+	panic("implement me")
+}
+
 // NewPlaceholder allocates a Placeholder.
 func NewPlaceholder(name string) *Placeholder {
 	return &Placeholder{Name: name}
 }
 
 // Variable implements the VariableExpr interface.
-func (*Placeholder) Variable() {}
+//func (*Placeholder) Variable() {}
 
 // Format implements the NodeFormatter interface.
 func (node *Placeholder) Format(buf *bytes.Buffer, f FmtFlags) {

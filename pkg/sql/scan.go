@@ -69,6 +69,8 @@ type scanNode struct {
 	// Map used to get the index for columns in cols.
 	colIdxMap map[sqlbase.ColumnID]int
 
+	indexCandidates []*indexInfo
+
 	spans            []roachpb.Span
 	isSecondaryIndex bool
 	reverse          bool
@@ -214,6 +216,8 @@ func (n *scanNode) initTable(
 			return err
 		}
 	}
+
+	n.indexCandidates = make([]*indexInfo, 0, len(desc.Indexes)+1)
 
 	n.noIndexJoin = (indexHints != nil && indexHints.NoIndexJoin)
 	return n.initDescDefaults(scanVisibility, wantedColumns)
