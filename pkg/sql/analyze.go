@@ -1615,8 +1615,13 @@ func remove(a parser.Datums, i int) parser.Datums {
 }
 
 func isDatum(e parser.TypedExpr) bool {
-	_, ok := e.(parser.Datum)
-	return ok
+	switch e.(type) {
+	case parser.Datum:
+		return true
+	case *parser.Placeholder:
+		return true
+	}
+	return false
 }
 
 // isVar returns true if the expression is an ivar or a tuple composed of

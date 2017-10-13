@@ -37,6 +37,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
+	"runtime/debug"
 )
 
 var (
@@ -1894,6 +1895,9 @@ type EvalContext struct {
 	// This must not be modified (this is shared from the session).
 	SearchPath SearchPath
 
+	// Placeholders relates placeholder names to their type and, later, value.
+	Placeholders *PlaceholderInfo
+
 	// CtxProvider holds the context in which the expression is evaluated. This
 	// will point to the session, which is itself a provider of contexts.
 	// NOTE: seems a bit lazy to hold a pointer to the session's context here,
@@ -3181,9 +3185,39 @@ func (t *DOidWrapper) Eval(_ *EvalContext) (Datum, error) {
 }
 
 // Eval implements the TypedExpr interface.
-func (node *Placeholder) Eval(_ *EvalContext) (Datum, error) {
-	return nil, pgerror.NewErrorf(
-		pgerror.CodeUndefinedParameterError, "no value provided for placeholder: $%s", node.Name)
+func (t *Placeholder) Eval(ctx *EvalContext) (Datum, error) {
+	//	return nil, pgerror.NewErrorf(
+	//		pgerror.CodeUndefinedParameterError, "no value provided for placeholder: $%s", node.Name)
+	if ctx.Placeholders == nil {
+		// It's prepareing
+		return t, nil
+	}
+	e, ok := ctx.Placeholders.Value(t.Name)
+	if !ok {
+		debug.PrintStack()
+		return nil, pgerror.NewErrorf(pgerror.CodeInternalError, "missing value for placeholder %s", t.Name)
+	}
+	// Placeholder expressions cannot contain other placeholders, so we do
+	// not need to recurse.
+	typ, typed := ctx.Placeholders.Type(t.Name, false)
+	if !typed {
+		// All placeholders should be typed at this point.
+		return nil, pgerror.NewErrorf(pgerror.CodeInternalError, "missing type for placeholder %s", t.Name)
+	}
+	if !e.ResolvedType().Equivalent(typ) {
+		// This happens when we overrode the placeholder's type during type
+		// checking, since the placeholder's type hint didn't match the desired
+		// type for the placeholder. In this case, we cast the expression to
+		// the desired type.
+		// TODO(jordan): introduce a restriction on what casts are allowed here.
+		colType, err := DatumTypeToColumnType(typ)
+		if err != nil {
+			return nil, err
+		}
+		cast := &CastExpr{Expr: e, Type: colType}
+		return cast.Eval(ctx)
+	}
+	return e.Eval(ctx)
 }
 
 // Eval implements the TypedExpr interface.

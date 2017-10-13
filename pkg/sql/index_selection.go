@@ -163,7 +163,7 @@ func (p *planner) selectIndex(
 		// use.
 
 		for _, c := range candidates {
-			c.analyzeExprs(exprs)
+			c.analyzeExprs(&p.evalCtx, exprs)
 		}
 	}
 
@@ -368,8 +368,8 @@ func (v *indexInfo) init(s *scanNode) {
 
 // analyzeExprs examines the range map to determine the cost of using the
 // index.
-func (v *indexInfo) analyzeExprs(exprs []parser.TypedExprs) {
-	if err := v.makeOrConstraints(exprs); err != nil {
+func (v *indexInfo) analyzeExprs(ctx *parser.EvalContext, exprs []parser.TypedExprs) {
+	if err := v.makeOrConstraints(ctx, exprs); err != nil {
 		panic(err)
 	}
 
@@ -464,11 +464,11 @@ func getColVarIdx(expr parser.Expr) (ok bool, colIdx int) {
 // makeOrConstraints populates the indexInfo.constraints field based on the
 // analyzed expressions. Each element of constraints corresponds to one
 // of the top-level disjunctions and is generated using makeIndexConstraint.
-func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
+func (v *indexInfo) makeOrConstraints(ctx *parser.EvalContext, orExprs []parser.TypedExprs) error {
 	constraints := make(orIndexConstraints, len(orExprs))
 	for i, e := range orExprs {
 		var err error
-		constraints[i], err = v.makeIndexConstraints(e)
+		constraints[i], err = v.makeIndexConstraints(ctx, e)
 		if err != nil {
 			return err
 		}
@@ -481,6 +481,16 @@ func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
 
 	v.constraints = constraints
 	return nil
+}
+
+func getDatumOrPlaceholder(ctx *parser.EvalContext, expr parser.Expr) (parser.Datum, error) {
+	switch e := expr.(type) {
+	case parser.Datum:
+		return e, nil
+	case *parser.Placeholder:
+		return e.Eval(ctx)
+	}
+	return nil, nil
 }
 
 // makeIndexConstraints generates constraints for a set of conjunctions (AND
@@ -524,7 +534,7 @@ func (v *indexInfo) makeOrConstraints(orExprs []parser.TypedExprs) error {
 // 1", but if we performed this transform in simplifyComparisonExpr it would
 // simplify to "a < 1 OR a >= 2" which is also the same as "a != 1", but not so
 // obvious based on comparisons of the constants.
-func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConstraints, error) {
+func (v *indexInfo) makeIndexConstraints(ctx *parser.EvalContext, andExprs parser.TypedExprs) (indexConstraints, error) {
 	var constraints indexConstraints
 
 	trueStartDone := false
@@ -569,7 +579,10 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 					continue
 				}
 
-				if _, ok := c.Right.(parser.Datum); !ok {
+				right, err := getDatumOrPlaceholder(ctx, c.Right)
+				if err != nil {
+					return nil, err
+				} else if right == nil {
 					continue
 				}
 
@@ -680,13 +693,13 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 					if *startDone || (*startExpr != nil) {
 						continue
 					}
-					if c.Right.(parser.Datum).IsMax() {
+					if right.IsMax() {
 						*startExpr = parser.NewTypedComparisonExpr(
 							parser.EQ,
 							c.TypedLeft(),
 							c.TypedRight(),
 						)
-					} else if nextRightVal, hasNext := c.Right.(parser.Datum).Next(); hasNext {
+					} else if nextRightVal, hasNext := right.Next(); hasNext {
 						*startExpr = parser.NewTypedComparisonExpr(
 							parser.GE,
 							c.TypedLeft(),
@@ -700,13 +713,13 @@ func (v *indexInfo) makeIndexConstraints(andExprs parser.TypedExprs) (indexConst
 						continue
 					}
 					// Transform "<" into "<=".
-					if c.Right.(parser.Datum).IsMin() {
+					if right.IsMin() {
 						*endExpr = parser.NewTypedComparisonExpr(
 							parser.EQ,
 							c.TypedLeft(),
 							c.TypedRight(),
 						)
-					} else if prevRightVal, hasPrev := c.Right.(parser.Datum).Prev(); hasPrev {
+					} else if prevRightVal, hasPrev := right.Prev(); hasPrev {
 						*endExpr = parser.NewTypedComparisonExpr(
 							parser.LE,
 							c.TypedLeft(),
@@ -1583,8 +1596,8 @@ func applyConstraint(
 
 	// applyConstraint() is only defined over comparisons that
 	// have a Datum on the right side.
-	datum, ok := t.Right.(parser.Datum)
-	if !ok {
+	datum, err := getDatumOrPlaceholder(evalCtx, t.Right)
+	if err != nil || datum == nil {
 		return t
 	}
 	cdatum := c.Right.(parser.Datum)
