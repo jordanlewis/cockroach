@@ -133,8 +133,16 @@ func (rf *RowFetcher) Init(
 	rf.isSecondaryIndex = isSecondaryIndex
 	rf.cols = cols
 	rf.returnRangeInfo = returnRangeInfo
-	rf.row = make([]EncDatum, len(rf.cols))
-	rf.decodedRow = make([]parser.Datum, len(rf.cols))
+	if cap(rf.row) >= len(rf.cols) {
+		rf.row = rf.row[:len(rf.cols)]
+	} else {
+		rf.row = make(EncDatumRow, len(rf.cols))
+	}
+	if cap(rf.decodedRow) >= len(rf.cols) {
+		rf.decodedRow = rf.decodedRow[:len(rf.cols)]
+	} else {
+		rf.decodedRow = make(parser.Datums, len(rf.cols))
+	}
 	rf.alloc = alloc
 
 	for i, v := range valNeededForCol {
