@@ -226,20 +226,26 @@ func (p *planner) selectIndex(
 		return &zeroNode{}, nil
 	}
 
-	s.filter = applyIndexConstraints(evalCtx, s.filter, c.constraints)
-	if s.filter != nil {
-		// Constraint propagation may have produced new constant sub-expressions.
-		// Propagate them and check if s.filter can be applied prematurely.
-		var err error
-		s.filter, err = evalCtx.NormalizeExpr(s.filter)
-		if err != nil {
-			return nil, err
-		}
-		if s.filter == parser.DBoolFalse {
-			return &zeroNode{}, nil
-		}
-		if s.filter == parser.DBoolTrue {
-			s.filter = nil
+	filter, changed := applyIndexConstraints(evalCtx, s.filter, c.constraints)
+	if changed {
+		newNode := scanNodePool.Get().(*scanNode)
+		*newNode = *s
+		newNode.filter = filter
+		s = newNode
+		if s.filter != nil {
+			// Constraint propagation may have produced new constant sub-expressions.
+			// Propagate them and check if s.filter can be applied prematurely.
+			var err error
+			s.filter, err = evalCtx.NormalizeExpr(s.filter)
+			if err != nil {
+				return nil, err
+			}
+			if s.filter == parser.DBoolFalse {
+				return &zeroNode{}, nil
+			}
+			if s.filter == parser.DBoolTrue {
+				s.filter = nil
+			}
 		}
 	}
 	s.filterVars.Rebind(s.filter, true, false)
@@ -1438,18 +1444,23 @@ func (oic orIndexConstraints) exactPrefix(evalCtx *parser.EvalContext) int {
 // Note that applyConstraints currently only handles simple cases.
 func applyIndexConstraints(
 	evalCtx *parser.EvalContext, typedExpr parser.TypedExpr, constraints orIndexConstraints,
-) parser.TypedExpr {
+) (parser.TypedExpr, bool) {
 	if len(constraints) != 1 {
 		// We only support simplifying the expressions if there aren't multiple
 		// disjunctions (top-level OR branches).
-		return typedExpr
+		return typedExpr, false
 	}
 	v := &applyConstraintsVisitor{evalCtx: evalCtx}
 	expr := typedExpr.(parser.Expr)
+	changed := false
 	for _, c := range constraints[0] {
 		// Apply the start constraint.
 		v.constraints = expandConstraint(v.constraints, c.start, c.tupleMap)
-		expr, _ = parser.WalkExpr(v, expr)
+		var walkChanged bool
+		expr, walkChanged = parser.WalkExpr(v, expr)
+		if walkChanged {
+			changed = true
+		}
 
 		if c.start != c.end {
 			// If there is a range (x >= 3 AND x <= 10), apply the
@@ -1476,9 +1487,9 @@ func applyIndexConstraints(
 		break
 	}
 	if expr == parser.DBoolTrue {
-		return nil
+		return nil, changed
 	}
-	return expr.(parser.TypedExpr)
+	return expr.(parser.TypedExpr), changed
 }
 
 // expandConstraint transforms a potentially complex constraint
