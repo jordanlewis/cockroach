@@ -387,6 +387,12 @@ func (d *DInt) Compare(ctx *EvalContext, other Datum) int {
 		v = *t
 	case *DFloat, *DDecimal:
 		return -t.Compare(ctx, d)
+	case *Placeholder:
+		oth, err := t.Eval(ctx)
+		if err != nil {
+			panic(err)
+		}
+		return oth.Compare(ctx, d)
 	default:
 		panic(makeUnsupportedComparisonMessage(d, other))
 	}

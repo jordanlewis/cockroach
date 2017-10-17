@@ -638,7 +638,11 @@ func (t *Placeholder) AmbiguousFormat() bool {
 }
 
 func (t *Placeholder) Compare(ctx *EvalContext, other Datum) int {
-	panic("implement me")
+	datum, err := t.Eval(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return datum.Compare(ctx, other)
 }
 
 func (t *Placeholder) Prev() (Datum, bool) {

@@ -28,6 +28,8 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 
+	"runtime/debug"
+
 	"github.com/cockroachdb/apd"
 	"github.com/cockroachdb/cockroach/pkg/internal/client"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -37,7 +39,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
-	"runtime/debug"
 )
 
 var (

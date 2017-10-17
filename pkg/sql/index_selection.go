@@ -88,11 +88,13 @@ func (p *planner) selectIndex(
 		return s, nil
 	}
 
+	evalCtx := &p.evalCtx
+
 	if s.filter == nil && analyzeOrdering == nil && s.specifiedIndex == nil {
 		// No where-clause, no ordering, and no specified index.
 		s.initOrdering(0)
 		var err error
-		s.spans, err = makeSpans(nil, s.desc, s.index)
+		s.spans, err = makeSpans(evalCtx, nil, s.desc, s.index)
 		if err != nil {
 			return nil, errors.Wrapf(err, "table ID = %d, index ID = %d", s.desc.ID, s.index.ID)
 		}
@@ -192,7 +194,7 @@ func (p *planner) selectIndex(
 	for _, c := range candidates {
 		// Compute the prefix of the index for which we have exact constraints. This
 		// prefix is inconsequential for ordering because the values are identical.
-		c.exactPrefix = c.constraints.exactPrefix(&s.p.evalCtx)
+		c.exactPrefix = c.constraints.exactPrefix(evalCtx)
 		if analyzeOrdering != nil {
 			c.analyzeOrdering(ctx, s, analyzeOrdering, preferOrderMatching)
 		}
@@ -214,7 +216,7 @@ func (p *planner) selectIndex(
 	s.specifiedIndex = nil
 	s.isSecondaryIndex = (c.index != &s.desc.PrimaryIndex)
 	var err error
-	s.spans, err = makeSpans(c.constraints, c.desc, c.index)
+	s.spans, err = makeSpans(evalCtx, c.constraints, c.desc, c.index)
 	if err != nil {
 		return nil, errors.Wrapf(err, "constraints = %v, table ID = %d, index ID = %d",
 			c.constraints, s.desc.ID, s.index.ID)
@@ -224,13 +226,12 @@ func (p *planner) selectIndex(
 		return &zeroNode{}, nil
 	}
 
-	s.origFilter = s.filter
-	s.filter = applyIndexConstraints(&p.evalCtx, s.filter, c.constraints)
+	s.filter = applyIndexConstraints(evalCtx, s.filter, c.constraints)
 	if s.filter != nil {
 		// Constraint propagation may have produced new constant sub-expressions.
 		// Propagate them and check if s.filter can be applied prematurely.
 		var err error
-		s.filter, err = p.evalCtx.NormalizeExpr(s.filter)
+		s.filter, err = evalCtx.NormalizeExpr(s.filter)
 		if err != nil {
 			return nil, err
 		}
@@ -486,7 +487,7 @@ func (v *indexInfo) makeOrConstraints(ctx *parser.EvalContext, orExprs []parser.
 func getDatumOrPlaceholder(ctx *parser.EvalContext, expr parser.Expr) (parser.Datum, error) {
 	switch e := expr.(type) {
 	case parser.Datum:
-		return e, nil
+		return e.Eval(ctx)
 	case *parser.Placeholder:
 		return e.Eval(ctx)
 	}
@@ -949,6 +950,7 @@ func encodeEndConstraintDescending(c *parser.ComparisonExpr) logicalKeyPart {
 //
 // Returns the exploded spans.
 func applyInConstraint(
+	evalCtx *parser.EvalContext,
 	spans []logicalSpan, c indexConstraint, firstCol int, index *sqlbase.IndexDescriptor,
 ) ([]logicalSpan, error) {
 	var e *parser.ComparisonExpr
@@ -976,8 +978,12 @@ func applyInConstraint(
 				if err != nil {
 					return nil, err
 				}
+				d, err := t.D[tupleIdx].Eval(evalCtx)
+				if err != nil {
+					return nil, err
+				}
 				parts = append(parts, logicalKeyPart{
-					val:       t.D[tupleIdx],
+					val:       d,
 					dir:       dir,
 					inclusive: true,
 				})
@@ -989,8 +995,12 @@ func applyInConstraint(
 			if err != nil {
 				return nil, err
 			}
+			d, err := datum.Eval(evalCtx)
+			if err != nil {
+				return nil, err
+			}
 			parts = append(parts, logicalKeyPart{
-				val:       datum,
+				val:       d,
 				dir:       dir,
 				inclusive: true,
 			})
@@ -1033,6 +1043,7 @@ func (a spanEvents) Less(i, j int) bool {
 // merging the spans for the disjunctions (top-level OR branches). The resulting
 // spans are non-overlapping and ordered.
 func makeSpans(
+	evalCtx *parser.EvalContext,
 	constraints orIndexConstraints,
 	tableDesc *sqlbase.TableDescriptor,
 	index *sqlbase.IndexDescriptor,
@@ -1042,7 +1053,7 @@ func makeSpans(
 	}
 	var allLogicalSpans []logicalSpan
 	for _, c := range constraints {
-		s, err := makeLogicalSpansForIndexConstraints(c, tableDesc, index)
+		s, err := makeLogicalSpansForIndexConstraints(evalCtx, c, tableDesc, index)
 		if err != nil {
 			return nil, err
 		}
@@ -1240,6 +1251,7 @@ func mergeAndSortSpans(s roachpb.Spans) roachpb.Spans {
 // an instance of indexConstraints. The resulting spans are non-overlapping (by
 // virtue of the input constraints being disjunct).
 func makeLogicalSpansForIndexConstraints(
+	evalCtx *parser.EvalContext,
 	constraints indexConstraints, tableDesc *sqlbase.TableDescriptor, index *sqlbase.IndexDescriptor,
 ) ([]logicalSpan, error) {
 	// We have one constraint per column, so each contributes something
@@ -1255,7 +1267,7 @@ func makeLogicalSpansForIndexConstraints(
 		if (c.start != nil && c.start.Operator == parser.In) ||
 			(c.end != nil && c.end.Operator == parser.In) {
 			var err error
-			resultSpans, err = applyInConstraint(resultSpans, c, colIdx, index)
+			resultSpans, err = applyInConstraint(evalCtx, resultSpans, c, colIdx, index)
 			if err != nil {
 				return nil, err
 			}
