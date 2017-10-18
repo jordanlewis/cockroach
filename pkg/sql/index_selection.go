@@ -101,7 +101,7 @@ func (p *planner) selectIndex(
 		return s, nil
 	}
 
-	candidates := make([]*indexInfo, 0, len(s.desc.Indexes)+1)
+	candidates := s.indexCandidates[:0]
 	if s.specifiedIndex != nil {
 		// An explicit secondary index was requested. Only add it to the candidate
 		// indexes list.
