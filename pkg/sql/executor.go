@@ -556,8 +556,11 @@ func (e *Executor) Prepare(
 		}
 	}
 	prepared.Types = planner.semaCtx.Placeholders.Types
-	prepared.plan = plan
-	prepared.planner = planner
+	switch plan.(type) {
+	case *renderNode:
+		prepared.plan = plan
+		prepared.planner = planner
+	}
 	return prepared, nil
 }
 
