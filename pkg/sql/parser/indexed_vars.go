@@ -227,6 +227,10 @@ func (h *IndexedVarHelper) Reset() {
 	h.vars = make([]IndexedVar, len(h.vars))
 }
 
+func (h *IndexedVarHelper) Reparent(container IndexedVarContainer) {
+	h.container = container
+}
+
 // Rebind collects all the IndexedVars in the given expression
 // and re-binds them to this helper.
 func (h *IndexedVarHelper) Rebind(expr TypedExpr, alsoReset, normalizeToNonNil bool) TypedExpr {
