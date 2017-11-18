@@ -798,6 +798,7 @@ func DecodeIndexKey(
 		return nil, false, err
 	}
 	if decodedTableID != desc.ID || decodedIndexID != index.ID {
+		fmt.Println("hodor")
 		return nil, false, nil
 	}
 

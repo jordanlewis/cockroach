@@ -17,6 +17,8 @@ package batcheval
 import (
 	"golang.org/x/net/context"
 
+	"fmt"
+
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage/batcheval/result"
 	"github.com/cockroachdb/cockroach/pkg/storage/engine"
@@ -33,8 +35,19 @@ func Scan(
 	h := cArgs.Header
 	reply := resp.(*roachpb.ScanResponse)
 
-	rows, resumeSpan, intents, err := engine.MVCCScan(ctx, batch, args.Key, args.EndKey,
-		cArgs.MaxKeys, h.Timestamp, h.ReadConsistency == roachpb.CONSISTENT, h.Txn)
+	var rows []roachpb.KeyValue
+	var prefix roachpb.Key
+	var resumeSpan *roachpb.Span
+	var intents []roachpb.Intent
+	var err error
+	if args.WantPrefix {
+		fmt.Println("Doing the prefix thing son")
+		rows, prefix, resumeSpan, intents, err = engine.MVCCScanWithPrefix(ctx, batch, args.Key, args.EndKey,
+			cArgs.MaxKeys, h.Timestamp, h.ReadConsistency == roachpb.CONSISTENT, h.Txn)
+	} else {
+		rows, resumeSpan, intents, err = engine.MVCCScan(ctx, batch, args.Key, args.EndKey,
+			cArgs.MaxKeys, h.Timestamp, h.ReadConsistency == roachpb.CONSISTENT, h.Txn)
+	}
 	if err != nil {
 		return result.Result{}, err
 	}
@@ -43,6 +56,9 @@ func Scan(
 	if resumeSpan != nil {
 		reply.ResumeSpan = resumeSpan
 		reply.ResumeReason = roachpb.RESUME_KEY_LIMIT
+	}
+	if len(prefix) != 0 {
+		reply.Prefix = prefix
 	}
 	reply.Rows = rows
 	if args.ReturnIntents {

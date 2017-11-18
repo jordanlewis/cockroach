@@ -298,6 +298,8 @@ message ScanRequest {
   // scan should also be returned. An error will be thrown if this is set to
   // true for a consistent scan.
   bool return_intents = 3;
+
+  bool want_prefix = 4;
 }
 
 // A ScanResponse is the return value from the Scan() method.
@@ -308,6 +310,7 @@ message ScanResponse {
   // Empty if return_intents was not set to true of if no intent rows were
   // scanned. These rows do not count against the MaxSpanRequestKeys count.
   repeated KeyValue intent_rows = 3 [(gogoproto.nullable) = false];
+  bytes prefix = 4 [(gogoproto.casttype) = "Key"];
 }
 
 // A ReverseScanRequest is the argument to the ReverseScan() method. It specifies the

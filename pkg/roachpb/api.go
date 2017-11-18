@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"bytes"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
@@ -189,6 +191,9 @@ func (rh *ResponseHeader) combine(otherRH ResponseHeader) error {
 func (sr *ScanResponse) combine(c combinable) error {
 	otherSR := c.(*ScanResponse)
 	if sr != nil {
+		if bytes.Equal(sr.Prefix, otherSR.Prefix) {
+			panic("Fail")
+		}
 		sr.Rows = append(sr.Rows, otherSR.Rows...)
 		sr.IntentRows = append(sr.IntentRows, otherSR.IntentRows...)
 		if err := sr.ResponseHeader.combine(otherSR.Header()); err != nil {

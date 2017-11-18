@@ -96,6 +96,7 @@ type txnKVFetcher struct {
 	batchIdx  int
 	responses []roachpb.ResponseUnion
 	kvs       []roachpb.KeyValue
+	prefix    roachpb.Key
 
 	// As the kvFetcher fetches batches of kvs, it accumulates information on the
 	// replicas where the batches came from. This info can be retrieved through
@@ -220,6 +221,7 @@ func (f *txnKVFetcher) fetch(ctx context.Context) error {
 		scans := make([]roachpb.ScanRequest, len(f.spans))
 		for i := range f.spans {
 			scans[i].Span = f.spans[i]
+			scans[i].WantPrefix = true
 			ba.Requests[i].MustSetInner(&scans[i])
 		}
 	}
@@ -284,7 +286,7 @@ func (f *txnKVFetcher) fetch(ctx context.Context) error {
 
 // nextKV returns the next key/value (initiating fetches as necessary). When
 // there are no more keys, returns false and an empty key/value.
-func (f *txnKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, error) {
+func (f *txnKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, roachpb.Key, error) {
 	var kv roachpb.KeyValue
 	for {
 		for len(f.kvs) == 0 && len(f.responses) > 0 {
@@ -293,6 +295,7 @@ func (f *txnKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, erro
 
 			switch t := reply.(type) {
 			case *roachpb.ScanResponse:
+				f.prefix = t.Prefix
 				f.kvs = t.Rows
 			case *roachpb.ReverseScanResponse:
 				f.kvs = t.Rows
@@ -302,13 +305,13 @@ func (f *txnKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, erro
 		if len(f.kvs) > 0 {
 			kv = f.kvs[0]
 			f.kvs = f.kvs[1:]
-			return true, kv, nil
+			return true, kv, f.prefix, nil
 		}
 		if f.fetchEnd {
-			return false, kv, nil
+			return false, kv, nil, nil
 		}
 		if err := f.fetch(ctx); err != nil {
-			return false, kv, err
+			return false, kv, nil, err
 		}
 	}
 }

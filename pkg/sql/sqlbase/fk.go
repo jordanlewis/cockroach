@@ -85,13 +85,13 @@ type spanKVFetcher struct {
 }
 
 // nextKV implements the kvFetcher interface.
-func (f *spanKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, error) {
+func (f *spanKVFetcher) nextKV(ctx context.Context) (bool, roachpb.KeyValue, roachpb.Key, error) {
 	if len(f.kvs) == 0 {
-		return false, roachpb.KeyValue{}, nil
+		return false, roachpb.KeyValue{}, nil, nil
 	}
 	kv := f.kvs[0]
 	f.kvs = f.kvs[1:]
-	return true, kv, nil
+	return true, kv, nil, nil
 }
 
 // getRangesInfo implements the kvFetcher interface.

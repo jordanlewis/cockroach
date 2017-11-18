@@ -36,7 +36,7 @@ import (
 const debugRowFetch = false
 
 type kvFetcher interface {
-	nextKV(ctx context.Context) (bool, roachpb.KeyValue, error)
+	nextKV(ctx context.Context) (bool, roachpb.KeyValue, roachpb.Key, error)
 	getRangesInfo() []roachpb.RangeInfo
 }
 
@@ -159,6 +159,7 @@ type MultiRowFetcher struct {
 	keyRestBuf    []byte     // buffer for the rest of the index key that is not part of the signature
 
 	// The current key/value, unless kvEnd is true.
+	prefix            roachpb.Key
 	kv                roachpb.KeyValue
 	keyRemainingBytes []byte
 	kvEnd             bool
@@ -331,7 +332,7 @@ func (mrf *MultiRowFetcher) StartScan(
 		// of more than one key. We take the maximum possible keys
 		// per row out of all the table rows we could potentially
 		// scan over.
-		firstBatchLimit = limitHint * int64(mrf.maxKeysPerRow)
+
 		// We need an extra key to make sure we form the last row.
 		firstBatchLimit++
 	}
@@ -359,7 +360,12 @@ func (mrf *MultiRowFetcher) NextKey(ctx context.Context) (rowDone bool, err erro
 	var ok bool
 
 	for {
-		ok, mrf.kv, err = mrf.kvFetcher.nextKV(ctx)
+		ok, mrf.kv, mrf.prefix, err = mrf.kvFetcher.nextKV(ctx)
+		plen := len(mrf.prefix)
+		if mrf.prefix != nil {
+		}
+		mrf.kv.Key = append(mrf.prefix, mrf.kv.Key...)
+		mrf.prefix = mrf.prefix[:plen]
 		if err != nil {
 			return false, err
 		}
@@ -414,7 +420,7 @@ func (mrf *MultiRowFetcher) NextKey(ctx context.Context) (rowDone bool, err erro
 		if mrf.indexKey != nil && (mrf.currentTable.isSecondaryIndex || !bytes.HasPrefix(mrf.kv.Key, mrf.indexKey) || mrf.rowReadyTable != mrf.currentTable) {
 			// The current key belongs to a new row. Output the
 			// current row.
-			mrf.indexKey = nil
+			mrf.indexKey = mrf.indexKey[:0]
 			return true, nil
 		}
 
@@ -513,9 +519,9 @@ func (mrf *MultiRowFetcher) processKV(
 
 	// Either this is the first key of the fetch or the first key of a new
 	// row.
-	if mrf.indexKey == nil {
+	if len(mrf.indexKey) == 0 {
 		// This is the first key for the row.
-		mrf.indexKey = []byte(kv.Key[:len(kv.Key)-len(mrf.keyRemainingBytes)])
+		mrf.indexKey = append(mrf.indexKey, kv.Key[:len(kv.Key)-len(mrf.keyRemainingBytes)]...)
 
 		// Reset the row to nil; it will get filled in with the column
 		// values as we decode the key-value pairs for the row.

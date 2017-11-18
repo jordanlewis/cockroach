@@ -1576,6 +1576,58 @@ func mvccScanInternal(
 	return res, resumeSpan, intents, nil
 }
 
+// mvccScanInternal scans the key range [key,endKey) up to some maximum number
+// of results. Specify reverse=true to scan in descending instead of ascending
+// order.
+func mvccScanInternalWithPrefix(
+	ctx context.Context,
+	engine Reader,
+	key,
+	endKey roachpb.Key,
+	max int64,
+	timestamp hlc.Timestamp,
+	consistent bool,
+	txn *roachpb.Transaction,
+	reverse bool,
+) ([]roachpb.KeyValue, roachpb.Key, *roachpb.Span, []roachpb.Intent, error) {
+	var res []roachpb.KeyValue
+	if max == 0 {
+		return nil, nil, &roachpb.Span{Key: key, EndKey: endKey}, nil, nil
+	}
+
+	l := len(key)
+	if len(endKey) < l {
+		l = len(endKey)
+	}
+
+	i := 0
+	for ; i < l && key[i] == endKey[i]; i++ {
+	}
+	prefix := key[:i]
+
+	var resumeSpan *roachpb.Span
+	intents, err := MVCCIterate(ctx, engine, key, endKey, timestamp, consistent, txn, reverse,
+		func(kv roachpb.KeyValue) (bool, error) {
+			if int64(len(res)) == max {
+				// Another key was found beyond the max limit.
+				if reverse {
+					resumeSpan = &roachpb.Span{Key: key, EndKey: kv.Key.Next()}
+				} else {
+					resumeSpan = &roachpb.Span{Key: kv.Key, EndKey: endKey}
+				}
+				return true, nil
+			}
+			kv.Key = kv.Key[i:]
+			res = append(res, kv)
+			return false, nil
+		})
+
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return res, prefix, resumeSpan, intents, nil
+}
+
 // MVCCScan scans the key range [key,endKey) key up to some maximum number of
 // results in ascending order. If it hits max, it returns a span to be used in
 // the next call to this function. Use MaxInt64 for not limit. If the limit is
@@ -1592,6 +1644,25 @@ func MVCCScan(
 	txn *roachpb.Transaction,
 ) ([]roachpb.KeyValue, *roachpb.Span, []roachpb.Intent, error) {
 	return mvccScanInternal(ctx, engine, key, endKey, max, timestamp,
+		consistent, txn, false /* reverse */)
+}
+
+// MVCCScan scans the key range [key,endKey) key up to some maximum number of
+// results in ascending order. If it hits max, it returns a span to be used in
+// the next call to this function. Use MaxInt64 for not limit. If the limit is
+// not hit, the returned span will be nil. Otherwise, it will be the sub-span of
+// [key,endKey) that has not been scanned.
+func MVCCScanWithPrefix(
+	ctx context.Context,
+	engine Reader,
+	key,
+	endKey roachpb.Key,
+	max int64,
+	timestamp hlc.Timestamp,
+	consistent bool,
+	txn *roachpb.Transaction,
+) ([]roachpb.KeyValue, roachpb.Key, *roachpb.Span, []roachpb.Intent, error) {
+	return mvccScanInternalWithPrefix(ctx, engine, key, endKey, max, timestamp,
 		consistent, txn, false /* reverse */)
 }
 
