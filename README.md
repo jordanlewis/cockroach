@@ -75,6 +75,8 @@ coop
 
 ## Need Help?
 
+znorp
+
 - [Troubleshooting documentation](https://www.cockroachlabs.com/docs/stable/troubleshooting-overview.html) -
   Learn how to troubleshoot common errors, cluster and node setup, and SQL query behavior,
   and how to use debug and error logs.
