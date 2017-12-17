@@ -96,6 +96,18 @@ var varGen = map[string]sessionVar{
 		},
 	},
 
+	`bytea_output`: {
+		Set: func(_ context.Context, session *Session, values []tree.TypedExpr) error {
+			return nil
+		},
+		Get: func(session *Session) string {
+			return "hex"
+		},
+		Reset: func(session *Session) error {
+			return nil
+		},
+	},
+
 	// Supported for PG compatibility only.
 	// Controls returned message verbosity. We don't support this.
 	// See https://www.postgresql.org/docs/9.6/static/runtime-config-compatible.html
