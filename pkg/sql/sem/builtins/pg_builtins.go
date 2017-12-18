@@ -19,6 +19,8 @@ import (
 
 	"github.com/lib/pq/oid"
 
+	"strings"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/types"
@@ -168,6 +170,49 @@ func makePGGetConstraintDef(argTypes tree.ArgTypes) tree.Builtin {
 				return nil, pgerror.NewErrorf(pgerror.CodeInvalidParameterValueError, "unknown constraint (OID=%s)", args[0])
 			}
 			return r[0], nil
+		},
+		Info: notUsableInfo,
+	}
+}
+
+// Make a hasDatabasePrivilege function.
+func makeHasDatabasePrivilege(argTypes tree.ArgTypes) tree.Builtin {
+	return tree.Builtin{
+		Types:            argTypes,
+		DistsqlBlacklist: true,
+		ReturnType:       tree.FixedReturnType(types.Bool),
+		Fn: func(ctx *tree.EvalContext, args tree.Datums) (tree.Datum, error) {
+			switch strings.ToUpper(args[1].String()) {
+			case "CREATE", "TEMPORARY", "TEMP":
+			default:
+				return nil, pgerror.NewErrorf(pgerror.CodeInvalidParameterValueError,
+					"unrecognized privilege type: %s", args[1])
+			}
+			return tree.DBoolTrue, nil
+		},
+		Info: notUsableInfo,
+	}
+}
+
+// Make a hasSchemaPrivilege function.
+func makeHasSchemaPrivilege(argTypes tree.ArgTypes) tree.Builtin {
+	return tree.Builtin{
+		Types:            argTypes,
+		DistsqlBlacklist: true,
+		ReturnType:       tree.FixedReturnType(types.Bool),
+		Fn: func(ctx *tree.EvalContext, args tree.Datums) (tree.Datum, error) {
+			switch strings.ToUpper(args[1].String()) {
+			case "CREATE":
+				return ctx.Planner
+				if descriptor.GetPrivileges().CheckPrivilege(user, privilege) {
+					return nil
+				}
+			case "USAGE":
+			default:
+				return nil, pgerror.NewErrorf(pgerror.CodeInvalidParameterValueError,
+					"unrecognized privilege type: %s", args[1])
+			}
+			return tree.DBoolTrue, nil
 		},
 		Info: notUsableInfo,
 	}
@@ -459,5 +504,13 @@ var pgBuiltins = map[string][]tree.Builtin{
 			},
 			Info: notUsableInfo,
 		},
+	},
+	"has_database_privilege": {
+		makeHasDatabasePrivilege(tree.ArgTypes{{"database", types.Name}, {"privilege", types.String}}),
+		makeHasDatabasePrivilege(tree.ArgTypes{{"database", types.Oid}, {"privilege", types.String}}),
+	},
+	"has_schema_privilege": {
+		makeHasSchemaPrivilege(tree.ArgTypes{{"schema", types.Name}, {"privilege", types.String}}),
+		makeHasSchemaPrivilege(tree.ArgTypes{{"schema", types.Oid}, {"privilege", types.String}}),
 	},
 }

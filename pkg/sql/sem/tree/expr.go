@@ -1034,17 +1034,9 @@ var funcTypeName = [...]string{
 
 // Format implements the NodeFormatter interface.
 func (node *FuncExpr) Format(buf *bytes.Buffer, f FmtFlags) {
-	var typ string
-	if node.Type != 0 {
-		typ = funcTypeName[node.Type] + " "
-	}
 	fmtDisableAnonymize := *f
 	fmtDisableAnonymize.anonymize = false
 	FormatNode(buf, &fmtDisableAnonymize, node.Func)
-	buf.WriteByte('(')
-	buf.WriteString(typ)
-	FormatNode(buf, f, node.Exprs)
-	buf.WriteByte(')')
 	if window := node.WindowDef; window != nil {
 		buf.WriteString(" OVER ")
 		if window.Name != "" {

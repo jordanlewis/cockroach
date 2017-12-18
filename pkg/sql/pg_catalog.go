@@ -633,7 +633,7 @@ CREATE TABLE pg_catalog.pg_database (
 				tree.MakeDBool(false),      // datistemplate
 				tree.MakeDBool(true),       // datallowconn
 				negOneVal,                  // datconnlimit
-				tree.DNull,                 // datlastsysoid
+				oidZero,                    // datlastsysoid
 				tree.DNull,                 // datfrozenxid
 				tree.DNull,                 // datminmxid
 				oidZero,                    // dattablespace

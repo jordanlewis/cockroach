@@ -93,7 +93,7 @@ func (ps PreparedStatements) Exists(name string) bool {
 func (ps PreparedStatements) NewFromString(
 	e *Executor, name, query string, placeholderHints tree.PlaceholderTypes,
 ) (*PreparedStatement, error) {
-	sessionEventf(ps.session, "parsing: %s", query)
+	sessionEventf(ps.session, "preparing: %s", query)
 
 	stmts, err := parser.Parse(query)
 	if err != nil {

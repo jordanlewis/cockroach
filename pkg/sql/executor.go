@@ -479,7 +479,6 @@ func (e *Executor) Prepare(
 	stmt Statement, stmtStr string, session *Session, placeholderHints tree.PlaceholderTypes,
 ) (res *PreparedStatement, err error) {
 	session.resetForBatch(e)
-	sessionEventf(session, "preparing: %s", stmtStr)
 
 	defer session.maybeRecover("preparing", stmtStr)
 
@@ -1192,7 +1191,6 @@ func runTxnAttempt(
 
 		if log.V(2) || logStatementsExecuteEnabled.Get(&e.cfg.Settings.SV) ||
 			log.HasSpanOrEvent(session.Ctx()) {
-			log.VEventf(session.Ctx(), 2, "executing %d/%d: %s", i+1, len(stmts), stmt)
 		}
 
 		// Create a StatementResult to receive the results of the statement that
