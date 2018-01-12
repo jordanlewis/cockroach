@@ -179,6 +179,8 @@ type MultiRowFetcher struct {
 	keySigBuf     []byte     // buffer for the index key's signature
 	keyRestBuf    []byte     // buffer for the rest of the index key that is not part of the signature
 
+	cachedKeyPrefix []byte // cached key prefix
+
 	// The current key/value, unless kvEnd is true.
 	kv                roachpb.KeyValue
 	keyRemainingBytes []byte
@@ -334,6 +336,7 @@ func (mrf *MultiRowFetcher) Init(
 		// updated every time NextKey is invoked and rowReadyTable
 		// will be updated when a row is fully decoded.
 		mrf.currentTable = &(mrf.tables[0])
+		mrf.cachedKeyPrefix = EncodeTableIDIndexID(nil, mrf.currentTable.desc.ID, mrf.currentTable.index.ID)
 		mrf.rowReadyTable = &(mrf.tables[0])
 	}
 
@@ -474,9 +477,8 @@ func (mrf *MultiRowFetcher) ReadIndexKey(key roachpb.Key) (remaining []byte, ok 
 	// If there is only one table to check keys for, there is no need
 	// to go through the equivalence signature checks.
 	if len(mrf.tables) == 1 {
-		return DecodeIndexKey(
-			mrf.currentTable.desc,
-			mrf.currentTable.index,
+		return DecodeIndexKeyWithExpectedPrefix(
+			mrf.cachedKeyPrefix,
 			mrf.currentTable.keyValTypes,
 			mrf.currentTable.keyVals,
 			mrf.currentTable.indexColumnDirs,

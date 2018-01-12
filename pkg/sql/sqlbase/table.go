@@ -23,6 +23,8 @@ import (
 
 	"github.com/pkg/errors"
 
+	"bytes"
+
 	"github.com/cockroachdb/apd"
 	"github.com/cockroachdb/cockroach/pkg/internal/client"
 	"github.com/cockroachdb/cockroach/pkg/keys"
@@ -675,6 +677,12 @@ func GetColumnTypes(desc *TableDescriptor, columnIDs []ColumnID) ([]ColumnType, 
 	return types, nil
 }
 
+func EncodeTableIDIndexID(key []byte, tableID ID, indexID IndexID) []byte {
+	key = encoding.EncodeUvarintAscending(key, uint64(tableID))
+	key = encoding.EncodeUvarintAscending(key, uint64(indexID))
+	return key
+}
+
 // DecodeTableIDIndexID decodes a table id followed by an index id.
 func DecodeTableIDIndexID(key []byte) ([]byte, ID, IndexID, error) {
 	var tableID uint64
@@ -691,6 +699,15 @@ func DecodeTableIDIndexID(key []byte) ([]byte, ID, IndexID, error) {
 	}
 
 	return key, ID(tableID), IndexID(indexID), nil
+}
+
+// DecodeTableIDIndexID decodes a table id followed by an index id.
+func SkipTableIDIndexIDIfMatching(key []byte, expected []byte) ([]byte, bool) {
+	if bytes.HasPrefix(key, expected) {
+		return key[len(expected):], true
+	}
+
+	return nil, false
 }
 
 // DecodeIndexKeyPrefix decodes the prefix of an index key and returns the
@@ -800,14 +817,24 @@ func DecodeIndexKey(
 		}
 	}
 
-	key, decodedTableID, decodedIndexID, err = DecodeTableIDIndexID(key)
-	if err != nil {
-		return nil, false, err
-	}
-	if decodedTableID != desc.ID || decodedIndexID != index.ID {
+	prefix := EncodeTableIDIndexID(nil, desc.ID, index.ID)
+	return DecodeIndexKeyWithExpectedPrefix(prefix, types, vals, colDirs, key)
+}
+
+func DecodeIndexKeyWithExpectedPrefix(
+	keyPrefix []byte,
+	types []ColumnType,
+	vals []EncDatum,
+	colDirs []encoding.Direction,
+	key []byte,
+) (remainingKey []byte, matches bool, _ error) {
+
+	key, ok := SkipTableIDIndexIDIfMatching(key, keyPrefix)
+	if !ok {
 		return nil, false, nil
 	}
 
+	var err error
 	key, err = DecodeKeyVals(types, vals, colDirs, key)
 	if err != nil {
 		return nil, false, err
