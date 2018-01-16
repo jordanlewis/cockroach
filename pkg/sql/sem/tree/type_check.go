@@ -1155,10 +1155,59 @@ func typeCheckSubqueryWithIn(left, right types.T) error {
 	return nil
 }
 
+func normifyFn(switched, not bool, cmpOp CmpOp) CmpOp {
+	if !switched && !not {
+		return cmpOp
+	}
+	fmt.Println(cmpOp, switched, not)
+	// Make a new function so we don't have to fold the cmp expr at runtime.
+	if switched && not {
+		return CmpOp{
+			LeftType:  cmpOp.RightType,
+			RightType: cmpOp.LeftType,
+			fn: func(c *EvalContext, l Datum, r Datum) (Datum, error) {
+				ret, err := cmpOp.fn(c, r, l)
+				if err != nil {
+					return nil, err
+				}
+				if b, ok := ret.(*DBool); ok {
+					return MakeDBool(*b != DBool(not)), nil
+				}
+				return ret, nil
+			},
+		}
+	} else if not {
+		fmt.Println("Hi! not.")
+		return CmpOp{
+			LeftType:  cmpOp.LeftType,
+			RightType: cmpOp.RightType,
+			fn: func(c *EvalContext, l Datum, r Datum) (Datum, error) {
+				ret, err := cmpOp.fn(c, l, r)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Println("Got ", ret)
+				if b, ok := ret.(*DBool); ok {
+					return MakeDBool(*b != DBool(not)), nil
+				}
+				return ret, nil
+			},
+		}
+	}
+	// else if switched
+	return CmpOp{
+		LeftType:  cmpOp.LeftType,
+		RightType: cmpOp.RightType,
+		fn: func(c *EvalContext, l Datum, r Datum) (Datum, error) {
+			return cmpOp.fn(c, r, l)
+		},
+	}
+}
+
 func typeCheckComparisonOp(
 	ctx *SemaContext, op ComparisonOperator, left, right Expr,
 ) (TypedExpr, TypedExpr, CmpOp, error) {
-	foldedOp, foldedLeft, foldedRight, switched, _ := foldComparisonExpr(op, left, right)
+	foldedOp, foldedLeft, foldedRight, switched, not := foldComparisonExpr(op, left, right)
 	ops := CmpOps[foldedOp]
 
 	_, leftIsTuple := foldedLeft.(*Tuple)
@@ -1182,6 +1231,7 @@ func typeCheckComparisonOp(
 			return nil, nil, CmpOp{},
 				pgerror.NewErrorf(pgerror.CodeInvalidParameterValueError, unsupportedCompErrFmt, sig)
 		}
+		fn = normifyFn(switched, not, fn)
 
 		typedLeft := typedSubExprs[0]
 		typedSubExprs = typedSubExprs[1:]
@@ -1207,6 +1257,7 @@ func typeCheckComparisonOp(
 		if err != nil {
 			return nil, nil, CmpOp{}, err
 		}
+		fn = normifyFn(switched, not, fn)
 		return typedLeft, typedRight, fn, nil
 	}
 
@@ -1256,7 +1307,7 @@ func typeCheckComparisonOp(
 				ambiguousCompErrFmt, sig).SetHintf(candidatesHintFmt, fnsStr)
 	}
 
-	return leftExpr, rightExpr, fns[0].(CmpOp), nil
+	return leftExpr, rightExpr, normifyFn(switched, not, fns[0].(CmpOp)), nil
 }
 
 type typeCheckExprsState struct {

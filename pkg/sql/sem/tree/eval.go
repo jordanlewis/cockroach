@@ -3020,15 +3020,8 @@ func (expr *ComparisonExpr) Eval(ctx *EvalContext) (Datum, error) {
 		return evalDatumsCmp(ctx, op, expr.SubOperator, expr.fn, left, datums)
 	}
 
-	_, newLeft, newRight, _, not := foldComparisonExpr(op, left, right)
-	d, err := expr.fn.fn(ctx, newLeft.(Datum), newRight.(Datum))
-	if err != nil {
-		return nil, err
-	}
-	if b, ok := d.(*DBool); ok {
-		return MakeDBool(*b != DBool(not)), nil
-	}
-	return d, nil
+	fmt.Println(expr.fn)
+	return expr.fn.fn(ctx, left, right)
 }
 
 // Eval implements the TypedExpr interface.
