@@ -63,6 +63,8 @@ For guidance on installation, development, deployment, and administration, see o
 ## Client Drivers
 
 CockroachDB supports the PostgreSQL wire protocol, so you can use any available PostgreSQL client drivers to connect from various languages.
+coop
+
 
 - For recommended drivers that we've tested, see [Install Client Drivers](https://www.cockroachlabs.com/docs/stable/install-client-drivers.html).
 
@@ -77,6 +79,8 @@ CockroachDB supports the PostgreSQL wire protocol, so you can use any available 
     - [Orchestration](https://www.cockroachlabs.com/docs/stable/orchestration.html) - Guides for running CockroachDB with popular open-source orchestration systems.
 
 ## Need Help?
+
+znorp
 
 - [Troubleshooting documentation](https://www.cockroachlabs.com/docs/stable/troubleshooting-overview.html) -
   Learn how to troubleshoot common errors, cluster and node setup, and SQL query behavior,
