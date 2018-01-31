@@ -2033,11 +2033,9 @@ func (r *rocksDBIterator) MVCCGet(
 		return nil, nil, emptyKeyError()
 	}
 
-	resultSlice := goToCSlice(make([]byte, int64(200+len(key))))
 	state := C.MVCCGet(
 		r.iter, goToCSlice(key), goToCTimestamp(timestamp),
-		goToCTxn(txn), C.bool(consistent), resultSlice,
-	)
+		goToCTxn(txn), C.bool(consistent))
 
 	if err := statusToError(state.status); err != nil {
 		return nil, nil, err
@@ -2058,7 +2056,7 @@ func (r *rocksDBIterator) MVCCGet(
 	}
 
 	// Extract the value from the batch data.
-	repr := cSliceToUnsafeGoBytes(state.data)
+	repr := copyFromSliceVector(state.data)
 	count, repr, err := mvccScanBatchDecodeHeader(repr)
 	if err != nil {
 		return nil, nil, err
@@ -2074,10 +2072,9 @@ func (r *rocksDBIterator) MVCCGet(
 		return nil, nil, err
 	}
 	value := &roachpb.Value{
-		RawBytes:  make([]byte, len(rawValue)),
+		RawBytes:  rawValue,
 		Timestamp: mvccKey.Timestamp,
 	}
-	copy(value.RawBytes, rawValue)
 	return value, intents, nil
 }
 
@@ -2095,18 +2092,10 @@ func (r *rocksDBIterator) MVCCScan(
 		return nil, nil, emptyKeyError()
 	}
 
-	if max > 10000 {
-		max = 10000
-	}
-	// Estimate how much memory we'll need.
-	// Assume that each key is the same size as the start key, and that
-	// each value is 32 bytes.
-	resultSlice := make([]byte, max*int64(32+len(start)))
 	state := C.MVCCScan(
 		r.iter, goToCSlice(start), goToCSlice(end),
 		goToCTimestamp(timestamp), C.int64_t(max),
 		goToCTxn(txn), C.bool(consistent), C.bool(reverse),
-		goToCSlice(resultSlice),
 	)
 
 	if err := statusToError(state.status); err != nil {
@@ -2116,9 +2105,25 @@ func (r *rocksDBIterator) MVCCScan(
 		return nil, nil, err
 	}
 
-	// state.data now points to our Go-allocated resultSlice, so it's safe to
-	// use that memory directly with cSliceToUnsafeGoBytes.
-	return cSliceToUnsafeGoBytes(state.data), cSliceToGoBytes(state.intents), nil
+	return copyFromSliceVector(state.data), cSliceToGoBytes(state.intents), nil
+}
+
+func copyFromSliceVector(s C.DBSliceVector) []byte {
+	neededBytes := 0
+	if s.bufs == nil {
+		return nil
+	}
+
+	// Interpret the C pointer as a pointer to a Go array, then slice.
+	slices := (*[1 << 20]C.DBSlice)(unsafe.Pointer(s.bufs))[:s.len:s.len]
+	for i := range slices {
+		neededBytes += int(slices[i].len)
+	}
+	data := make([]byte, 0, neededBytes)
+	for i := range slices {
+		data = append(data, cSliceToUnsafeGoBytes(slices[i])...)
+	}
+	return data
 }
 
 func cStatsToGoStats(stats C.MVCCStatsResult, nowNanos int64) (enginepb.MVCCStats, error) {

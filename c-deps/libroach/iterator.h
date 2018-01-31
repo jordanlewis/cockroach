@@ -37,6 +37,11 @@ class buffer {
     }
 
     void put(const char *data, int len, int nextSizeHint) {
+      printf("put: %d, %d\n", len, nextSizeHint);
+      for (int i = 0; i < len; i++) {
+          printf("%d ", data[i]);
+      }
+      printf("\n");
       DBSlice curBuf = bufs_.back();
       int expectedLen = len + bufPtr_ - curBuf.data;
       int remainder = expectedLen - curBuf.len;
@@ -49,6 +54,7 @@ class buffer {
         memcpy(bufPtr_, data, len - remainder);
         int newSize = curBuf.len << 1;
         for ( ; newSize < len + nextSizeHint; newSize = newSize << 1);
+        printf("resizing: %d\n", newSize);
 
         DBSlice newBuf;
         newBuf.data = new char[newSize];
@@ -75,9 +81,6 @@ class buffer {
       int putSize = ptr - buf;
       put(buf, putSize, value.size());
       put(value.data(), value.size(), 0);
-      keys_++;
-      // TODO(jordan) we can probably do this just once at the end.
-      memcpy(&initBuf_, &keys_, sizeof(keys_));
     }
 
     int Count() {
@@ -87,6 +90,9 @@ class buffer {
     void Put(const rocksdb::Slice& key, const rocksdb::Slice& value) {
       putLengthPrefixedSlice(key);
       putLengthPrefixedSlice(value);
+      keys_++;
+      // TODO(jordan) we can probably do this just once at the end.
+      memcpy(&initBuf_, &keys_, sizeof(keys_));
     }
 
   public:

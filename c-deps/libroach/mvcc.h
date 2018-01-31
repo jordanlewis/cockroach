@@ -148,6 +148,8 @@ template <bool reverse> class mvccScanner {
   const DBScanResults& fillResults() {
     if (results_.status.len == 0) {
       if (kvs_->Count() > 0) {
+        DBSlice &lastBuf = kvs_->bufs_.back();
+        lastBuf.len = kvs_->bufPtr_ - lastBuf.data;
         results_.data.bufs = &kvs_->bufs_.front();
         results_.data.len = kvs_->bufs_.size();
       }
