@@ -3037,8 +3037,14 @@ func (expr *ComparisonExpr) Eval(ctx *EvalContext) (Datum, error) {
 		return evalDatumsCmp(ctx, op, expr.SubOperator, expr.fn, left, datums)
 	}
 
-	_, newLeft, newRight, _, not := foldComparisonExpr(op, left, right)
-	d, err := expr.fn.fn(ctx, newLeft.(Datum), newRight.(Datum))
+	_, _, _, switched, not := foldComparisonExpr(op, left, right)
+	// We don't use the returned newLeft, newRight here because we already know
+	// that the inputs are Datum types. Casting the outputs back into Datums is
+	// expensive, unfortunately, so instead we do this little dance.
+	if switched {
+		left, right = right, left
+	}
+	d, err := expr.fn.fn(ctx, left, right)
 	if err != nil {
 		return nil, err
 	}
