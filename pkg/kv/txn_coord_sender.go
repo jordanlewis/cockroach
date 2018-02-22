@@ -35,6 +35,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/cockroach/pkg/util/tracing"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 )
 
@@ -359,12 +360,15 @@ func (tc *TxnCoordSender) Send(
 
 	// Start new or pick up active trace. From here on, there's always an active
 	// Trace, though its overhead is small unless it's sampled.
+	tracing.EnsureContext(ctx, tc.AmbientContext.Tracer, "")
 	sp := opentracing.SpanFromContext(ctx)
 	if sp == nil {
 		sp = tc.AmbientContext.Tracer.StartSpan(opTxnCoordSender)
-		defer sp.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, sp)
+	} else {
+		ctx, sp = tracing.ChildSpan(ctx, opTxnCoordSender)
 	}
+	defer sp.Finish()
 
 	startNS := tc.clock.PhysicalNow()
 
