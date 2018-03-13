@@ -22,7 +22,11 @@ import (
 	"github.com/lib/pq/oid"
 	"github.com/pkg/errors"
 
+	"bytes"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/coltypes"
+
+	"github.com/cockroachdb/cockroach/pkg/sql/lex"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/sql/privilege"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
@@ -616,6 +620,18 @@ FROM pg_catalog.pg_sequence WHERE seqrelid=$1`, args[0])
 			ReturnType: tree.FixedReturnType(types.String),
 			Fn: func(_ *tree.EvalContext, _ tree.Datums) (tree.Datum, error) {
 				return tree.DNull, nil
+			},
+			Info: notUsableInfo,
+		},
+	},
+	"quote_ident": {
+		tree.Builtin{
+			Types:      tree.ArgTypes{{"text", types.String}},
+			ReturnType: tree.FixedReturnType(types.String),
+			Fn: func(_ *tree.EvalContext, args tree.Datums) (tree.Datum, error) {
+				var buf bytes.Buffer
+				lex.EncodeUnrestrictedSQLIdent(&buf, string(tree.MustBeDString(args[0])), tree.FmtSimple.EncodeFlags())
+				return tree.NewDString(buf.String()), nil
 			},
 			Info: notUsableInfo,
 		},
