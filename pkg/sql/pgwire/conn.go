@@ -906,16 +906,20 @@ func (c *conn) bufferEmptyQueryResponse() {
 func writeErr(err error, msgBuilder *writeBuffer, w io.Writer) error {
 	msgBuilder.initMsg(pgwirebase.ServerMsgErrorResponse)
 
-	msgBuilder.putErrFieldMsg(pgwirebase.ServerErrFieldSeverity)
-	msgBuilder.writeTerminatedString("ERROR")
-
 	pgErr, ok := pgerror.GetPGCause(err)
 	var code string
+	severity := "ERROR"
 	if ok {
 		code = pgErr.Code
+		if pgErr.Severity != pgerror.Severity_UNKNOWN {
+			severity = pgErr.Severity.String()
+		}
 	} else {
 		code = pgerror.CodeInternalError
 	}
+
+	msgBuilder.putErrFieldMsg(pgwirebase.ServerErrFieldSeverity)
+	msgBuilder.writeTerminatedString(severity)
 
 	msgBuilder.putErrFieldMsg(pgwirebase.ServerErrFieldSQLState)
 	msgBuilder.writeTerminatedString(code)

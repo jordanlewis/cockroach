@@ -35,4 +35,20 @@ message Error {
 
   // "Internal query: the text of a failed internally-generated command."
   string internalCommand = 6;
+  Severity severity = 7;
 };
+
+// Severity represents the severity of an error.
+// See https://www.postgresql.org/docs/current/static/protocol-error-fields.html
+// for a list of all Postgres error severities.
+enum Severity {
+  UNKNOWN = 0;
+  DEBUG = 1;
+  LOG = 2;
+  INFO = 3;
+  NOTICE = 4;
+  WARNING = 5;
+  ERROR = 6;
+  FATAL = 7;
+  PANIC = 8;
+}

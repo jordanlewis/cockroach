@@ -76,8 +76,14 @@ var ClusterSecret = func() *settings.StringSetting {
 	return s
 }()
 
-var errNoTransactionInProgress = errors.New("there is no transaction in progress")
-var errTransactionInProgress = errors.New("there is already a transaction in progress")
+var errNoTransactionInProgress = pgerror.NewWarning(
+	pgerror.CodeNoActiveSQLTransactionError,
+	"there is no transaction in progress",
+)
+var errTransactionInProgress = pgerror.NewWarning(
+	pgerror.CodeActiveSQLTransactionError,
+	"there is already a transaction in progress",
+)
 
 const sqlTxnName string = "sql txn"
 const sqlImplicitTxnName string = "sql txn implicit"

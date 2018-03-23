@@ -876,16 +876,20 @@ func (c *v3Conn) sendError(err error) error {
 
 	c.writeBuf.initMsg(pgwirebase.ServerMsgErrorResponse)
 
-	c.writeBuf.putErrFieldMsg(pgwirebase.ServerErrFieldSeverity)
-	c.writeBuf.writeTerminatedString("ERROR")
-
 	pgErr, ok := pgerror.GetPGCause(err)
 	var code string
+	severity := "ERROR"
 	if ok {
 		code = pgErr.Code
+		if pgErr.Severity != pgerror.Severity_UNKNOWN {
+			severity = pgErr.Severity.String()
+		}
 	} else {
 		code = pgerror.CodeInternalError
 	}
+
+	c.writeBuf.putErrFieldMsg(pgwirebase.ServerErrFieldSeverity)
+	c.writeBuf.writeTerminatedString(severity)
 
 	c.writeBuf.putErrFieldMsg(pgwirebase.ServerErrFieldSQLState)
 	c.writeBuf.writeTerminatedString(code)

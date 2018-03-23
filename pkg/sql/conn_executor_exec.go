@@ -750,8 +750,10 @@ func (ex *connExecutor) execStmtInNoTxnState(
 				iso, pri, ex.readWriteModeWithSessionDefault(s.Modes.ReadWriteMode),
 				ex.server.cfg.Clock.PhysicalTime(),
 				ex.transitionCtx)
+	case *tree.RollbackTransaction:
+		return eventNoOp{}, nil
 	case *tree.CommitTransaction, *tree.ReleaseSavepoint,
-		*tree.RollbackTransaction, *tree.SetTransaction, *tree.Savepoint:
+		*tree.SetTransaction, *tree.Savepoint:
 		return ex.makeErrEvent(errNoTransactionInProgress, stmt.AST)
 	default:
 		mode := tree.ReadWrite

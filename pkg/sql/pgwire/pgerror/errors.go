@@ -28,20 +28,36 @@ func (pg *Error) Error() string {
 	return pg.Message
 }
 
+func internalErrorWithDepthf(depth int, code string, severity Severity, format string, args ...interface{}) *Error {
+	srcCtx := makeSrcCtx(depth + 2)
+	return &Error{
+		Message:  fmt.Sprintf(format, args...),
+		Code:     code,
+		Source:   &srcCtx,
+		Severity: severity,
+	}
+}
+
 // NewErrorWithDepthf creates an Error and extracts the context
 // information at the specified depth level.
 func NewErrorWithDepthf(depth int, code string, format string, args ...interface{}) *Error {
-	srcCtx := makeSrcCtx(depth + 1)
-	return &Error{
-		Message: fmt.Sprintf(format, args...),
-		Code:    code,
-		Source:  &srcCtx,
-	}
+	return internalErrorWithDepthf(depth, code, Severity_ERROR, format, args...)
+}
+
+// NewErrorWithDepthf creates an Error and extracts the context
+// information at the specified depth level.
+func NewWarningWithDepthf(depth int, code string, format string, args ...interface{}) *Error {
+	return internalErrorWithDepthf(depth, code, Severity_WARNING, format, args...)
 }
 
 // NewError creates an Error.
 func NewError(code string, msg string) *Error {
 	return NewErrorWithDepthf(1, code, "%s", msg)
+}
+
+// NewWarning creates an Warning
+func NewWarning(code string, msg string) *Error {
+	return NewWarningWithDepthf(1, code, "%s", msg)
 }
 
 // NewErrorWithDepth creates an Error with context extracted from the

@@ -139,6 +139,8 @@ type eventNonRetriableErr struct {
 	IsCommit Bool
 }
 
+type eventNoOp struct{}
+
 // eventNonRetriableErrPayload represents the payload for eventNonRetriableErr.
 type eventNonRetriableErrPayload struct {
 	// err is the error that caused the event.
@@ -190,6 +192,7 @@ func (eventTxnFinish) Event()       {}
 func (eventTxnRestart) Event()      {}
 func (eventNonRetriableErr) Event() {}
 func (eventRetriableErr) Event()    {}
+func (eventNoOp) Event()            {}
 func (eventTxnReleased) Event()     {}
 
 // TxnStateTransitions describe the transitions used by a connExecutor's
@@ -229,6 +232,15 @@ var TxnStateTransitions = Compile(Pattern{
 			Action: func(args Args) error {
 				ts := args.Extended.(*txnState2)
 				ts.setAdvanceInfo(skipBatch, noRewind, noEvent)
+				return nil
+			},
+		},
+		eventNoOp{}: {
+			Description: "ROLLBACK in no txn state",
+			Next:        stateNoTxn{},
+			Action: func(args Args) error {
+				ts := args.Extended.(*txnState2)
+				ts.setAdvanceInfo(advanceOne, noRewind, noEvent)
 				return nil
 			},
 		},
