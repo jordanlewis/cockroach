@@ -34,7 +34,7 @@ type distinct struct {
 	arena        stringarena.Arena
 	seen         map[string]struct{}
 	orderedCols  []uint32
-	distinctCols util.FastIntSet
+	distinctCols []uint32
 	memAcc       mon.BoundAccount
 	datumAlloc   sqlbase.DatumAlloc
 	scratch      []byte
@@ -63,7 +63,7 @@ func newDistinct(
 		return nil, errors.New("programming error: 0 distinct columns specified for distinct processor")
 	}
 
-	var distinctCols, orderedCols util.FastIntSet
+	var orderedCols util.FastIntSet
 	allSorted := true
 
 	for _, col := range spec.OrderedColumns {
@@ -73,13 +73,12 @@ func newDistinct(
 		if !orderedCols.Contains(int(col)) {
 			allSorted = false
 		}
-		distinctCols.Add(int(col))
 	}
 
 	d := &distinct{
 		input:        input,
 		orderedCols:  spec.OrderedColumns,
-		distinctCols: distinctCols,
+		distinctCols: spec.DistinctColumns,
 		memAcc:       flowCtx.EvalCtx.Mon.MakeBoundAccount(),
 		types:        input.OutputTypes(),
 	}
@@ -153,14 +152,13 @@ func (d *distinct) matchLastGroupKey(row sqlbase.EncDatumRow) (bool, error) {
 // our 'seen' set.
 func (d *distinct) encode(appendTo []byte, row sqlbase.EncDatumRow) ([]byte, error) {
 	var err error
-	for i, datum := range row {
-		// Ignore columns that are not in the distinctCols, as if we are
-		// post-processing to strip out column Y, we cannot include it as
-		// (X1, Y1) and (X1, Y2) will appear as distinct rows, but if we are
-		// stripping out Y, we do not want (X1) and (X1) to be in the results.
-		if !d.distinctCols.Contains(i) {
-			continue
-		}
+
+	// Ignore columns that are not in the distinctCols, as if we are
+	// post-processing to strip out column Y, we cannot include it as
+	// (X1, Y1) and (X1, Y2) will appear as distinct rows, but if we are
+	// stripping out Y, we do not want (X1) and (X1) to be in the results.
+	for _, i := range d.distinctCols {
+		datum := row[i]
 
 		// TODO(irfansharif): Different rows may come with different encodings,
 		// e.g. if they come from different streams that were merged, in which
