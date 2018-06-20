@@ -87,6 +87,10 @@ type ProcOutputHelper struct {
 	rowIdx uint64
 }
 
+func (h *ProcOutputHelper) Output() RowReceiver {
+	return h.output
+}
+
 // Init sets up a ProcOutputHelper. The types describe the internal schema of
 // the processor (as described for each processor core spec); they can be
 // omitted if there is no filtering expression.
@@ -910,6 +914,7 @@ func newProcessor(
 	post *PostProcessSpec,
 	inputs []RowSource,
 	outputs []RowReceiver,
+	localProcessors []RowSourcedProcessor,
 ) (Processor, error) {
 	if core.Noop != nil {
 		if err := checkNumInOut(inputs, outputs, 1, 1); err != nil {
@@ -1052,7 +1057,20 @@ func newProcessor(
 		}
 		return newProjectSetProcessor(flowCtx, processorID, core.ProjectSet, inputs[0], post, outputs[0])
 	}
+	if core.LocalPlanNode != nil {
+		if err := checkNumInOut(inputs, outputs, 0, 1); err != nil {
+			return nil, err
+		}
+		processor := localProcessors[*core.LocalPlanNode.RowSourceIdx]
+		processor.(InitableProcessor).InitWithOutput(post, outputs[0])
+		return processor, nil
+	}
 	return nil, errors.Errorf("unsupported processor core %s", core)
+}
+
+type InitableProcessor interface {
+	RowSourcedProcessor
+	InitWithOutput(post *PostProcessSpec, output RowReceiver)
 }
 
 // NewReadImportDataProcessor is externally implemented and registered by

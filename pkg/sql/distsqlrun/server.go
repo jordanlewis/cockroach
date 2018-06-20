@@ -17,9 +17,9 @@ package distsqlrun
 import (
 	"context"
 	"io"
-	time "time"
+	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
@@ -281,6 +281,7 @@ func (ds *ServerImpl) setupFlow(
 	parentMonitor *mon.BytesMonitor,
 	req *SetupFlowRequest,
 	syncFlowConsumer RowReceiver,
+	localState LocalState,
 ) (context.Context, *Flow, error) {
 	if !FlowVerIsCompatible(req.Version, MinAcceptedVersion, Version) {
 		err := errors.Errorf(
@@ -318,6 +319,7 @@ func (ds *ServerImpl) setupFlow(
 	monitor.Start(ctx, parentMonitor, mon.BoundAccount{})
 	acc := monitor.MakeBoundAccount()
 
+	txn := localState.Txn
 	if txn := req.DeprecatedTxn; txn != nil {
 		if req.TxnCoordMeta != nil {
 			return nil, nil, errors.Errorf("provided both Txn and TxnCoordMeta")
@@ -325,11 +327,12 @@ func (ds *ServerImpl) setupFlow(
 		meta := roachpb.MakeTxnCoordMeta(*txn)
 		req.TxnCoordMeta = &meta
 	}
-	var txn *client.Txn
 	if meta := req.TxnCoordMeta; meta != nil {
-		// The flow will run in a Txn that specifies child=true because we
-		// do not want each distributed Txn to heartbeat the transaction.
-		txn = client.NewTxnWithCoordMeta(ds.FlowDB, req.Flow.Gateway, client.LeafTxn, *meta)
+		if len(localState.LocalProcs) == 0 {
+			// The flow will run in a Txn that specifies child=true because we
+			// do not want each distributed Txn to heartbeat the transaction.
+			txn = client.NewTxnWithCoordMeta(ds.FlowDB, req.Flow.Gateway, client.LeafTxn, *meta)
+		}
 	}
 
 	location, err := timeutil.TimeZoneStringToLocation(req.EvalContext.Location)
@@ -364,6 +367,14 @@ func (ds *ServerImpl) setupFlow(
 	}
 	ie := ds.SessionBoundInternalExecutorFactory(ctx, sd)
 
+	evalPlanner := localState.EvalPlanner
+	sequence := localState.Sequence
+	if evalPlanner == nil {
+		evalPlanner = &dummyEvalPlanner{}
+	}
+	if sequence == nil {
+		sequence = &dummySequenceOperators{}
+	}
 	evalCtx := tree.EvalContext{
 		Settings:     ds.ServerConfig.Settings,
 		SessionData:  sd,
@@ -376,8 +387,8 @@ func (ds *ServerImpl) setupFlow(
 		// own context.
 		CtxProvider:      simpleCtxProvider{ctx: ctx},
 		Txn:              txn,
-		Planner:          &dummyEvalPlanner{},
-		Sequence:         &dummySequenceOperators{},
+		Planner:          evalPlanner,
+		Sequence:         sequence,
 		InternalExecutor: ie,
 	}
 	evalCtx.SetStmtTimestamp(timeutil.Unix(0 /* sec */, req.EvalContext.StmtTimestampNanos))
@@ -414,7 +425,7 @@ func (ds *ServerImpl) setupFlow(
 
 	ctx = flowCtx.AnnotateCtx(ctx)
 
-	f := newFlow(flowCtx, ds.flowRegistry, syncFlowConsumer)
+	f := newFlow(flowCtx, ds.flowRegistry, syncFlowConsumer, localState.LocalProcs)
 	flowCtx.AddLogTagStr("f", f.id.Short())
 	if err := f.setup(ctx, &req.Flow); err != nil {
 		log.Errorf(ctx, "error setting up flow: %s", err)
@@ -433,7 +444,26 @@ func (ds *ServerImpl) setupFlow(
 func (ds *ServerImpl) SetupSyncFlow(
 	ctx context.Context, parentMonitor *mon.BytesMonitor, req *SetupFlowRequest, output RowReceiver,
 ) (context.Context, *Flow, error) {
-	return ds.setupFlow(ds.AnnotateCtx(ctx), opentracing.SpanFromContext(ctx), parentMonitor, req, output)
+	return ds.setupFlow(ds.AnnotateCtx(ctx), opentracing.SpanFromContext(ctx), parentMonitor, req, output, LocalState{})
+}
+
+type LocalState struct {
+	LocalProcs  []RowSourcedProcessor
+	EvalPlanner tree.EvalPlanner
+	Sequence    tree.SequenceOperators
+	Txn         *client.Txn
+}
+
+// SetupSyncFlow sets up a synchronous flow, connecting the sync response
+// output stream to the given RowReceiver. The flow is not started. The flow
+// will be associated with the given context.
+// Note: the returned context contains a span that must be finished through
+// Flow.Cleanup.
+func (ds *ServerImpl) SetupSyncFlowWithLocalProcessors(
+	ctx context.Context, parentMonitor *mon.BytesMonitor, req *SetupFlowRequest, output RowReceiver,
+	localState LocalState,
+) (context.Context, *Flow, error) {
+	return ds.setupFlow(ds.AnnotateCtx(ctx), opentracing.SpanFromContext(ctx), parentMonitor, req, output, localState)
 }
 
 // RunSyncFlow is part of the DistSQLServer interface.
@@ -482,7 +512,7 @@ func (ds *ServerImpl) SetupFlow(
 	// Note: the passed context will be canceled when this RPC completes, so we
 	// can't associate it with the flow.
 	ctx = ds.AnnotateCtx(context.Background())
-	ctx, f, err := ds.setupFlow(ctx, parentSpan, &ds.memMonitor, req, nil /* syncFlowConsumer */)
+	ctx, f, err := ds.setupFlow(ctx, parentSpan, &ds.memMonitor, req, nil /* syncFlowConsumer */, LocalState{})
 	if err == nil {
 		err = ds.flowScheduler.ScheduleFlow(ctx, f)
 	}

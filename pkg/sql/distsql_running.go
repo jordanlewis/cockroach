@@ -18,7 +18,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 
 	"github.com/cockroachdb/cockroach/pkg/gossip"
@@ -221,7 +221,16 @@ func (dsp *DistSQLPlanner) Run(
 	// Set up the flow on this node.
 	localReq := setupReq
 	localReq.Flow = flows[thisNodeID]
-	ctx, flow, err := dsp.distSQLSrv.SetupSyncFlow(ctx, evalCtx.Mon, &localReq, recv)
+	var localState distsqlrun.LocalState
+	if len(plan.LocalProcessors) > 0 {
+		localState = distsqlrun.LocalState{
+			LocalProcs:  plan.LocalProcessors,
+			Txn:         txn,
+			EvalPlanner: planCtx.planner,
+			Sequence:    planCtx.planner,
+		}
+	}
+	ctx, flow, err := dsp.distSQLSrv.SetupSyncFlowWithLocalProcessors(ctx, evalCtx.Mon, &localReq, recv, localState)
 	if err != nil {
 		recv.SetError(err)
 		return
@@ -455,7 +464,7 @@ func (r *distSQLReceiver) Push(
 
 	if r.stmtType != tree.Rows {
 		// We only need the row count.
-		r.resultWriter.IncrementRowsAffected(1)
+		r.resultWriter.IncrementRowsAffected(int(tree.MustBeDInt(row[0].Datum)))
 		return r.status
 	}
 	if r.row == nil {
@@ -529,19 +538,24 @@ func (r *distSQLReceiver) updateCaches(ctx context.Context, ranges []roachpb.Ran
 // PlanAndRun generates a physical plan from a planNode tree and executes it. It
 // assumes that the tree is supported (see CheckSupport).
 //
-// All errors encoutered are reported to the distSQLReceiver's resultWriter.
-// Additionally, if the error is a "communication error" (an error encoutered
+// All errors encountered are reported to the distSQLReceiver's resultWriter.
+// Additionally, if the error is a "communication error" (an error encountered
 // while using that resultWriter), the error is also stored in
 // distSQLReceiver.commErr. That can be tested to see if a client session needs
 // to be closed.
 func (dsp *DistSQLPlanner) PlanAndRun(
 	ctx context.Context,
-	txn *client.Txn,
-	tree planNode,
+	p *planner,
 	recv *distSQLReceiver,
-	evalCtx *extendedEvalContext,
+	distribute bool,
 ) {
+	evalCtx := p.ExtendedEvalContext()
+	txn := p.txn
+	tree := p.curPlan.plan
 	planCtx := dsp.newPlanningCtx(ctx, evalCtx, txn)
+	planCtx.distribute = distribute
+	planCtx.planner = p
+	planCtx.stmtType = recv.stmtType
 
 	log.VEvent(ctx, 1, "creating DistSQL plan")
 

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
+	"golang.org/x/net/trace"
 )
 
 // TestLogic runs logic tests that were written by hand to test various
@@ -32,6 +33,7 @@ import (
 //
 // See the comments in logic.go for more details.
 func TestLogic(t *testing.T) {
+	trace.DebugUseAfterFinish = true
 	defer leaktest.AfterTest(t)()
 	RunLogicTest(t, "testdata/logic_test/[^.]*")
 }

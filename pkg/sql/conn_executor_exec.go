@@ -742,7 +742,16 @@ func (ex *connExecutor) dispatchToExecutionEngine(
 		res.SetError(err)
 		return nil
 	}
-	defer planner.curPlan.close(ctx)
+	// Don't need to close the plan anymore - the plan node to row source wrapper
+	// does that for us now.
+	// This isn't strictly correct - we need to close all of the nodes that
+	// weren't taken over by distsql.
+	needClose := true
+	defer func() {
+		if needClose {
+			planner.curPlan.close(ctx)
+		}
+	}()
 
 	var cols sqlbase.ResultColumns
 	if stmt.AST.StatementType() == tree.Rows {
@@ -794,9 +803,11 @@ func (ex *connExecutor) dispatchToExecutionEngine(
 	queryMeta.isDistributed = useDistSQL
 	ex.mu.Unlock()
 
-	if useDistSQL {
+	ex.sessionTracing.TraceExecStart(ctx, "distributed")
+	if len(planner.curPlan.subqueryPlans) == 0 {
+		needClose = false
 		ex.sessionTracing.TraceExecStart(ctx, "distributed")
-		err = ex.execWithDistSQLEngine(ctx, planner, stmt.AST.StatementType(), res)
+		err = ex.execWithDistSQLEngine(ctx, planner, stmt.AST.StatementType(), res, useDistSQL)
 	} else {
 		ex.sessionTracing.TraceExecStart(ctx, "local")
 		err = ex.execWithLocalEngine(ctx, planner, stmt.AST.StatementType(), res)
@@ -914,6 +925,7 @@ func (ex *connExecutor) execWithLocalEngine(
 // Query execution errors are written to res; they are not returned.
 func (ex *connExecutor) execWithDistSQLEngine(
 	ctx context.Context, planner *planner, stmtType tree.StatementType, res RestrictedCommandResult,
+	distribute bool,
 ) error {
 	recv := makeDistSQLReceiver(
 		ctx, res, stmtType,
@@ -924,9 +936,9 @@ func (ex *connExecutor) execWithDistSQLEngine(
 		},
 		&ex.sessionTracing,
 	)
-	ex.server.cfg.DistSQLPlanner.PlanAndRun(
-		ctx, planner.txn, planner.curPlan.plan, recv, planner.ExtendedEvalContext(),
-	)
+	// We pass in whether or not we wanted to distribute this plan, which tells
+	// the planner whether or not to plan remote table readers.
+	ex.server.cfg.DistSQLPlanner.PlanAndRun(ctx, planner, recv, distribute)
 	return recv.commErr
 }
 

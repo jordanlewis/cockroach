@@ -199,7 +199,7 @@ func (n *distinctNode) startExec(params runParams) error {
 
 	spec := createDistinctSpec(n, cols)
 
-	input, err := makePlanNodeToRowSource(n.plan, params)
+	input, err := makePlanNodeToRowSource(n.plan, params, false)
 	if err != nil {
 		return err
 	}

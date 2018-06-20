@@ -72,6 +72,9 @@ type PhysicalPlan struct {
 	// Processors in the plan.
 	Processors []Processor
 
+	LocalProcessors       []distsqlrun.RowSourcedProcessor
+	LocalProcessorIndexes []*uint32
+
 	// Streams accumulates the streams in the plan - both local (intra-node) and
 	// remote (inter-node); when we have a final plan, the streams are used to
 	// generate processor input and output specs (see PopulateEndpoints).
@@ -784,6 +787,13 @@ func MergePlans(
 		}
 	}
 	mergedPlan.stageCounter = left.stageCounter + right.stageCounter
+
+	mergedPlan.LocalProcessors = append(left.LocalProcessors, right.LocalProcessors...)
+	mergedPlan.LocalProcessorIndexes = append(left.LocalProcessorIndexes, right.LocalProcessorIndexes...)
+	// Update the local processor indices in the right streams.
+	for i := len(left.LocalProcessorIndexes); i < len(mergedPlan.LocalProcessorIndexes); i++ {
+		*mergedPlan.LocalProcessorIndexes[i] += uint32(len(left.LocalProcessorIndexes))
+	}
 
 	leftRouters = left.ResultRouters
 	rightRouters = append([]ProcessorIdx(nil), right.ResultRouters...)

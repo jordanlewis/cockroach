@@ -428,6 +428,9 @@ func (dsp *DistSQLPlanner) checkSupportForNode(node planNode) (distRecommendatio
 	case *projectSetNode:
 		return dsp.checkSupportForNode(n.source)
 
+	case *unaryNode:
+		return canDistribute, nil
+
 	case *zeroNode:
 		return canDistribute, nil
 
@@ -446,6 +449,11 @@ type planningCtx struct {
 	// physicalPlan we generate with this context.
 	// Nodes that fail a health check have empty addresses.
 	nodeAddresses map[roachpb.NodeID]string
+
+	distribute bool
+	planner    *planner
+	stmtType   tree.StatementType
+	firstNode  bool
 }
 
 func (p *planningCtx) EvalContext() *tree.EvalContext {
@@ -982,12 +990,13 @@ func (dsp *DistSQLPlanner) createTableReaders(
 	}
 
 	var spanPartitions []spanPartition
-	if n.hardLimit == 0 && n.softLimit == 0 {
+	if planCtx.distribute && n.hardLimit == 0 && n.softLimit == 0 {
 		spanPartitions, err = dsp.partitionSpans(planCtx, n.spans)
 		if err != nil {
 			return physicalPlan{}, err
 		}
 	} else {
+		// If we didn't have distribute on, just plan locally.
 		// If the scan is limited, use a single TableReader to avoid reading more
 		// rows than necessary. Note that distsql is currently only enabled for hard
 		// limits since the TableReader will still read too eagerly in the soft
@@ -2237,11 +2246,19 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 	case *projectSetNode:
 		plan, err = dsp.createPlanForProjectSet(planCtx, n)
 
+	case *unaryNode:
+		plan, err = dsp.createPlanForUnary(planCtx, n)
+
 	case *zeroNode:
 		plan, err = dsp.createPlanForZero(planCtx, n)
 
 	default:
-		panic(fmt.Sprintf("unsupported node type %T", n))
+		// Can't handle a node? We wrap it and continue on our way.
+		// TODO: this should only wrap the node itself, not all of its children as
+		// well. To deal with this the wrapper should use the planNode walker to
+		// retrieve all of the children of the current plan, and recurse with
+		// createPlanForNode on all of those children.
+		plan, err = dsp.wrapPlan(planCtx, n)
 	}
 
 	if dsp.shouldPlanTestMetadata() {
@@ -2262,7 +2279,72 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 		)
 	}
 
+	planCtx.firstNode = false
+
 	return plan, err
+}
+
+func (dsp *DistSQLPlanner) wrapPlan(planCtx *planningCtx, n planNode) (physicalPlan, error) {
+	var p physicalPlan
+	/*
+		seenTop := false
+		walkPlan(planCtx.ctx, n, planObserver{
+			replaceNode: func(ctx context.Context, nodeName string, plan *planNode) (bool, error) {
+				if !seenTop {
+					seenTop = true
+					return true, nil
+				}
+				wrapped, err := dsp.createPlanForNode(planCtx, *plan)
+				if err != nil {
+					return false, err
+				}
+				dsp.FinalizePlan(planCtx, &wrapped)
+				dsp.Run(planCtx, planCtx.planner.Txn(), wrapped, recv, evalCtx)
+				*plan = makegd
+				return false, nil
+			},
+		})
+	*/
+	wrapper, err := makePlanNodeToRowSource(n,
+		runParams{
+			extendedEvalCtx: planCtx.extendedEvalCtx,
+			p:               planCtx.planner,
+		}, planCtx.firstNode && planCtx.stmtType == tree.RowsAffected,
+	)
+	if err != nil {
+		return p, err
+	}
+	p.LocalProcessors = append(p.LocalProcessors, wrapper)
+	idx := uint32(len(p.LocalProcessors) - 1)
+	p.LocalProcessorIndexes = append(p.LocalProcessorIndexes, &idx)
+	planCols := planColumns(n)
+	types := make([]sqlbase.ColumnType, len(planCols))
+	for i, t := range planCols {
+		colTyp, err := sqlbase.DatumTypeToColumnType(t.Typ)
+		if err != nil {
+			return p, err
+		}
+		types[i] = colTyp
+	}
+	p.ResultTypes = types
+	p.ResultRouters = make([]distsqlplan.ProcessorIdx, 1)
+	proc := distsqlplan.Processor{
+		Node: dsp.nodeDesc.NodeID,
+		Spec: distsqlrun.ProcessorSpec{
+			Core: distsqlrun.ProcessorCoreUnion{LocalPlanNode: &distsqlrun.LocalPlanNodeSpec{
+				RowSourceIdx: &idx,
+			}},
+			Post: distsqlrun.PostProcessSpec{},
+			Output: []distsqlrun.OutputRouterSpec{{
+				Type: distsqlrun.OutputRouterSpec_PASS_THROUGH,
+			}},
+			StageID: p.NewStageID(),
+		},
+	}
+	pIdx := p.AddProcessor(proc)
+	p.ResultRouters[0] = pIdx
+	p.planToStreamColMap = identityMapInPlace(make([]int, len(planCols)))
+	return p, nil
 }
 
 // createValuesPlan creates a plan with a single Values processor
@@ -2309,7 +2391,6 @@ func (dsp *DistSQLPlanner) createPlanForValues(
 	params := runParams{
 		ctx:             planCtx.ctx,
 		extendedEvalCtx: planCtx.extendedEvalCtx,
-		p:               nil,
 	}
 
 	types, err := getTypesForPlanResult(n, nil /* planToStreamColMap */)
@@ -2345,6 +2426,17 @@ func (dsp *DistSQLPlanner) createPlanForValues(
 	}
 
 	return dsp.createValuesPlan(types, numRows, rawBytes)
+}
+
+func (dsp *DistSQLPlanner) createPlanForUnary(
+	planCtx *planningCtx, n *unaryNode,
+) (physicalPlan, error) {
+	types, err := getTypesForPlanResult(n, nil /* planToStreamColMap */)
+	if err != nil {
+		return physicalPlan{}, err
+	}
+
+	return dsp.createValuesPlan(types, 1 /* numRows */, nil /* rawBytes */)
 }
 
 func (dsp *DistSQLPlanner) createPlanForZero(
@@ -2784,6 +2876,7 @@ func (dsp *DistSQLPlanner) newPlanningCtx(
 		extendedEvalCtx: evalCtx,
 		spanIter:        dsp.spanResolver.NewSpanResolverIterator(txn),
 		nodeAddresses:   make(map[roachpb.NodeID]string),
+		firstNode:       true,
 	}
 	planCtx.nodeAddresses[dsp.nodeDesc.NodeID] = dsp.nodeDesc.Address.String()
 	return planCtx
