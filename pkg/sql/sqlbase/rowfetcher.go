@@ -465,7 +465,10 @@ func (rf *RowFetcher) nextKV(
 		var key engine.MVCCKey
 		var rawBytes []byte
 		var err error
+		newSpan = rf.maybeNewSpan
+		rf.maybeNewSpan = false
 		key, rawBytes, rf.batchResponse, err = engine.MVCCScanDecodeKeyValue(rf.batchResponse)
+		fmt.Println("Found key", key, rawBytes, err)
 		if err != nil {
 			return false, kv, false, err
 		}
@@ -474,11 +477,12 @@ func (rf *RowFetcher) nextKV(
 			Value: roachpb.Value{
 				RawBytes: rawBytes,
 			},
-		}, false, nil
+		}, newSpan, nil
 	}
 
 	var numKeys int64
 	ok, rf.kvs, rf.batchResponse, numKeys, rf.maybeNewSpan, err = rf.kvFetcher.nextBatch(ctx)
+	fmt.Println("Got new batch:", numKeys, rf.maybeNewSpan)
 	if rf.batchResponse != nil {
 		rf.batchNumKvs = numKeys
 	}
@@ -520,6 +524,7 @@ func (rf *RowFetcher) NextKey(ctx context.Context) (rowDone bool, err error) {
 		if err != nil {
 			return false, err
 		}
+		fmt.Println("rf", ok, rf.kv, maybeNewSpan)
 		rf.kvEnd = !ok
 		if rf.kvEnd {
 			// No more keys in the scan. We need to transition
@@ -1019,6 +1024,7 @@ func (rf *RowFetcher) NextRow(
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		fmt.Println("Row donw", rowDone)
 		if rowDone {
 			err := rf.finalizeRow()
 			return rf.rowReadyTable.row, rf.rowReadyTable.desc, rf.rowReadyTable.index, err
