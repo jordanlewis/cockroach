@@ -990,13 +990,15 @@ func (dsp *DistSQLPlanner) createTableReaders(
 	}
 
 	var spanPartitions []spanPartition
-	if planCtx.distribute && n.hardLimit == 0 && n.softLimit == 0 {
+	if !planCtx.distribute {
+		spanPartitions = []spanPartition{{dsp.nodeDesc.NodeID, n.spans}}
+	} else if n.hardLimit == 0 && n.softLimit == 0 {
+		// No limit - plan all table readers where their data live.
 		spanPartitions, err = dsp.partitionSpans(planCtx, n.spans)
 		if err != nil {
 			return physicalPlan{}, err
 		}
 	} else {
-		// If we didn't have distribute on, just plan locally.
 		// If the scan is limited, use a single TableReader to avoid reading more
 		// rows than necessary. Note that distsql is currently only enabled for hard
 		// limits since the TableReader will still read too eagerly in the soft

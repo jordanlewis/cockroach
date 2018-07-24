@@ -3088,6 +3088,10 @@ func (d *DOid) Format(ctx *FmtCtx) {
 		// roundtrippable. Since in this branch, a DOid is a thin wrapper around
 		// a DInt, I _think_ it's correct to just delegate to the DInt's Format.
 		d.DInt.Format(ctx)
+	} else if ctx.HasFlags(fmtDisambiguateDatumTypes) {
+		lex.EncodeSQLStringWithFlags(ctx.Buffer, fmt.Sprintf(`"%s"`, d.name), lex.EncNoFlags)
+		ctx.Buffer.WriteString("::")
+		ctx.Buffer.WriteString(d.semanticType.Name)
 	} else {
 		lex.EncodeSQLStringWithFlags(ctx.Buffer, d.name, lex.EncBareStrings)
 	}

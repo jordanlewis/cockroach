@@ -328,7 +328,7 @@ func (ds *ServerImpl) setupFlow(
 		req.TxnCoordMeta = &meta
 	}
 	if meta := req.TxnCoordMeta; meta != nil {
-		if len(localState.LocalProcs) == 0 {
+		if !localState.IsLocal {
 			// The flow will run in a Txn that specifies child=true because we
 			// do not want each distributed Txn to heartbeat the transaction.
 			txn = client.NewTxnWithCoordMeta(ds.FlowDB, req.Flow.Gateway, client.LeafTxn, *meta)
@@ -423,6 +423,7 @@ func (ds *ServerImpl) setupFlow(
 		JobRegistry:    ds.ServerConfig.JobRegistry,
 		traceKV:        req.TraceKV,
 	}
+	//fmt.Printf("Making a flow %p %T %t\n", sequence, sequence, localState.IsLocal)
 
 	ctx = flowCtx.AnnotateCtx(ctx)
 
@@ -449,6 +450,7 @@ func (ds *ServerImpl) SetupSyncFlow(
 }
 
 type LocalState struct {
+	IsLocal     bool
 	LocalProcs  []RowSourcedProcessor
 	EvalPlanner tree.EvalPlanner
 	Sequence    tree.SequenceOperators

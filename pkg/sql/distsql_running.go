@@ -222,8 +222,9 @@ func (dsp *DistSQLPlanner) Run(
 	localReq := setupReq
 	localReq.Flow = flows[thisNodeID]
 	var localState distsqlrun.LocalState
-	if len(plan.LocalProcessors) > 0 {
+	if !planCtx.distribute {
 		localState = distsqlrun.LocalState{
+			IsLocal:     true,
 			LocalProcs:  plan.LocalProcessors,
 			Txn:         txn,
 			EvalPlanner: planCtx.planner,
@@ -552,6 +553,7 @@ func (dsp *DistSQLPlanner) PlanAndRun(
 	evalCtx := p.ExtendedEvalContext()
 	txn := p.txn
 	tree := p.curPlan.plan
+	//fmt.Println("Plan and run:", p.stmt.String(), distribute)
 	planCtx := dsp.newPlanningCtx(ctx, evalCtx, txn)
 	planCtx.distribute = distribute
 	planCtx.planner = p
