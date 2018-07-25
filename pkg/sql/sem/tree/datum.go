@@ -3049,6 +3049,14 @@ func NewDOid(d DInt) *DOid {
 	return &oid
 }
 
+func NewDOidWithName(d DInt, typ *coltypes.TOid, name string) *DOid {
+	return &DOid{
+		DInt:         d,
+		semanticType: typ,
+		name:         name,
+	}
+}
+
 // AsRegProc changes the input DOid into a regproc with the given name and
 // returns it.
 func (d *DOid) AsRegProc(name string) *DOid {
@@ -3089,9 +3097,11 @@ func (d *DOid) Format(ctx *FmtCtx) {
 		// a DInt, I _think_ it's correct to just delegate to the DInt's Format.
 		d.DInt.Format(ctx)
 	} else if ctx.HasFlags(fmtDisambiguateDatumTypes) {
-		lex.EncodeSQLStringWithFlags(ctx.Buffer, fmt.Sprintf(`"%s"`, d.name), lex.EncNoFlags)
-		ctx.Buffer.WriteString("::")
-		ctx.Buffer.WriteString(d.semanticType.Name)
+		ctx.Buffer.WriteString("create_" + d.semanticType.Name + "(")
+		ctx.Buffer.WriteString(d.DInt.String())
+		ctx.Buffer.WriteString(`,'""`)
+		ctx.Buffer.WriteString(d.name)
+		ctx.Buffer.WriteString(`""')`)
 	} else {
 		lex.EncodeSQLStringWithFlags(ctx.Buffer, d.name, lex.EncBareStrings)
 	}
