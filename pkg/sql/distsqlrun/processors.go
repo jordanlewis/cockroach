@@ -194,6 +194,10 @@ func (h *ProcOutputHelper) neededColumns() (colIdxs util.FastIntSet) {
 	return colIdxs
 }
 
+func (h *ProcOutputHelper) OutputTypes() []sqlbase.ColumnType {
+	return h.outputTypes
+}
+
 // emitHelper is a utility wrapper on top of ProcOutputHelper.EmitRow().
 // It takes a row to emit and, if anything happens other than the normal
 // situation where the emitting succeeds and the consumer still needs rows, both

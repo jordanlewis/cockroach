@@ -71,7 +71,7 @@ func (p *planNodeToRowSource) InitWithOutput(post *distsqlrun.PostProcessSpec, o
 }
 
 func (p *planNodeToRowSource) OutputTypes() []sqlbase.ColumnType {
-	return p.outputTypes
+	return p.out.OutputTypes()
 }
 
 func (p *planNodeToRowSource) Start(ctx context.Context) context.Context {
@@ -136,7 +136,6 @@ func (p *planNodeToRowSource) Next() (sqlbase.EncDatumRow, *distsqlrun.ProducerM
 		}
 		if !ok {
 			p.internalClose()
-			return nil, nil
 		}
 		if outRow != nil {
 			return outRow, nil
