@@ -1969,7 +1969,11 @@ func (d *DTimestamp) Format(ctx *FmtCtx) {
 	if !bareStrings {
 		ctx.WriteByte('\'')
 	}
-	ctx.WriteString(d.UTC().Format(TimestampOutputFormat))
+	if f.HasFlags(FmtParsable) {
+		ctx.WriteString(d.Time.Format(TimestampOutputFormat))
+	} else {
+		ctx.WriteString(d.UTC().Format(TimestampOutputFormat))
+	}
 	if !bareStrings {
 		ctx.WriteByte('\'')
 	}
