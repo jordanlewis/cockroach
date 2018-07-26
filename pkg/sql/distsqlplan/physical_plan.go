@@ -633,16 +633,21 @@ func emptyPlan(types []sqlbase.ColumnType, node roachpb.NodeID) PhysicalPlan {
 // that is placed on the given node.
 //
 // For no limit, count should be MaxInt64.
-func (p *PhysicalPlan) AddLimit(count int64, offset int64, node roachpb.NodeID) error {
+func (p *PhysicalPlan) AddLimit(count int64, offset int64, evalCtx *tree.EvalContext, node roachpb.NodeID) error {
 	if count < 0 {
 		return errors.Errorf("negative limit")
 	}
 	if offset < 0 {
 		return errors.Errorf("negative offset")
 	}
+	limitZero := false
 	if count == 0 {
-		*p = emptyPlan(p.ResultTypes, node)
-		return nil
+		if len(p.LocalProcessors) == 0 {
+			*p = emptyPlan(p.ResultTypes, node)
+			return nil
+		}
+		count = 1
+		limitZero = true
 	}
 
 	if len(p.ResultRouters) == 1 {
@@ -657,15 +662,23 @@ func (p *PhysicalPlan) AddLimit(count int64, offset int64, node roachpb.NodeID) 
 				//   SELECT * FROM (SELECT * FROM .. LIMIT 5) OFFSET 10
 				// TODO(radu): perform this optimization while propagating filters
 				// instead of having to detect it here.
-				*p = emptyPlan(p.ResultTypes, node)
-				return nil
+				if len(p.LocalProcessors) == 0 {
+					*p = emptyPlan(p.ResultTypes, node)
+					return nil
+				}
+				count = 1
+				limitZero = true
 			}
 			post.Offset += uint64(offset)
 		}
+		fmt.Println("Count, limit", count, post.Limit)
 		if count != math.MaxInt64 && (post.Limit == 0 || post.Limit > uint64(count)) {
 			post.Limit = uint64(count)
 		}
 		p.SetLastStagePost(post, p.ResultTypes)
+		if limitZero {
+			p.AddFilter(tree.DBoolFalse, evalCtx, nil)
+		}
 		return nil
 	}
 
@@ -695,6 +708,9 @@ func (p *PhysicalPlan) AddLimit(count int64, offset int64, node roachpb.NodeID) 
 		post,
 		p.ResultTypes,
 	)
+	if limitZero {
+		p.AddFilter(tree.DBoolFalse, evalCtx, nil)
+	}
 	return nil
 }
 
