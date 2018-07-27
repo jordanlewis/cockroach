@@ -3103,9 +3103,9 @@ func (d *DOid) Format(ctx *FmtCtx) {
 	} else if ctx.HasFlags(fmtDisambiguateDatumTypes) {
 		ctx.Buffer.WriteString("create_" + d.semanticType.Name + "(")
 		ctx.Buffer.WriteString(d.DInt.String())
-		ctx.Buffer.WriteString(`,'""`)
+		ctx.Buffer.WriteString(`,'`)
 		ctx.Buffer.WriteString(d.name)
-		ctx.Buffer.WriteString(`""')`)
+		ctx.Buffer.WriteString(`')`)
 	} else {
 		lex.EncodeSQLStringWithFlags(ctx.Buffer, d.name, lex.EncBareStrings)
 	}
