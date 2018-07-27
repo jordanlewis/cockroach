@@ -2234,7 +2234,11 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 		plan, err = dsp.createPlanForSetOp(planCtx, n)
 
 	case *valuesNode:
-		plan, err = dsp.createPlanForValues(planCtx, n)
+		if !n.specifiedInQuery {
+			plan, err = dsp.wrapPlan(planCtx, n)
+		} else {
+			plan, err = dsp.createPlanForValues(planCtx, n)
+		}
 
 	case *createStatsNode:
 		plan, err = dsp.createPlanForCreateStats(planCtx, n)
