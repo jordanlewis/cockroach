@@ -2305,9 +2305,11 @@ func (dsp *DistSQLPlanner) wrapPlan(planCtx *planningCtx, n planNode) (physicalP
 			},
 		})
 	*/
+	// Copy the evalCtx.
+	evalCtx := *planCtx.extendedEvalCtx
 	wrapper, err := makePlanNodeToRowSource(n,
 		runParams{
-			extendedEvalCtx: planCtx.extendedEvalCtx,
+			extendedEvalCtx: &evalCtx,
 			p:               planCtx.planner,
 		}, planCtx.firstNode && planCtx.stmtType == tree.RowsAffected,
 	)
