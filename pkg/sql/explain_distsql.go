@@ -57,10 +57,7 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 	}
 
 	distSQLPlanner := params.extendedEvalCtx.DistSQLPlanner
-	auto, err := distSQLPlanner.CheckSupport(n.plan)
-	if err != nil {
-		return err
-	}
+	auto, _ := distSQLPlanner.CheckSupport(n.plan)
 
 	planCtx := distSQLPlanner.newPlanningCtx(params.ctx, params.extendedEvalCtx, params.p.txn)
 	curTol := distSQLPlanner.metadataTestTolerance
@@ -94,10 +91,7 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 			return nil
 		})
 		execCfg := params.p.ExecCfg()
-		// tree.RowsAffected is used as the statement type passed in to the distsql
-		// receiver because it isn't necessary to process any result rows from the
-		// wrapped plan.
-		const stmtType = tree.RowsAffected
+		const stmtType = tree.Rows
 		recv := makeDistSQLReceiver(
 			params.ctx,
 			rw,
