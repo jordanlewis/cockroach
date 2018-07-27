@@ -671,7 +671,6 @@ func (p *PhysicalPlan) AddLimit(count int64, offset int64, evalCtx *tree.EvalCon
 			}
 			post.Offset += uint64(offset)
 		}
-		fmt.Println("Count, limit", count, post.Limit)
 		if count != math.MaxInt64 && (post.Limit == 0 || post.Limit > uint64(count)) {
 			post.Limit = uint64(count)
 		}

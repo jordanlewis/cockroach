@@ -101,17 +101,31 @@ func (p *planNodeToRowSource) Next() (sqlbase.EncDatumRow, *distsqlrun.ProducerM
 		}
 
 		if p.fastPath {
+			var count int
 			// If our node is a "fast path node", it means that we're set up to just
 			// return a row count. So trigger the fast path and return the row count as
 			// a row with a single column.
 			if fastPath, ok := p.node.(planNodeFastPath); ok {
-				res, ok := fastPath.FastPathResults()
+				count, ok = fastPath.FastPathResults()
 				if !ok {
 					p.internalClose()
 					return nil, nil
 				}
-				return sqlbase.EncDatumRow{sqlbase.EncDatum{Datum: tree.NewDInt(tree.DInt(res))}}, nil
+			} else {
+				next, err := p.node.Next(p.params)
+				for ; next; next, err = p.node.Next(p.params) {
+					// If we're tracking memory, clear the previous row's memory account.
+					if p.params.extendedEvalCtx.ActiveMemAcc != nil {
+						p.params.extendedEvalCtx.ActiveMemAcc.Clear(p.ctx)
+					}
+					count++
+				}
+				if err != nil {
+					return nil, &distsqlrun.ProducerMetadata{Err: err}
+				}
 			}
+			p.internalClose()
+			return sqlbase.EncDatumRow{sqlbase.EncDatum{Datum: tree.NewDInt(tree.DInt(count))}}, nil
 		}
 	}
 

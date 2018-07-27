@@ -63,7 +63,11 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 	}
 
 	planCtx := distSQLPlanner.newPlanningCtx(params.ctx, params.extendedEvalCtx, params.p.txn)
-	plan, err := distSQLPlanner.createPlanForNode(&planCtx, n)
+	curTol := distSQLPlanner.metadataTestTolerance
+	distSQLPlanner.metadataTestTolerance = distsqlrun.On
+	defer func() { distSQLPlanner.metadataTestTolerance = curTol }()
+
+	plan, err := distSQLPlanner.createPlanForNode(&planCtx, n.plan)
 	if err != nil {
 		return err
 	}

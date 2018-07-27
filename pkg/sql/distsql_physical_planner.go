@@ -2167,12 +2167,6 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 	planCtx *planningCtx, node planNode,
 ) (plan physicalPlan, err error) {
 	switch n := node.(type) {
-	case *explainDistSQLNode:
-		curTol := dsp.metadataTestTolerance
-		dsp.metadataTestTolerance = distsqlrun.On
-		defer func() { dsp.metadataTestTolerance = curTol }()
-		plan, err = dsp.createPlanForNode(planCtx, n.plan)
-
 	case *scanNode:
 		plan, err = dsp.createTableReaders(planCtx, n, nil)
 
