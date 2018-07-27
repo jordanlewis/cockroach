@@ -22,6 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/distsqlrun"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlbase"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 type planNodeToRowSource struct {
@@ -110,6 +111,9 @@ func (p *planNodeToRowSource) Next() (sqlbase.EncDatumRow, *distsqlrun.ProducerM
 				if !ok {
 					p.internalClose()
 					return nil, nil
+				}
+				if p.params.extendedEvalCtx.Tracing.Enabled() {
+					log.VEvent(p.ctx, 2, "fast path completed")
 				}
 			} else {
 				next, err := p.node.Next(p.params)
