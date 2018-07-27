@@ -2875,6 +2875,7 @@ func (dsp *DistSQLPlanner) newPlanningCtx(
 		spanIter:        dsp.spanResolver.NewSpanResolverIterator(txn),
 		nodeAddresses:   make(map[roachpb.NodeID]string),
 		firstNode:       true,
+		distribute:      true,
 	}
 	planCtx.nodeAddresses[dsp.nodeDesc.NodeID] = dsp.nodeDesc.Address.String()
 	return planCtx
