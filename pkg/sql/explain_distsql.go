@@ -86,6 +86,8 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 			return err
 		}
 
+		planCtx.ctx = params.extendedEvalCtx.Tracing.ex.ctxHolder.ctx()
+
 		// Discard rows that are returned.
 		rw := newCallbackResultWriter(func(ctx context.Context, row tree.Datums) error {
 			return nil
@@ -93,7 +95,7 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 		execCfg := params.p.ExecCfg()
 		const stmtType = tree.Rows
 		recv := makeDistSQLReceiver(
-			params.ctx,
+			planCtx.ctx,
 			rw,
 			stmtType,
 			execCfg.RangeDescriptorCache,
@@ -102,9 +104,9 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 			func(ts hlc.Timestamp) {
 				_ = execCfg.Clock.Update(ts)
 			},
-			params.p.ExtendedEvalContext().Tracing,
+			params.extendedEvalCtx.Tracing,
 		)
-		distSQLPlanner.Run(&planCtx, params.p.txn, &plan, recv, params.p.ExtendedEvalContext())
+		distSQLPlanner.Run(&planCtx, params.p.txn, &plan, recv, params.extendedEvalCtx)
 
 		spans = params.extendedEvalCtx.Tracing.getRecording()
 		if err := params.extendedEvalCtx.Tracing.StopTracing(); err != nil {
