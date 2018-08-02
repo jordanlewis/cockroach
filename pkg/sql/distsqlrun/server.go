@@ -44,7 +44,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/cockroach/pkg/util/tracing"
 )
 
 // DistSQLVersion identifies DistSQL engine versions.
@@ -297,15 +296,17 @@ func (ds *ServerImpl) setupFlow(
 		return nil, nil, errors.Errorf("setupFlow called before the NodeID was resolved")
 	}
 
-	const opName = "flow"
-	var sp opentracing.Span
-	if parentSpan == nil {
-		sp = ds.Tracer.StartSpan(opName)
-	} else {
-		// We use FollowsFrom because the flow's span outlives the SetupFlow request.
-		sp = ds.Tracer.StartSpan(opName, opentracing.FollowsFrom(parentSpan.Context()))
-	}
-	ctx = opentracing.ContextWithSpan(ctx, sp)
+	/*
+		const opName = "flow"
+		var sp opentracing.Span
+		if parentSpan == nil {
+			sp = ds.Tracer.StartSpan(opName)
+		} else {
+			// We use FollowsFrom because the flow's span outlives the SetupFlow request.
+			sp = ds.Tracer.StartSpan(opName, opentracing.FollowsFrom(parentSpan.Context()))
+		}
+		ctx = opentracing.ContextWithSpan(ctx, sp)
+	*/
 
 	// The monitor and account opened here are closed in Flow.Cleanup().
 	monitor := mon.MakeMonitor(
@@ -345,7 +346,7 @@ func (ds *ServerImpl) setupFlow(
 	} else {
 		location, err := timeutil.TimeZoneStringToLocation(req.EvalContext.Location)
 		if err != nil {
-			tracing.FinishSpan(sp)
+			//tracing.FinishSpan(sp)
 			return ctx, nil, err
 		}
 
@@ -432,8 +433,8 @@ func (ds *ServerImpl) setupFlow(
 	f := newFlow(flowCtx, ds.flowRegistry, syncFlowConsumer, localState.LocalProcs)
 	if err := f.setup(ctx, &req.Flow); err != nil {
 		log.Errorf(ctx, "error setting up flow: %s", err)
-		tracing.FinishSpan(sp)
-		ctx = opentracing.ContextWithSpan(ctx, nil)
+		//tracing.FinishSpan(sp)
+		//ctx = opentracing.ContextWithSpan(ctx, nil)
 		return ctx, nil, err
 	}
 	if !f.isLocal() {
