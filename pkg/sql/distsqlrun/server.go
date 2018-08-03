@@ -283,14 +283,6 @@ func (ds *ServerImpl) setupFlow(
 	syncFlowConsumer RowReceiver,
 	localState LocalState,
 ) (context.Context, *Flow, error) {
-	if !FlowVerIsCompatible(req.Version, MinAcceptedVersion, Version) {
-		err := errors.Errorf(
-			"version mismatch in flow request: %d; this node accepts %d through %d",
-			req.Version, MinAcceptedVersion, Version,
-		)
-		log.Warning(ctx, err)
-		return ctx, nil, err
-	}
 	nodeID := ds.ServerConfig.NodeID.Get()
 	if nodeID == 0 {
 		return nil, nil, errors.Errorf("setupFlow called before the NodeID was resolved")
@@ -452,7 +444,26 @@ func (ds *ServerImpl) setupFlow(
 func (ds *ServerImpl) SetupSyncFlow(
 	ctx context.Context, parentMonitor *mon.BytesMonitor, req *SetupFlowRequest, output RowReceiver,
 ) (context.Context, *Flow, error) {
-	return ds.setupFlow(ds.AnnotateCtx(ctx), opentracing.SpanFromContext(ctx), parentMonitor, req, output, LocalState{})
+	return ds.setupRemoteFlow(ds.AnnotateCtx(ctx), opentracing.SpanFromContext(ctx), parentMonitor, req, output)
+}
+
+func (ds *ServerImpl) setupRemoteFlow(
+	ctx context.Context,
+	parentSpan opentracing.Span,
+	parentMonitor *mon.BytesMonitor,
+	req *SetupFlowRequest,
+	syncFlowConsumer RowReceiver,
+) (context.Context, *Flow, error) {
+	if !FlowVerIsCompatible(req.Version, MinAcceptedVersion, Version) {
+		err := errors.Errorf(
+			"version mismatch in flow request: %d; this node accepts %d through %d",
+			req.Version, MinAcceptedVersion, Version,
+		)
+		log.Warning(ctx, err)
+		return ctx, nil, err
+	}
+	return ds.setupFlow(ctx, parentSpan, parentMonitor, req, syncFlowConsumer,
+		LocalState{})
 }
 
 // LocalState carries information that is required to set up a flow with wrapped
@@ -526,7 +537,7 @@ func (ds *ServerImpl) SetupFlow(
 	// Note: the passed context will be canceled when this RPC completes, so we
 	// can't associate it with the flow.
 	ctx = ds.AnnotateCtx(context.Background())
-	ctx, f, err := ds.setupFlow(ctx, parentSpan, &ds.memMonitor, req, nil /* syncFlowConsumer */, LocalState{})
+	ctx, f, err := ds.setupRemoteFlow(ctx, parentSpan, &ds.memMonitor, req, nil /* syncFlowConsumer */)
 	if err == nil {
 		err = ds.flowScheduler.ScheduleFlow(ctx, f)
 	}

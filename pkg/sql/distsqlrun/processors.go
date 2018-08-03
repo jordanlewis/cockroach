@@ -16,7 +16,6 @@ package distsqlrun
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -803,9 +802,12 @@ func (pb *processorBase) init(
 // startInternal prepares the processorBase for execution. It returns the
 // annotated context that's also stored in pb.ctx.
 func (pb *processorBase) startInternal(ctx context.Context, name string) context.Context {
-	pb.ctx = log.WithLogTag(
-		ctx, fmt.Sprintf("%s/%d", procNameToLogTag[name], pb.processorID), nil,
-	)
+	/*
+		pb.ctx = log.WithLogTag(
+			ctx, fmt.Sprintf("%s/%d", procNameToLogTag[name], pb.processorID), nil,
+		)
+	*/
+	pb.ctx = ctx
 
 	pb.origCtx = pb.ctx
 	pb.ctx, pb.span = processorSpan(pb.ctx, name)

@@ -149,7 +149,12 @@ func (dsp *DistSQLPlanner) Run(
 	recv.resultToStreamColMap = plan.planToStreamColMap
 	thisNodeID := dsp.nodeDesc.NodeID
 
-	evalCtxProto := distsqlrun.MakeEvalContext(evalCtx.EvalContext)
+	var evalCtxProto distsqlrun.EvalContext
+	var resultChan chan runnerResult
+	if len(flows) > 1 {
+		evalCtxProto = distsqlrun.MakeEvalContext(evalCtx.EvalContext)
+		resultChan = make(chan runnerResult, len(flows)-1)
+	}
 	setupReq := distsqlrun.SetupFlowRequest{
 		Version:     distsqlrun.Version,
 		EvalContext: evalCtxProto,
@@ -165,13 +170,8 @@ func (dsp *DistSQLPlanner) Run(
 			setupReq.TxnCoordMeta = txnCoordMeta
 		}
 	}
-
 	// Start all the flows except the flow on this node (there is always a flow on
 	// this node).
-	var resultChan chan runnerResult
-	if len(flows) > 1 {
-		resultChan = make(chan runnerResult, len(flows)-1)
-	}
 	for nodeID, flowSpec := range flows {
 		if nodeID == thisNodeID {
 			// Skip this node.
