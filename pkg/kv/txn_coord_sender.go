@@ -457,9 +457,18 @@ func (tcf *TxnCoordSenderFactory) TransactionalSender(
 		&tcs.interceptorAlloc.txnSpanRefresher,
 		&tcs.interceptorAlloc.txnMetrics,
 	}
+	// lockedSenders must exactly echo the above!
+	lockedSenders := [...]lockedSender{
+		&tcs.interceptorAlloc.txnHeartbeat,
+		&tcs.interceptorAlloc.txnSeqNumAllocator,
+		&tcs.interceptorAlloc.txnIntentCollector,
+		&tcs.interceptorAlloc.txnPipeliner,
+		&tcs.interceptorAlloc.txnSpanRefresher,
+		&tcs.interceptorAlloc.txnMetrics,
+	}
 	for i, reqInt := range tcs.interceptorStack {
 		if i < len(tcs.interceptorStack)-1 {
-			reqInt.setWrapped(tcs.interceptorStack[i+1])
+			reqInt.setWrapped(lockedSenders[i+1])
 		} else {
 			reqInt.setWrapped(&tcs.interceptorAlloc.txnLockGatekeeper)
 		}

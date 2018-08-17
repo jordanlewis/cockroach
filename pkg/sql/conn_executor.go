@@ -714,7 +714,6 @@ func (ex *connExecutor) close(ctx context.Context, closeType closeType) {
 	if closeType != panicClose {
 		// Close all statements and prepared portals by first unifying the namespaces
 		// and the closing what remains.
-		ex.commitPrepStmtNamespace(ctx)
 		ex.prepStmtsNamespace.resetTo(ctx, &prepStmtNamespace{})
 	}
 
@@ -813,17 +812,6 @@ type connExecutor struct {
 		//
 		// Set via setTxnRewindPos().
 		txnRewindPos CmdPos
-
-		// prepStmtsNamespaceAtTxnRewindPos is a snapshot of the prep stmts/portals
-		// (ex.prepStmtsNamespace) before processing the command at position
-		// txnRewindPos.
-		// Here's the deal: prepared statements are not transactional, but they do
-		// need to interact properly with automatic retries (i.e. rewinding the
-		// command buffer). When doing a rewind, we need to be able to restore the
-		// prep stmts as they were. We do this by taking a snapshot every time
-		// txnRewindPos is advanced. Prepared statements are shared between the two
-		// collections, but these collections are periodically reconciled.
-		prepStmtsNamespaceAtTxnRewindPos prepStmtNamespace
 	}
 
 	// sessionData contains the user-configurable connection variables.
@@ -918,6 +906,11 @@ type prepStmtNamespace struct {
 	prepStmts map[string]prepStmtEntry
 	// portals contains the portals currently available on the session.
 	portals map[string]portalEntry
+
+	// The unnamed portal and prepared statement are frequently accessed, so
+	// they're kept outside of the maps in static slots.
+	unnamedPrepStmt prepStmtEntry
+	unnamedPortal   portalEntry
 }
 
 type prepStmtEntry struct {
@@ -976,6 +969,31 @@ func (ns *prepStmtNamespace) copy() prepStmtNamespace {
 	}
 	return cpy
 }
+
+/*
+func (ns *prepStmtNamespace) getPortal(name string) (portalEntry, bool) {
+	if name != "" {
+		portal, ok := ns.portals[name]
+		return portal, ok
+	}
+	return ns.unnamedPortal, ns.unnamedPortal.PreparedPortal != nil
+}
+
+func (ns *prepStmtNamespace) deletePortal(ctx context.Context, name string) {
+	if name == "" {
+
+	}
+	portalEntry, ok := ex.prepStmtsNamespace.getPortal(name)
+	// If the portal only exists in prepStmtsNamespace, it's up to us to close it.
+	baseP, inBase := ex.extraTxnState.prepStmtsNamespaceAtTxnRewindPos.portals[name]
+	if !inBase || (baseP.PreparedPortal != portalEntry.PreparedPortal) {
+		portalEntry.close(ctx)
+	}
+	delete(ns.portals, name)
+	delete(ns.prepStmts[portalEntry.psName].portals, name)
+
+}
+*/
 
 func (ex *connExecutor) resetExtraTxnState(
 	ctx context.Context, dbCacheHolder *databaseCacheHolder,
@@ -1256,7 +1274,6 @@ func (ex *connExecutor) run(ctx context.Context, cancel context.CancelFunc) erro
 				return err
 			}
 		case rewind:
-			ex.rewindPrepStmtNamespace(ex.Ctx())
 			advInfo.rewCap.rewindAndUnlock(ex.Ctx())
 		case stayInPlace:
 			// Nothing to do. The same statement will be executed again.
@@ -1370,7 +1387,6 @@ func (ex *connExecutor) setTxnRewindPos(ctx context.Context, pos CmdPos) {
 	}
 	ex.extraTxnState.txnRewindPos = pos
 	ex.stmtBuf.ltrim(ctx, pos)
-	ex.commitPrepStmtNamespace(ctx)
 }
 
 // stmtDoesntNeedRetry returns true if the given statement does not need to be
@@ -1489,20 +1505,6 @@ func stmtHasNoData(stmt tree.Statement) bool {
 // level.
 func (ex *connExecutor) generateID() ClusterWideID {
 	return GenerateClusterWideID(ex.server.cfg.Clock.Now(), ex.server.cfg.NodeID.Get())
-}
-
-// commitPrepStmtNamespace deallocates everything in
-// prepStmtsNamespaceAtTxnRewindPos that's not part of prepStmtsNamespace.
-func (ex *connExecutor) commitPrepStmtNamespace(ctx context.Context) {
-	ex.extraTxnState.prepStmtsNamespaceAtTxnRewindPos.resetTo(
-		ctx, &ex.prepStmtsNamespace)
-}
-
-// commitPrepStmtNamespace deallocates everything in prepStmtsNamespace that's
-// not part of prepStmtsNamespaceAtTxnRewindPos.
-func (ex *connExecutor) rewindPrepStmtNamespace(ctx context.Context) {
-	ex.prepStmtsNamespace.resetTo(
-		ctx, &ex.extraTxnState.prepStmtsNamespaceAtTxnRewindPos)
 }
 
 // getRewindTxnCapability checks whether rewinding to the position previously
