@@ -1211,7 +1211,7 @@ func (m *multiTestContext) heartbeatLiveness(ctx context.Context, store int) err
 	}
 
 	for r := retry.StartWithCtx(ctx, retry.Options{MaxRetries: 5}); r.Next(); {
-		if err = nl.Heartbeat(ctx, l); err != storage.ErrEpochIncremented {
+		if err = nl.Heartbeat(ctx, &l); err != storage.ErrEpochIncremented {
 			break
 		}
 	}

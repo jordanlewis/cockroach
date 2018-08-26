@@ -290,7 +290,7 @@ func (p *pendingLeaseRequest) requestLeaseAsync(
 						err = errors.Errorf("not incrementing epoch on n%d because next leaseholder (n%d) not live (err = %v)",
 							status.Liveness.NodeID, nextLeaseHolder.NodeID, liveErr)
 						log.Error(ctx, err)
-					} else if err = p.repl.store.cfg.NodeLiveness.IncrementEpoch(ctx, status.Liveness); err != nil {
+					} else if err = p.repl.store.cfg.NodeLiveness.IncrementEpoch(ctx, *status.Liveness); err != nil {
 						log.Error(ctx, err)
 					}
 				}
@@ -452,8 +452,8 @@ func (r *Replica) leaseStatus(
 	if lease.Type() == roachpb.LeaseExpiration {
 		expiration = lease.GetExpiration()
 	} else {
-		var err error
-		status.Liveness, err = r.store.cfg.NodeLiveness.GetLiveness(lease.Replica.NodeID)
+		liveness, err := r.store.cfg.NodeLiveness.GetLiveness(lease.Replica.NodeID)
+		status.Liveness = &liveness
 		if err != nil || status.Liveness.Epoch < lease.Epoch {
 			// If lease validity can't be determined (e.g. gossip is down
 			// and liveness info isn't available for owner), we can neither

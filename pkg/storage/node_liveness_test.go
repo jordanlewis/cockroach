@@ -105,7 +105,7 @@ func TestNodeLiveness(t *testing.T) {
 			t.Fatal(err)
 		}
 		for {
-			err := nl.Heartbeat(context.Background(), l)
+			err := nl.Heartbeat(context.Background(), &l)
 			if err == nil {
 				break
 			}
@@ -193,7 +193,7 @@ func TestNodeIsLiveCallback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := nl.Heartbeat(context.Background(), l); err != nil {
+		if err := nl.Heartbeat(context.Background(), &l); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,7 +251,7 @@ func TestNodeHeartbeatCallback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := nl.Heartbeat(context.Background(), l); err != nil {
+		if err := nl.Heartbeat(context.Background(), &l); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -404,13 +404,13 @@ func TestNodeLivenessSelf(t *testing.T) {
 	// Verify liveness is properly initialized. This needs to be wrapped in a
 	// SucceedsSoon because node liveness gets initialized via an async gossip
 	// callback.
-	var liveness *storage.Liveness
+	var liveness storage.Liveness
 	testutils.SucceedsSoon(t, func() error {
 		var err error
 		liveness, err = mtc.nodeLivenesses[0].GetLiveness(g.NodeID.Get())
 		return err
 	})
-	if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), liveness); err != nil {
+	if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), &liveness); err != nil {
 		t.Fatal(err)
 	}
 
@@ -422,7 +422,7 @@ func TestNodeLivenessSelf(t *testing.T) {
 		atomic.AddInt32(&count, 1)
 	})
 	testutils.SucceedsSoon(t, func() error {
-		fakeBehindLiveness := *liveness
+		fakeBehindLiveness := liveness
 		fakeBehindLiveness.Epoch-- // almost certainly results in zero
 
 		if err := g.AddInfoProto(key, &fakeBehindLiveness, 0); err != nil {
@@ -471,7 +471,7 @@ func TestNodeLivenessGetIsLiveMap(t *testing.T) {
 	liveness, _ := mtc.nodeLivenesses[0].GetLiveness(mtc.gossips[0].NodeID.Get())
 
 	testutils.SucceedsSoon(t, func() error {
-		if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), liveness); err != nil {
+		if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), &liveness); err != nil {
 			if err == storage.ErrEpochIncremented {
 				return err
 			}
@@ -517,7 +517,7 @@ func TestNodeLivenessGetLivenesses(t *testing.T) {
 	// Advance the clock but only heartbeat node 0.
 	mtc.manualClock.Increment(mtc.nodeLivenesses[0].GetLivenessThreshold().Nanoseconds() + 1)
 	liveness, _ := mtc.nodeLivenesses[0].GetLiveness(mtc.gossips[0].NodeID.Get())
-	if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), liveness); err != nil {
+	if err := mtc.nodeLivenesses[0].Heartbeat(context.Background(), &liveness); err != nil {
 		t.Fatal(err)
 	}
 
@@ -565,7 +565,7 @@ func TestNodeLivenessConcurrentHeartbeats(t *testing.T) {
 	errCh := make(chan error, concurrency)
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			errCh <- nl.Heartbeat(context.Background(), l)
+			errCh <- nl.Heartbeat(context.Background(), &l)
 		}()
 	}
 	for i := 0; i < concurrency; i++ {
@@ -742,7 +742,7 @@ func TestNodeLivenessRetryAmbiguousResultError(t *testing.T) {
 
 	// And again on manual heartbeat.
 	injectError.Store(true)
-	if err := nl.Heartbeat(context.Background(), l); err != nil {
+	if err := nl.Heartbeat(context.Background(), &l); err != nil {
 		t.Fatal(err)
 	}
 	if count := atomic.LoadInt32(&injectedErrorCount); count != 2 {
@@ -1194,7 +1194,7 @@ func TestUpdateLiveness(t *testing.T) {
 		testutils.SucceedsSoon(t, func() error {
 			for {
 				nodeID := mtc.gossips[idx].NodeID.Get()
-				err := nl.Heartbeat(context.Background(), l)
+				err := nl.Heartbeat(context.Background(), &l)
 
 				if err == nil {
 					return errors.Errorf("expected node %d to fail to update its liveness because Commit() should fail", nodeID)
@@ -1238,7 +1238,7 @@ func TestUpdateLiveness(t *testing.T) {
 			for {
 				errCh := make(chan error)
 				go func() {
-					err := nl.Heartbeat(context.Background(), l)
+					err := nl.Heartbeat(context.Background(), &l)
 					errCh <- err
 				}()
 

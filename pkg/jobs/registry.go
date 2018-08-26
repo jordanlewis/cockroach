@@ -55,7 +55,7 @@ var (
 // NodeLiveness is the subset of storage.NodeLiveness's interface needed
 // by Registry.
 type NodeLiveness interface {
-	Self() (*storage.Liveness, error)
+	Self() (storage.Liveness, error)
 	GetLivenesses() []storage.Liveness
 }
 

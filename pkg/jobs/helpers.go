@@ -67,7 +67,7 @@ func (*FakeNodeLiveness) ModuleTestingKnobs() {}
 // Self implements the implicit storage.NodeLiveness interface. It uses NodeID
 // as the node ID. On every call, a nonblocking send is performed over nl.ch to
 // allow tests to execute a callback.
-func (nl *FakeNodeLiveness) Self() (*storage.Liveness, error) {
+func (nl *FakeNodeLiveness) Self() (storage.Liveness, error) {
 	select {
 	case nl.SelfCalledCh <- struct{}{}:
 	default:
@@ -75,7 +75,7 @@ func (nl *FakeNodeLiveness) Self() (*storage.Liveness, error) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 	selfCopy := *nl.mu.livenessMap[FakeNodeID.Get()]
-	return &selfCopy, nil
+	return selfCopy, nil
 }
 
 // GetLivenesses implements the implicit storage.NodeLiveness interface.

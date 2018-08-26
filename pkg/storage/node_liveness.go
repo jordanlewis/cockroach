@@ -253,7 +253,7 @@ func (nl *NodeLiveness) SetDraining(ctx context.Context, drain bool) {
 		if err != nil && err != ErrNoLivenessRecord {
 			log.Errorf(ctx, "unexpected error getting liveness: %s", err)
 		}
-		if err := nl.setDrainingInternal(ctx, liveness, drain); err == nil {
+		if err := nl.setDrainingInternal(ctx, &liveness, drain); err == nil {
 			return
 		}
 	}
@@ -486,7 +486,7 @@ func (nl *NodeLiveness) StartHeartbeat(
 					if err != nil && err != ErrNoLivenessRecord {
 						log.Errorf(ctx, "unexpected error getting liveness: %v", err)
 					}
-					if err := nl.heartbeatInternal(ctx, liveness, incrementEpoch); err != nil {
+					if err := nl.heartbeatInternal(ctx, &liveness, incrementEpoch); err != nil {
 						if err == ErrEpochIncremented {
 							log.Infof(ctx, "%s; retrying", err)
 							continue
@@ -634,7 +634,7 @@ func (nl *NodeLiveness) heartbeatInternal(
 // is returned in the event that the node has neither heartbeat its
 // liveness record successfully, nor received a gossip message containing
 // a former liveness update on restart.
-func (nl *NodeLiveness) Self() (*Liveness, error) {
+func (nl *NodeLiveness) Self() (Liveness, error) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 	return nl.getLivenessLocked(nl.gossip.NodeID.Get())
@@ -676,7 +676,7 @@ func (nl *NodeLiveness) GetLivenesses() []Liveness {
 // GetLiveness returns the liveness record for the specified nodeID.
 // ErrNoLivenessRecord is returned in the event that nothing is yet
 // known about nodeID via liveness gossip.
-func (nl *NodeLiveness) GetLiveness(nodeID roachpb.NodeID) (*Liveness, error) {
+func (nl *NodeLiveness) GetLiveness(nodeID roachpb.NodeID) (Liveness, error) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 	return nl.getLivenessLocked(nodeID)
@@ -705,11 +705,11 @@ func (nl *NodeLiveness) GetLivenessStatusMap() map[roachpb.NodeID]NodeLivenessSt
 	return statusMap
 }
 
-func (nl *NodeLiveness) getLivenessLocked(nodeID roachpb.NodeID) (*Liveness, error) {
+func (nl *NodeLiveness) getLivenessLocked(nodeID roachpb.NodeID) (Liveness, error) {
 	if l, ok := nl.mu.nodes[nodeID]; ok {
-		return &l, nil
+		return l, nil
 	}
-	return nil, ErrNoLivenessRecord
+	return Liveness{}, ErrNoLivenessRecord
 }
 
 var errEpochAlreadyIncremented = errors.New("epoch already incremented")
@@ -721,7 +721,7 @@ var errEpochAlreadyIncremented = errors.New("epoch already incremented")
 // record in the nodes map. If this method is called on a node ID
 // which is considered live according to the most recent information
 // gathered through gossip, an error is returned.
-func (nl *NodeLiveness) IncrementEpoch(ctx context.Context, liveness *Liveness) error {
+func (nl *NodeLiveness) IncrementEpoch(ctx context.Context, liveness Liveness) error {
 	// Allow only one increment at a time.
 	sem := nl.sem(liveness.NodeID)
 	select {
@@ -736,16 +736,16 @@ func (nl *NodeLiveness) IncrementEpoch(ctx context.Context, liveness *Liveness) 
 	if liveness.IsLive(nl.clock.Now(), nl.clock.MaxOffset()) {
 		return errors.Errorf("cannot increment epoch on live node: %+v", liveness)
 	}
-	update := livenessUpdate{Liveness: *liveness}
+	update := livenessUpdate{Liveness: liveness}
 	update.Epoch++
-	if err := nl.updateLiveness(ctx, update, liveness, func(actual Liveness) error {
+	if err := nl.updateLiveness(ctx, update, &liveness, func(actual Liveness) error {
 		defer nl.maybeUpdate(actual)
 		if actual.Epoch > liveness.Epoch {
 			return errEpochAlreadyIncremented
 		} else if actual.Epoch < liveness.Epoch {
 			return errors.Errorf("unexpected liveness epoch %d; expected >= %d", actual.Epoch, liveness.Epoch)
 		}
-		return errors.Errorf("mismatch incrementing epoch for %+v; actual is %+v", *liveness, actual)
+		return errors.Errorf("mismatch incrementing epoch for %+v; actual is %+v", liveness, actual)
 	}); err != nil {
 		if err == errEpochAlreadyIncremented {
 			return nil
@@ -833,8 +833,8 @@ func (nl *NodeLiveness) updateLivenessAttempt(
 	// put failures.
 	if !update.ignoreCache {
 		l, err := nl.GetLiveness(update.NodeID)
-		if err == nil && (oldLiveness == nil || *l != *oldLiveness) {
-			return handleCondFailed(*l)
+		if err == nil && (oldLiveness == nil || l != *oldLiveness) {
+			return handleCondFailed(l)
 		}
 	}
 
