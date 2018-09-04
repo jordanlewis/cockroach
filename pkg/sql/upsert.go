@@ -132,8 +132,10 @@ func (p *planner) newUpsertNode(
 
 		// We use ensureColumns = false in processColumns, because
 		// updateCols may be legitimately empty (when there is no DO
-		// UPDATE clause). We set allowMutations because we need
-		// to populate all columns even those that are being added.
+		// UPDATE clause). We don't set allowMutations because don't want to permit
+		// the SQL statement to refer to mutation columns in the UPDATE set
+		// expressions. The updated row will include mutations despite this, because
+		// MakeDefaultExprs handles adding defaults to mutation columns as well.
 		updateCols, err := p.processColumns(desc, names,
 			false /* ensureColumns */, true /* allowMutations */)
 		if err != nil {
@@ -145,12 +147,25 @@ func (p *planner) newUpsertNode(
 		// double-including a computed column.
 		updateCols = append(updateCols, computedCols...)
 
+		insertCols := ri.InsertCols
+
+		// Remove schema change columns from this list. The upsert helper uses it
+		// to create the list of allowable name
+		if len(desc.Mutations) > 0 {
+			insertCols = make([]sqlbase.ColumnDescriptor, 0, len(desc.Columns))
+			for i := range ri.InsertCols {
+				if d, err := desc.FindActiveColumnByID(ri.InsertCols[i].ID); err == nil {
+					insertCols = append(insertCols, *d)
+				}
+			}
+		}
+
 		// Instantiate the helper that will take over the evaluation of
 		// SQL expressions. As described above, this also performs a
 		// semantic check, so it cannot be skipped on the fast path below.
 		helper, err := p.newUpsertHelper(
 			ctx, tn, desc,
-			ri.InsertCols,
+			insertCols,
 			updateCols,
 			updateExprs,
 			computeExprs,
@@ -573,10 +588,10 @@ func (p *planner) newUpsertHelper(
 	// refer to both the original table and the upserted values, so they
 	// need a double dataSourceInfo.
 
+	descs := sqlbase.ResultColumnsFromColDescs(tableDesc.Columns)
+
 	// sourceInfo describes the columns provided by the table.
-	helper.sourceInfo = sqlbase.NewSourceInfoForSingleTable(
-		*tn, sqlbase.ResultColumnsFromColDescs(tableDesc.Columns),
-	)
+	helper.sourceInfo = sqlbase.NewSourceInfoForSingleTable(*tn, descs)
 	// excludedSourceInfo describes the columns provided by the
 	// insert/upsert data source. This will be used to resolve
 	// expressions of the form `excluded.x`, which refer to the values

@@ -259,7 +259,7 @@ func (p *planner) Update(
 	// this must not see the additional renders added below.
 	var columns sqlbase.ResultColumns
 	if rowsNeeded {
-		columns = planColumns(rows)
+		columns = sqlbase.ResultColumnsFromColDescs(desc.Columns)
 	}
 
 	for _, setExpr := range setExprs {

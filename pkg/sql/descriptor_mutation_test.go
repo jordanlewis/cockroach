@@ -211,6 +211,56 @@ ALTER TABLE t.test ADD COLUMN i VARCHAR NOT NULL DEFAULT 'i';
 	})
 }
 
+// Test that columns with active mutations cannot be referenced in any way
+// from SQL.
+func TestColumnVisibilityWithMutations(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	// The descriptor changes made must have an immediate effect
+	// so disable leases on tables.
+	defer sql.TestDisableTableLeases()()
+	// Disable external processing of mutations.
+	params, _ := tests.CreateTestServerParams()
+	params.Knobs.SQLSchemaChanger = &sql.SchemaChangerTestingKnobs{
+		AsyncExecNotification: asyncSchemaChangerDisabled,
+	}
+	server, sqlDB, kvDB := serverutils.StartServer(t, params)
+	defer server.Stopper().Stop(context.TODO())
+
+	if _, err := sqlDB.Exec(`
+CREATE DATABASE t;
+CREATE TABLE t.test (k VARCHAR PRIMARY KEY DEFAULT 'default', v VARCHAR);
+ALTER TABLE t.test ADD COLUMN i VARCHAR NOT NULL DEFAULT 'i';
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	// read table descriptor
+	tableDesc := sqlbase.GetTableDescriptor(kvDB, "t", "test")
+
+	mTest := makeMutationTest(t, kvDB, sqlDB, tableDesc)
+	// Add column "i" as a mutation in delete/write.
+	mTest.writeColumnMutation("i", sqlbase.DescriptorMutation{State: sqlbase.DescriptorMutation_DELETE_AND_WRITE_ONLY})
+
+	for _, query := range []string{
+		`UPDATE t.test SET i='foo'`,
+		`UPDATE t.test SET k='foo' RETURNING i`,
+		`UPDATE t.test SET k='foo' WHERE i='foo'`,
+
+		`UPSERT INTO t.test(i) VALUES ('foo')`,
+
+		`INSERT INTO t.test VALUES ('foo') ON CONFLICT(k) DO UPDATE SET k='foo' WHERE i='foo'`,
+		`INSERT INTO t.test VALUES ('foo') ON CONFLICT(k) DO UPDATE SET i='foo'`,
+		`INSERT INTO t.test VALUES ('foo') ON CONFLICT(k) DO UPDATE SET k=i`,
+		`INSERT INTO t.test VALUES ('foo') ON CONFLICT(k) DO UPDATE SET k='foo' RETURNING i`,
+	} {
+		_, err := sqlDB.Exec(query)
+		if !testutils.IsError(err, `column "i" does not exist`) &&
+			!testutils.IsError(err, `column "i" is being backfilled`) {
+			t.Fatalf("Expected error for query %s, found %v", query, err)
+		}
+	}
+}
+
 // Test INSERT, UPDATE, UPSERT, and DELETE operations with a column schema
 // change.
 func TestOperationsWithColumnMutation(t *testing.T) {
