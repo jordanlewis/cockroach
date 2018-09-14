@@ -10,7 +10,7 @@ import (
 type propValidator struct {
 	plan planNode
 
-	spec *distsqlrun.PropValidatorSpec
+	spec *distsqlrun.Props
 }
 
 func (propValidator) Next(params runParams) (bool, error) {
@@ -18,9 +18,8 @@ func (propValidator) Next(params runParams) (bool, error) {
 }
 
 func (propValidator) Values() tree.Datums {
-	panic("implement me")
+	return nil
 }
 
 func (propValidator) Close(ctx context.Context) {
-	panic("implement me")
 }

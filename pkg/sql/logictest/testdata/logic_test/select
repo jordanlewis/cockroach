@@ -1,3 +1,9 @@
+# LogicTest: fakedist-opt
+
+
+
+
+
 # LogicTest: local local-opt local-parallel-stmts fakedist fakedist-opt fakedist-metadata
 
 # SELECT with no table.

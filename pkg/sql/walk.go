@@ -496,6 +496,9 @@ func (v *planVisitor) visitInternal(plan planNode, name string) {
 	case *ordinalityNode:
 		n.source = v.visit(n.source)
 
+	case *propValidator:
+		n.plan = v.visit(n.plan)
+
 	case *spoolNode:
 		if n.hardLimit > 0 && v.observer.attr != nil {
 			v.observer.attr(name, "limit", fmt.Sprintf("%d", n.hardLimit))

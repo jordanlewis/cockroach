@@ -2387,7 +2387,9 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 		plan.AddNoGroupingStageWithCoreFunc(
 			func(_ int, _ *distsqlplan.Processor) distsqlrun.ProcessorCoreUnion {
 				return distsqlrun.ProcessorCoreUnion{
-					PropValidator: n.spec,
+					PropValidator: &distsqlrun.PropValidatorSpec{
+						Props: n.spec,
+					},
 				}
 			},
 			distsqlrun.PostProcessSpec{},

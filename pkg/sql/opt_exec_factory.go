@@ -65,12 +65,15 @@ func (ef *execFactory) ConstructAssertion(
 	input exec.Node,
 	nonNull exec.ColumnOrdinalSet,
 ) (exec.Node, error) {
-	p := distsqlrun.Props{}
+	p := &distsqlrun.Props{}
 	for i, ok := nonNull.Next(0); ok; i, ok = nonNull.Next(i + 1) {
 		p.NotNullCols = append(p.NotNullCols, int64(i))
 	}
 
-	return input, nil
+	return &propValidator{
+		plan: input.(planNode),
+		spec: p,
+	}, nil
 }
 
 // ConstructScan is part of the exec.Factory interface.

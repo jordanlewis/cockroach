@@ -109,10 +109,7 @@ func (r *runParams) SessionData() *sessiondata.SessionData {
 // - planMaker.expandPlan()        (expand_plan.go)
 // - planVisitor.visit()           (walk.go)
 // - planNodeNames                 (walk.go)
-// - planMaker.optimizeFilters()   (filter_opt.go)
-// - setLimitHint()                (limit_hint.go)
 // - collectSpans()                (plan_spans.go)
-// - planOrdering()                (plan_ordering.go)
 // - planColumns()                 (plan_columns.go)
 //
 // Also, there are optional interfaces that new nodes may want to implement:

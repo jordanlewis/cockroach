@@ -126,6 +126,8 @@ func getPlanColumns(plan planNode, mut bool) sqlbase.ResultColumns {
 		return getPlanColumns(n.source, mut)
 	case *serializeNode:
 		return getPlanColumns(n.source, mut)
+	case *propValidator:
+		return getPlanColumns(n.plan, mut)
 
 	case *rowSourceToPlanNode:
 		return n.planCols
