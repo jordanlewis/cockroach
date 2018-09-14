@@ -169,7 +169,20 @@ func (b *Builder) buildRelational(ev memo.ExprView) (execPlan, error) {
 }
 
 func (b *Builder) buildAssertion(ev memo.ExprView, ep execPlan) (execPlan, error) {
-	nonNull := ep.getColumnOrdinalSet(ev.Logical().Relational.NotNullCols)
+	outputCols := ev.Logical().Relational.OutputCols
+	prunedCols := ev.Logical().Relational.Rule.PruneCols
+	realOutputCols := outputCols.Difference(prunedCols)
+	c := ev.Logical().Relational.NotNullCols.Intersection(realOutputCols)
+
+	fmt.Println(
+		"outputCols", outputCols,
+		"prunedCols", prunedCols,
+		"realOutputCols", realOutputCols,
+		"c", c,
+		"outputColMap", ep.outputCols,
+	)
+
+	nonNull := ep.getColumnOrdinalSet(c)
 	if ev.Operator() == opt.ScanOp {
 		return ep, nil
 	}

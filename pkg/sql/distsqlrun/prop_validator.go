@@ -3,6 +3,8 @@ package distsqlrun
 import (
 	"context"
 
+	"fmt"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlbase"
 )
 
@@ -62,6 +64,13 @@ func (n *propValidator) Next() (sqlbase.EncDatumRow, *ProducerMetadata) {
 		if row == nil {
 			n.MoveToDraining(nil /* err */)
 			break
+		}
+
+		for _, i := range n.spec.Props.NotNullCols {
+			if row[i].IsNull() {
+				fmt.Println("found not null col", i, row[i], row)
+				panic("")
+			}
 		}
 
 		if outRow := n.ProcessRowHelper(row); outRow != nil {

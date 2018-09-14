@@ -62,13 +62,13 @@ func (ef *execFactory) ConstructValues(
 }
 
 func (ef *execFactory) ConstructAssertion(
-	input exec.Node,
-	nonNull exec.ColumnOrdinalSet,
+	input exec.Node, nonNull exec.ColumnOrdinalSet,
 ) (exec.Node, error) {
 	p := &distsqlrun.Props{}
 	for i, ok := nonNull.Next(0); ok; i, ok = nonNull.Next(i + 1) {
 		p.NotNullCols = append(p.NotNullCols, int64(i))
 	}
+	fmt.Println("Construct assertion: Made", p.NotNullCols)
 
 	return &propValidator{
 		plan: input.(planNode),

@@ -497,6 +497,9 @@ func (v *planVisitor) visitInternal(plan planNode, name string) {
 		n.source = v.visit(n.source)
 
 	case *propValidator:
+		if v.observer.attr != nil {
+			v.observer.attr(name, "!null", fmt.Sprintf("%+v", n.spec.NotNullCols))
+		}
 		n.plan = v.visit(n.plan)
 
 	case *spoolNode:
