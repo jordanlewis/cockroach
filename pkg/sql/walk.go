@@ -656,6 +656,7 @@ var planNodeNames = map[reflect.Type]string{
 	reflect.TypeOf(&lookupJoinNode{}):           "lookup-join",
 	reflect.TypeOf(&ordinalityNode{}):           "ordinality",
 	reflect.TypeOf(&projectSetNode{}):           "project set",
+	reflect.TypeOf(&propValidator{}):            "propvalidator",
 	reflect.TypeOf(&relocateNode{}):             "relocate",
 	reflect.TypeOf(&renderNode{}):               "render",
 	reflect.TypeOf(&rowCountNode{}):             "count",

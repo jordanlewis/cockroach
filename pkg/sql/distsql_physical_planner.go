@@ -2384,13 +2384,15 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 		plan, err = dsp.createPlanForWindow(planCtx, n)
 
 	case *propValidator:
-		plan.AddNoGroupingStageWithCoreFunc(
-			func(_ int, _ *distsqlplan.Processor) distsqlrun.ProcessorCoreUnion {
-				return distsqlrun.ProcessorCoreUnion{
-					PropValidator: &distsqlrun.PropValidatorSpec{
-						Props: n.spec,
-					},
-				}
+		plan, err = dsp.createPlanForNode(planCtx, n.plan)
+		if err != nil {
+			return PhysicalPlan{}, err
+		}
+		plan.AddNoGroupingStage(
+			distsqlrun.ProcessorCoreUnion{
+				PropValidator: &distsqlrun.PropValidatorSpec{
+					Props: n.spec,
+				},
 			},
 			distsqlrun.PostProcessSpec{},
 			plan.ResultTypes,

@@ -24,6 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 
+	"runtime/debug"
+
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/distsqlrun"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
@@ -175,6 +177,10 @@ func (p *PhysicalPlan) AddNoGroupingStageWithCoreFunc(
 	newOrdering distsqlrun.Ordering,
 ) {
 	stageID := p.NewStageID()
+	if len(p.ResultRouters) == 0 {
+		fmt.Println("No inmput result routers")
+		debug.PrintStack()
+	}
 	for i, resultProc := range p.ResultRouters {
 		prevProc := &p.Processors[resultProc]
 

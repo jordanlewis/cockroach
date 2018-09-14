@@ -13,13 +13,14 @@ type propValidator struct {
 	spec *distsqlrun.Props
 }
 
-func (propValidator) Next(params runParams) (bool, error) {
-	panic("implement me")
+func (p *propValidator) Next(params runParams) (bool, error) {
+	return p.plan.Next(params)
 }
 
-func (propValidator) Values() tree.Datums {
-	return nil
+func (p *propValidator) Values() tree.Datums {
+	return p.plan.Values()
 }
 
-func (propValidator) Close(ctx context.Context) {
+func (p *propValidator) Close(ctx context.Context) {
+	p.plan.Close(ctx)
 }

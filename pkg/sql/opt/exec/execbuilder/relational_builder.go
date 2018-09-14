@@ -170,6 +170,9 @@ func (b *Builder) buildRelational(ev memo.ExprView) (execPlan, error) {
 
 func (b *Builder) buildAssertion(ev memo.ExprView, ep execPlan) (execPlan, error) {
 	nonNull := ep.getColumnOrdinalSet(ev.Logical().Relational.NotNullCols)
+	if ev.Operator() == opt.ScanOp {
+		return ep, nil
+	}
 	node, err := b.factory.ConstructAssertion(ep.root, nonNull)
 	if err != nil {
 		return execPlan{}, err
