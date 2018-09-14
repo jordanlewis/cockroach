@@ -63,6 +63,8 @@
 		WindowerSpec
 		ChangeAggregatorSpec
 		ChangeFrontierSpec
+		Props
+		PropValidatorSpec
 		InputStats
 		TableReaderStats
 		HashJoinerStats

@@ -459,6 +459,9 @@ func (dsp *DistSQLPlanner) checkSupportForNode(node planNode) (distRecommendatio
 	case *windowNode:
 		return dsp.checkSupportForNode(n.plan)
 
+	case *propValidator:
+		return dsp.checkSupportForNode(n.plan)
+
 	default:
 		return cannotDistribute, newQueryNotSupportedErrorf("unsupported node %T", node)
 	}
@@ -2379,6 +2382,18 @@ func (dsp *DistSQLPlanner) createPlanForNode(
 
 	case *windowNode:
 		plan, err = dsp.createPlanForWindow(planCtx, n)
+
+	case *propValidator:
+		plan.AddNoGroupingStageWithCoreFunc(
+			func(_ int, _ *distsqlplan.Processor) distsqlrun.ProcessorCoreUnion {
+				return distsqlrun.ProcessorCoreUnion{
+					PropValidator: n.spec,
+				}
+			},
+			distsqlrun.PostProcessSpec{},
+			plan.ResultTypes,
+			plan.MergeOrdering,
+		)
 
 	default:
 		// Can't handle a node? We wrap it and continue on our way.

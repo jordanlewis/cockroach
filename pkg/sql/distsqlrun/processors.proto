@@ -142,6 +142,7 @@ message ProcessorCoreUnion {
   optional LocalPlanNodeSpec localPlanNode = 24;
   optional ChangeAggregatorSpec changeAggregator = 25;
   optional ChangeFrontierSpec changeFrontier = 26;
+  optional PropValidatorSpec propValidator = 27;
 
   reserved 6, 12;
 }
@@ -992,4 +993,12 @@ message ChangeFrontierSpec {
     (gogoproto.nullable) = false,
     (gogoproto.customname) = "JobID"
   ];
+}
+
+message Props {
+  repeated int64 not_null_cols = 1;
+}
+
+message PropValidatorSpec {
+  optional Props props = 1;
 }
