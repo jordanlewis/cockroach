@@ -1102,7 +1102,7 @@ func newProcessor(
 		if err := checkNumInOut(inputs, outputs, 1, 1); err != nil {
 			return nil, err
 		}
-		return newPropValidator(flowCtx, processorID, *core.PropValidator, inputs[0], post, outputs[0])
+		return newPropValidator(flowCtx, processorID, core.PropValidator, inputs[0], post, outputs[0])
 	}
 	return nil, errors.Errorf("unsupported processor core %s", core)
 }

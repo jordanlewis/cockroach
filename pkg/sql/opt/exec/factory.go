@@ -192,6 +192,9 @@ type Factory interface {
 	// ConstructShowTrace returns a node that implements a SHOW TRACE
 	// FOR SESSION statement.
 	ConstructShowTrace(typ tree.ShowTraceType, compact bool) (Node, error)
+
+	// ConstructAssertion
+	ConstructAssertion(input Node, nonNull ColumnOrdinalSet) (Node, error)
 }
 
 // OutputOrdering indicates the required output ordering on a Node that is being

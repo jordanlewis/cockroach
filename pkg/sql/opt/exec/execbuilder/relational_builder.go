@@ -165,7 +165,19 @@ func (b *Builder) buildRelational(ev memo.ExprView) (execPlan, error) {
 	if p := ev.Physical().Presentation; !p.Any() {
 		ep, err = b.applyPresentation(ep, ev.Metadata(), p)
 	}
-	return ep, err
+	return b.buildAssertion(ev, ep)
+}
+
+func (b *Builder) buildAssertion(ev memo.ExprView, ep execPlan) (execPlan, error) {
+	nonNull := ep.getColumnOrdinalSet(ev.Logical().Relational.NotNullCols)
+	node, err := b.factory.ConstructAssertion(ep.root, nonNull)
+	if err != nil {
+		return execPlan{}, err
+	}
+	return execPlan{
+		root:       node,
+		outputCols: ep.outputCols,
+	}, nil
 }
 
 func (b *Builder) buildValues(ev memo.ExprView) (execPlan, error) {
