@@ -17,6 +17,8 @@ package distsqlrun
 import (
 	"context"
 
+	"fmt"
+
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/scrub"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlbase"
@@ -160,6 +162,7 @@ func (ij *indexJoiner) Next() (sqlbase.EncDatumRow, *ProducerMetadata) {
 				return nil, ij.DrainHelper()
 			}
 			// Scan the primary index for this batch.
+			fmt.Println("About to scan", ij.spans)
 			err := ij.fetcher.StartScan(
 				ij.Ctx, ij.flowCtx.txn, ij.spans, false /* limitBatches */, 0, /* limitHint */
 				ij.flowCtx.traceKV)

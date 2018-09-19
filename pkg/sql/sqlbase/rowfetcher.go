@@ -454,11 +454,13 @@ func (rf *RowFetcher) StartScanFrom(ctx context.Context, f kvFetcher) error {
 // the next batch until there are no more kvs to fetch.
 // Returns whether or not there are more kvs to fetch, the kv that was fetched,
 // and any errors that may have occurred.
-func (rf *RowFetcher) nextKV(ctx context.Context) (ok bool, kv roachpb.KeyValue, err error) {
+func (rf *RowFetcher) nextKV(ctx context.Context) (ok bool, kv roachpb.KeyValue, newSpan bool, err error) {
+	newSpan = rf.maybeNewSpan
+	rf.maybeNewSpan = false
 	if len(rf.kvs) != 0 {
 		kv = rf.kvs[0]
 		rf.kvs = rf.kvs[1:]
-		return true, kv, nil
+		return true, kv, newSpan, nil
 	}
 	if rf.batchNumKvs > 0 {
 		rf.batchNumKvs--
@@ -466,16 +468,19 @@ func (rf *RowFetcher) nextKV(ctx context.Context) (ok bool, kv roachpb.KeyValue,
 		var rawBytes []byte
 		var err error
 		key, _, rawBytes, rf.batchResponse, err = enginepb.ScanDecodeKeyValue(rf.batchResponse)
+		fmt.Println("Found key", key)
 		if err != nil {
-			return false, kv, err
+			return false, kv, false, err
 		}
 		return true, roachpb.KeyValue{
 			Key: key,
 			Value: roachpb.Value{
 				RawBytes: rawBytes,
 			},
-		}, nil
+		}, newSpan, nil
 	}
+
+	rf.maybeNewSpan = true
 
 	var numKeys int64
 	ok, rf.kvs, rf.batchResponse, numKeys, err = rf.kvFetcher.nextBatch(ctx)
@@ -483,10 +488,10 @@ func (rf *RowFetcher) nextKV(ctx context.Context) (ok bool, kv roachpb.KeyValue,
 		rf.batchNumKvs = numKeys
 	}
 	if err != nil {
-		return ok, kv, err
+		return ok, kv, false, err
 	}
 	if !ok {
-		return false, kv, nil
+		return false, kv, false, nil
 	}
 	return rf.nextKV(ctx)
 }
@@ -497,7 +502,8 @@ func (rf *RowFetcher) NextKey(ctx context.Context) (rowDone bool, err error) {
 	var ok bool
 
 	for {
-		ok, rf.kv, err = rf.nextKV(ctx)
+		var newSpan bool
+		ok, rf.kv, newSpan, err = rf.nextKV(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -560,6 +566,12 @@ func (rf *RowFetcher) NextKey(ctx context.Context) (rowDone bool, err error) {
 		case rf.rowReadyTable != rf.currentTable:
 			// For rowFetchers with more than one table, if the table changes the row
 			// is done.
+			rowDone = true
+		case newSpan:
+			// newSpan indicates that we just found the first key of a top-level
+			// input span to RowFetcher. It's the contract of the caller to RowFetcher
+			// that all input spans are at the start of a row, so it's always safe to
+			// mark our row done right before we start looking at a fresh input span.
 			rowDone = true
 		default:
 			rowDone = false

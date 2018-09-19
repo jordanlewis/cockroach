@@ -356,8 +356,6 @@ func (f *txnKVFetcher) fetch(ctx context.Context) error {
 // nextBatch returns the next batch of key/value pairs. If there are none
 // available, a fetch is initiated. When there are no more keys, returns false.
 // ok returns whether or not there are more kv pairs to be fetched.
-// maybeNewSpan returns true if it was possible that the kv pairs returned were
-// from a new span.
 func (f *txnKVFetcher) nextBatch(
 	ctx context.Context,
 ) (ok bool, kvs []roachpb.KeyValue, batchResponse []byte, numKvs int64, err error) {
@@ -366,6 +364,7 @@ func (f *txnKVFetcher) nextBatch(
 		f.responses = f.responses[1:]
 		switch t := reply.(type) {
 		case *roachpb.ScanResponse:
+			fmt.Println("Response: ", t.NumKeys)
 			return true, t.Rows, t.BatchResponse, t.NumKeys, nil
 		case *roachpb.ReverseScanResponse:
 			return true, t.Rows, t.BatchResponse, t.NumKeys, nil
@@ -377,5 +376,6 @@ func (f *txnKVFetcher) nextBatch(
 	if err := f.fetch(ctx); err != nil {
 		return false, nil, nil, 0, err
 	}
+	fmt.Println("Fetched: Found batches", len(f.responses))
 	return f.nextBatch(ctx)
 }
