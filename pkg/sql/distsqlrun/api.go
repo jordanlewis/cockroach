@@ -80,3 +80,17 @@ func (s *TableReaderSpec) Release() {
 	s.Reset()
 	trSpecPool.Put(s)
 }
+
+// Release releases the resources of this SetupFlowRequest, putting them back
+// into their respective object pools.
+func (s *SetupFlowRequest) Release() {
+	if s == nil {
+		return
+	}
+	for i := range s.Flow.Processors {
+		if tr := s.Flow.Processors[i].Core.TableReader; tr != nil {
+			tr.Release()
+		}
+	}
+	s.Flow.Release()
+}
