@@ -502,7 +502,7 @@ func (rf *RowFetcher) nextKV(ctx context.Context) (ok bool, kv roachpb.KeyValue,
 		var key []byte
 		var rawBytes []byte
 		var err error
-		key, _, rawBytes, rf.batchResponse, err = enginepb.ScanDecodeKeyValue(rf.batchResponse)
+		key, rawBytes, rf.batchResponse, err = enginepb.ScanDecodeKeyValueWithoutTimestamp(rf.batchResponse)
 		if err != nil {
 			return false, kv, err
 		}

@@ -71,6 +71,17 @@ func DecodeKey(encodedKey []byte) (key []byte, timestamp hlc.Timestamp, _ error)
 	return key, timestamp, nil
 }
 
+// DecodeKey decodes an key/timestamp from its serialized representation. This
+// decoding must match engine/db.cc:DecodeKey().
+func DecodeKeyWithoutTimestamp(encodedKey []byte) (key []byte, _ error) {
+	key, _, ok := SplitMVCCKey(encodedKey)
+	if !ok {
+		return nil, errors.Errorf("invalid encoded mvcc key: %x", encodedKey)
+	}
+
+	return key, nil
+}
+
 // ScanDecodeKeyValue decodes a key/value pair from a binary stream, such as in
 // an MVCCScan "batch" (this is not the RocksDB batch repr format), returning
 // both the key/value and the suffix of data remaining in the batch.
@@ -83,14 +94,33 @@ func ScanDecodeKeyValue(
 	v := binary.LittleEndian.Uint64(repr)
 	keySize := v >> 32
 	valSize := v & ((1 << 32) - 1)
-	if (keySize + valSize) > uint64(len(repr)) {
+	sz := keySize + valSize
+	if sz > uint64(len(repr)) {
 		return key, ts, nil, nil, errors.Errorf("expected %d bytes, but only %d remaining",
-			keySize+valSize, len(repr))
+			sz, len(repr))
 	}
 	repr = repr[8:]
 	rawKey := repr[:keySize]
-	value = repr[keySize : keySize+valSize]
-	repr = repr[keySize+valSize:]
+	value = repr[keySize:sz]
+	repr = repr[sz:]
 	key, ts, err = DecodeKey(rawKey)
 	return key, ts, value, repr, err
+}
+
+// ScanDecodeKeyValue decodes a key/value pair from a binary stream, such as in
+// an MVCCScan "batch" (this is not the RocksDB batch repr format), returning
+// both the key/value and the suffix of data remaining in the batch.
+func ScanDecodeKeyValueWithoutTimestamp(
+	repr []byte,
+) (key []byte, value []byte, orepr []byte, err error) {
+	v := binary.LittleEndian.Uint64(repr)
+	keySize := v >> 32
+	valSize := v & ((1 << 32) - 1)
+	sz := keySize + valSize
+	repr = repr[8:]
+	rawKey := repr[:keySize]
+	value = repr[keySize:sz]
+	repr = repr[sz:]
+	key, err = DecodeKeyWithoutTimestamp(rawKey)
+	return key, value, repr, err
 }
