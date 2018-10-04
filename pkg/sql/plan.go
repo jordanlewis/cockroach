@@ -475,16 +475,20 @@ func (p *planner) makeOptimizerPlan(ctx context.Context, stmt Statement) error {
 		}
 	}
 
-	// Build the plan tree and store it in planner.curPlan.
-	execFactory := makeExecFactory(p)
-	plan, err := execbuilder.New(&execFactory, ev, p.EvalContext()).Build()
-	if err != nil {
-		return err
-	}
+	if _, ok := ev.Private().(*memo.ScanOpDef); ok {
+		p.execMemo = ev
+	} else {
+		// Build the plan tree and store it in planner.curPlan.
+		execFactory := makeExecFactory(p)
+		plan, err := execbuilder.New(&execFactory, ev, p.EvalContext()).Build()
+		if err != nil {
+			return err
+		}
 
-	p.curPlan = *plan.(*planTop)
-	// Since the assignment above just cleared the AST, we need to set it again.
-	p.curPlan.AST = stmt.AST
+		p.curPlan = *plan.(*planTop)
+		// Since the assignment above just cleared the AST, we need to set it again.
+		p.curPlan.AST = stmt.AST
+	}
 
 	cols := planColumns(p.curPlan.plan)
 	if stmt.ExpectedTypes != nil {
