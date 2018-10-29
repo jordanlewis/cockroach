@@ -137,6 +137,8 @@ func (t T) GoTypeName() string {
 		return "bool"
 	case Bytes:
 		return "[]byte"
+	case Decimal:
+		return "apd.Decimal"
 	case Int8:
 		return "int8"
 	case Int16:
@@ -163,8 +165,18 @@ func (t T) EqualityFunction() string {
 	switch t {
 	case Bytes:
 		return "bytes.Equal"
+	case Decimal:
+		return "decimalsEqual"
 	}
 	return ""
+}
+
+func (t T) PointerType() bool {
+	switch t {
+	case Decimal:
+		return true
+	}
+	return false
 }
 
 // Suppress unused warning - we use this function in template code, which the
