@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/cockroachdb/apd"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/exec"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlbase"
@@ -70,12 +72,15 @@ func newMaterializer(
 		switch ct.SemanticType {
 		case sqlbase.ColumnType_BOOL:
 			m.row[i] = sqlbase.EncDatum{Datum: tree.DBoolTrue}
-		case sqlbase.ColumnType_INT:
-			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDInt(0)}
-		case sqlbase.ColumnType_FLOAT:
-			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDFloat(0)}
 		case sqlbase.ColumnType_BYTES:
 			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDBytes("")}
+		case sqlbase.ColumnType_DECIMAL:
+			dec := tree.DDecimal{Decimal: apd.Decimal{}}
+			m.row[i] = sqlbase.EncDatum{Datum: &dec}
+		case sqlbase.ColumnType_FLOAT:
+			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDFloat(0)}
+		case sqlbase.ColumnType_INT:
+			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDInt(0)}
 		case sqlbase.ColumnType_STRING:
 			m.row[i] = sqlbase.EncDatum{Datum: tree.NewDString("")}
 		default:
@@ -137,6 +142,13 @@ func (m *materializer) Next() (sqlbase.EncDatumRow, *ProducerMetadata) {
 				} else {
 					m.row[outIdx].Datum = tree.DBoolFalse
 				}
+			case sqlbase.ColumnType_BYTES:
+				m.row[outIdx].Datum = m.da.NewDBytes(tree.DBytes(col.Bytes()[rowIdx]))
+			case sqlbase.ColumnType_DECIMAL:
+				dec := &col.Decimal()[rowIdx]
+				m.row[outIdx].Datum = &tree.DDecimal{Decimal: *dec}
+			case sqlbase.ColumnType_FLOAT:
+				m.row[outIdx].Datum = m.da.NewDFloat(tree.DFloat(col.Float64()[rowIdx]))
 			case sqlbase.ColumnType_INT:
 				switch ct.Width {
 				case 8:
@@ -148,10 +160,6 @@ func (m *materializer) Next() (sqlbase.EncDatumRow, *ProducerMetadata) {
 				case 0, 64:
 					m.row[outIdx].Datum = m.da.NewDInt(tree.DInt(col.Int64()[rowIdx]))
 				}
-			case sqlbase.ColumnType_FLOAT:
-				m.row[outIdx].Datum = m.da.NewDFloat(tree.DFloat(col.Float64()[rowIdx]))
-			case sqlbase.ColumnType_BYTES:
-				m.row[outIdx].Datum = m.da.NewDBytes(tree.DBytes(col.Bytes()[rowIdx]))
 			case sqlbase.ColumnType_STRING:
 				b := col.Bytes()[rowIdx]
 				m.row[outIdx].Datum = m.da.NewDString(tree.DString(*(*string)(unsafe.Pointer(&b))))
