@@ -382,15 +382,15 @@ func BenchmarkHashJoiner(b *testing.B) {
 	sourceTypes := make([]types.T, nCols)
 
 	for colIdx := 0; colIdx < nCols; colIdx++ {
-		sourceTypes[colIdx] = types.Int64
+		sourceTypes[colIdx] = types.Decimal
 	}
 
 	batch := NewMemBatch(sourceTypes)
 
 	for colIdx := 0; colIdx < nCols; colIdx++ {
-		col := batch.ColVec(colIdx).Int64()
+		col := batch.ColVec(colIdx).Decimal()
 		for i := 0; i < ColBatchSize; i++ {
-			col[i] = int64(i)
+			col[i].SetFloat64(float64(i))
 		}
 	}
 

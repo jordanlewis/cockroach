@@ -27,7 +27,7 @@ package exec
 import (
   "fmt"
 	
-	"github.com/cockroachdb/apd"
+	"github.com/ericlagergren/decimal"
 	"github.com/cockroachdb/cockroach/pkg/sql/exec/types"
 )
 

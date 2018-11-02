@@ -74,7 +74,7 @@ func decodeUntaggedDatumToCol(
 		buf, i, err = encoding.DecodeUntaggedIntValue(buf)
 		vec.Int64()[idx] = i
 	case sqlbase.ColumnType_DECIMAL:
-		buf, err = encoding.DecodeIntoUntaggedDecimalValue(&vec.Decimal()[idx], buf)
+		buf, err = encoding.DecodeIntoUntaggedDecimalValue2(&vec.Decimal()[idx], buf)
 	case sqlbase.ColumnType_FLOAT:
 		var f float64
 		buf, f, err = encoding.DecodeUntaggedFloatValue(buf)

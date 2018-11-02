@@ -59,9 +59,9 @@ func (ht *hashTable) rehash(
 					{{else if (eq .ExecType "Float64")}}
 						buckets[i] = buckets[i]*31 + math.Float64bits(keys[sel[i]])
 					{{else if (eq .ExecType "Decimal")}}
-						d, err := keys[sel[i]].Float64()
-						if err != nil {
-							panic(fmt.Sprintf("%v", err))
+						d, ok := keys[sel[i]].Float64()
+						if !ok {
+							panic("fail")
 						}
 						buckets[i] = buckets[i]*31 + math.Float64bits(d)
 					{{else}}
@@ -85,9 +85,9 @@ func (ht *hashTable) rehash(
 					{{else if (eq .ExecType "Float64")}}
 						buckets[i] = buckets[i]*31 + math.Float64bits(keys[i])
 					{{else if (eq .ExecType "Decimal")}}
-						d, err := keys[i].Float64()
-						if err != nil {
-							panic(fmt.Sprintf("%v", err))
+						d, ok := keys[i].Float64()
+						if !ok {
+							panic("fail")
 						}
 						buckets[i] = buckets[i]*31 + math.Float64bits(d)
 					{{else}}

@@ -138,7 +138,7 @@ func (t T) GoTypeName() string {
 	case Bytes:
 		return "[]byte"
 	case Decimal:
-		return "apd.Decimal"
+		return "decimal.Big"
 	case Int8:
 		return "int8"
 	case Int16:

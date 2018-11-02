@@ -25,7 +25,8 @@ package exec
 import "bytes"
 
 import "github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
-import "github.com/cockroachdb/apd"
+import "github.com/ericlagergren/decimal"
+import "github.com/ericlagergren/decimal/misc"
 
 {{define "opConstName"}}proj{{.Name}}{{.LTyp}}{{.RTyp}}ConstOp{{end}}
 {{define "opName"}}proj{{.Name}}{{.LTyp}}{{.RTyp}}Op{{end}}

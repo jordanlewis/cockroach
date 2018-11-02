@@ -927,6 +927,8 @@ func (d *DDecimal) Compare(ctx *EvalContext, other Datum) int {
 	return CompareDecimals(&d.Decimal, v)
 }
 
+var scratch big.Int
+
 // CompareDecimals compares 2 apd.Decimals according to the SQL comparison
 // rules, making sure that NaNs sort first.
 func CompareDecimals(d *apd.Decimal, v *apd.Decimal) int {
@@ -938,7 +940,8 @@ func CompareDecimals(d *apd.Decimal, v *apd.Decimal) int {
 	} else if dn && vn {
 		return 0
 	}
-	return d.Cmp(v)
+
+	return d.CmpWithScratch(v, &scratch)
 }
 
 // Prev implements the Datum interface.

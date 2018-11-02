@@ -27,6 +27,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/ericlagergren/decimal"
+
 	"github.com/pkg/errors"
 
 	"github.com/cockroachdb/apd"
@@ -2087,6 +2089,19 @@ func DecodeIntoUntaggedDecimalValue(d *apd.Decimal, b []byte) (remaining []byte,
 		return b, err
 	}
 	err = DecodeIntoNonsortingDecimal(d, b[:int(i)], nil)
+	return b[int(i):], err
+}
+
+// DecodeIntoUntaggedDecimalValue is like DecodeUntaggedDecimalValue except it
+// writes the new Decimal into the input apd.Decimal pointer, which must be
+// non-nil.
+func DecodeIntoUntaggedDecimalValue2(d *decimal.Big, b []byte) (remaining []byte, err error) {
+	var i uint64
+	b, _, i, err = DecodeNonsortingStdlibUvarint(b)
+	if err != nil {
+		return b, err
+	}
+	err = DecodeIntoNonsortingDecimal2(d, b[:int(i)], nil)
 	return b[int(i):], err
 }
 

@@ -25,6 +25,8 @@ import (
 	"math/big"
 	"unsafe"
 
+	"github.com/ericlagergren/decimal"
+
 	"github.com/pkg/errors"
 
 	"github.com/cockroachdb/apd"
@@ -681,6 +683,54 @@ func DecodeIntoNonsortingDecimal(dec *apd.Decimal, buf []byte, tmp []byte) error
 	}
 }
 
+// DecodeIntoNonsortingDecimal is like DecodeNonsortingDecimal, but it operates
+// on the passed-in *apd.Decimal instead of producing a new one.
+func DecodeIntoNonsortingDecimal2(dec *decimal.Big, buf []byte, tmp []byte) error {
+	switch buf[0] {
+	case decimalNaN:
+		dec.SetNaN(false)
+		return nil
+	case decimalNegativeInfinity:
+		dec.SetInf(true)
+		return nil
+	case decimalInfinity:
+		dec.SetInf(false)
+	case decimalZero:
+		return nil
+	}
+
+	switch {
+	case buf[0] == decimalNegLarge:
+		if err := decodeNonsortingDecimalValue2(dec, true, buf[1:], tmp); err != nil {
+			return err
+		}
+		return nil
+	case buf[0] == decimalNegMedium:
+		decodeNonsortingDecimalValueWithoutExp2(dec, true, buf[1:], tmp)
+		return nil
+	case buf[0] == decimalNegSmall:
+		if err := decodeNonsortingDecimalValue2(dec, true, buf[1:], tmp); err != nil {
+			return err
+		}
+		return nil
+	case buf[0] == decimalPosSmall:
+		if err := decodeNonsortingDecimalValue2(dec, true, buf[1:], tmp); err != nil {
+			return err
+		}
+		return nil
+	case buf[0] == decimalPosMedium:
+		decodeNonsortingDecimalValueWithoutExp2(dec, false, buf[1:], tmp)
+		return nil
+	case buf[0] == decimalPosLarge:
+		if err := decodeNonsortingDecimalValue2(dec, false, buf[1:], tmp); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.Errorf("unknown decimal prefix of the encoded byte slice: %q", buf)
+	}
+}
+
 func decodeNonsortingDecimalValue(dec *apd.Decimal, negExp bool, buf, tmp []byte) error {
 	// Decode the exponent.
 	buf, e, err := DecodeUvarintAscending(buf)
@@ -708,6 +758,42 @@ func decodeNonsortingDecimalValueWithoutExp(dec *apd.Decimal, buf, tmp []byte) {
 	// Set the decimal's scale.
 	nDigits := apd.NumDigits(bi)
 	dec.Exponent = -int32(nDigits)
+}
+
+func decodeNonsortingDecimalValue2(dec *decimal.Big, negExp bool, buf, tmp []byte) error {
+	// Decode the exponent.
+	buf, e, err := DecodeUvarintAscending(buf)
+	if err != nil {
+		return err
+	}
+	if negExp {
+		e = -e
+	}
+
+	bi := big.Int{}
+	bi.SetBytes(buf)
+
+	// Set the decimal's scale.
+	nDigits := int(apd.NumDigits(&bi))
+	exp := int(e) - nDigits
+
+	dec.SetBigMantScale(&bi, exp)
+	return nil
+}
+
+func decodeNonsortingDecimalValueWithoutExp2(dec *decimal.Big, negExp bool, buf, tmp []byte) {
+	bi := big.Int{}
+	bi.SetBytes(buf)
+
+	// Set the decimal's scale.
+	nDigits := apd.NumDigits(&bi)
+	var exp int
+	if negExp {
+		exp = int(nDigits)
+	} else {
+		exp = -int(nDigits)
+	}
+	dec.SetBigMantScale(&bi, exp)
 }
 
 // UpperBoundNonsortingDecimalSize returns the upper bound number of bytes

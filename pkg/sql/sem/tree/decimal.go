@@ -28,10 +28,10 @@ var (
 	// postgres binary decimal format in the wire protocol, which uses an
 	// int16. See pgwire/types.go.
 	DecimalCtx = &apd.Context{
-		Precision:   20,
+		Precision:   15,
 		Rounding:    apd.RoundHalfUp,
-		MaxExponent: 2000,
-		MinExponent: -2000,
+		MaxExponent: 15,
+		MinExponent: 0,
 		Traps:       apd.DefaultTraps,
 	}
 	// ExactCtx is a decimal context with exact precision.

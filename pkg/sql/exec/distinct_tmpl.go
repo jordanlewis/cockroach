@@ -26,10 +26,11 @@ package exec
 import (
 	"bytes"
 
-	"github.com/cockroachdb/apd"
+	"github.com/ericlagergren/decimal/misc"
+
+	"github.com/ericlagergren/decimal"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/exec/types"
-	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/pkg/errors"
 )
 
@@ -59,10 +60,10 @@ func NewOrderedDistinct(input Operator, distinctCols []uint32, typs []types.T) (
 var _ bytes.Buffer
 
 // Dummy import to pull in "apd" package.
-var _ apd.Decimal
+var _ decimal.Big
 
-// Dummy import to pull in "tree" package.
-var _ tree.Datum
+// Dummy import to pull in "apd" package.
+var _ misc.IsCanonical
 
 // _GOTYPE is the template Go type variable for this operator. It will be
 // replaced by the Go type equivalent for each type in types.T, for example

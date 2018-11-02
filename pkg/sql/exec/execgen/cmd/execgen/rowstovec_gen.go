@@ -94,7 +94,7 @@ func genRowsToVec(wr io.Writer) error {
 		for _, width := range getWidths(semanticType) {
 			ct := sqlbase.ColumnType{SemanticType: semanticType, Width: width}
 			t := types.FromColumnType(ct)
-			if t == types.Unhandled {
+			if t == types.Unhandled || t == types.Decimal {
 				continue
 			}
 			conversion := columnConversion{

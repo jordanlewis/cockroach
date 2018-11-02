@@ -220,15 +220,15 @@ func (bytesCustomizer) getCmpOpAssignFunc() assignFunc {
 
 func (decimalCustomizer) getCmpOpAssignFunc() assignFunc {
 	return func(op overload, target, l, r string) string {
-		return fmt.Sprintf("%s = tree.CompareDecimals(&%s, &%s) %s 0",
+		return fmt.Sprintf("%s = misc.CmpTotal(&%s, &%s) %s 0",
 			target, l, r, op.OpStr)
 	}
 }
 
 func (decimalCustomizer) getBinOpAssignFunc() assignFunc {
 	return func(op overload, target, l, r string) string {
-		return fmt.Sprintf("if _, err := tree.DecimalCtx.%s(&%s, &%s, &%s); err != nil { panic(err) }",
-			binaryOpDecMethod[op.BinOp], target, l, r)
+		return fmt.Sprintf("%s.%s(&%s, &%s)",
+			target, binaryOpDecMethod[op.BinOp], l, r)
 	}
 }
 
