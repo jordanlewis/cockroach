@@ -16,6 +16,7 @@ package exec
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/cockroachdb/apd"
 
@@ -75,6 +76,8 @@ type ColVec interface {
 	// CopyWithSelInt16 copies vec, filtered by sel, into this ColVec. It replaces
 	// the contents of this ColVec.
 	CopyWithSelInt16(vec ColVec, sel []uint16, nSel uint16, colType types.T)
+
+	PrettyValueAt(idx uint16) string
 }
 
 // Nulls represents a list of potentially nullable values.
@@ -178,6 +181,10 @@ func (m memColumn) Decimal() []apd.Decimal {
 
 func (m memColumn) Col() interface{} {
 	return m.col
+}
+
+func (m memColumn) PrettyValueAt(idx uint16) string {
+	return fmt.Sprintf("%v", reflect.ValueOf(m.Col()).Index(int(idx)).Interface())
 }
 
 func (m memColumn) _TemplateType() []interface{} {

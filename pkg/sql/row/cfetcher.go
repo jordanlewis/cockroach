@@ -545,8 +545,13 @@ STATEMACHINE:
 				rf.machine.lastRowPrefix = prefix
 			}
 			// Process the current KV's value component.
-			if _, _, err := rf.processValue(ctx, sqlbase.FamilyID(0)); err != nil {
+			prettyKey, prettyVal, err := rf.processValue(ctx, sqlbase.FamilyID(0))
+			if err != nil {
 				return nil, err
+			}
+			if rf.traceKV {
+				fmt.Println("HI")
+				log.VEventf(ctx, 2, "fetched: %s -> %s", prettyKey, prettyVal)
 			}
 			if rf.table.isSecondaryIndex || len(rf.table.desc.Families) == 1 {
 				rf.machine.state[0] = stateDoneRow
@@ -618,9 +623,13 @@ STATEMACHINE:
 				return nil, scrub.WrapError(scrub.IndexKeyDecodingError, err)
 			}
 
-			// Process the current KV'rf value component.
-			if _, _, err := rf.processValue(ctx, familyID); err != nil {
+			// Process the current KV's value component.
+			prettyKey, prettyVal, err := rf.processValue(ctx, familyID)
+			if err != nil {
 				return nil, err
+			}
+			if rf.traceKV {
+				log.VEventf(ctx, 2, "fetched: %s -> %s", prettyKey, prettyVal)
 			}
 
 			if familyID == rf.table.maxColumnFamilyID {
@@ -664,6 +673,14 @@ func (rf *CFetcher) shiftState() {
 	rf.machine.state[2] = stateInvalid
 }
 
+func (rf *CFetcher) prettyVals(ordinals []int, rowIdx uint16) string {
+	var buf bytes.Buffer
+	for _, idx := range ordinals {
+		fmt.Fprintf(&buf, "/%v", rf.machine.colvecs[idx].PrettyValueAt(rowIdx))
+	}
+	return buf.String()
+}
+
 // processKV processes the given key/value, setting values in the row
 // accordingly. If debugStrings is true, returns pretty printed key and value
 // information in prettyKey/prettyValue (otherwise they are empty strings).
@@ -674,12 +691,10 @@ func (rf *CFetcher) processValue(
 
 	if rf.traceKV {
 		prettyKey = fmt.Sprintf(
-			"/%s/%s?",
+			"/%s/%s%s",
 			table.desc.Name,
 			table.index.Name,
-			// TODO(jordan): handle this case. Can pull out values from the column
-			// slices.
-			//rf.prettyEncDatums(table.keyValTypes, table.keyVals),
+			rf.prettyVals(table.indexColOrdinals, rf.machine.rowIdx),
 		)
 	}
 
@@ -752,6 +767,17 @@ func (rf *CFetcher) processValue(
 			if err != nil {
 				return "", "", scrub.WrapError(scrub.SecondaryIndexKeyExtraValueDecodingError, err)
 			}
+			if rf.traceKV {
+				prettyValue = rf.prettyVals(table.extraValColOrdinals, rf.machine.rowIdx)
+			}
+		}
+
+		if debugRowFetch {
+			if cHasExtraCols(table) {
+				log.Infof(ctx, "Scan %s -> %s", rf.machine.nextKV.Key, rf.prettyVals(table.extraValColOrdinals, rf.machine.rowIdx))
+			} else {
+				log.Infof(ctx, "Scan %s", rf.machine.nextKV.Key)
+			}
 		}
 
 		if len(valueBytes) > 0 {
@@ -805,13 +831,11 @@ func (rf *CFetcher) processValueSingle(
 			if err != nil {
 				return "", "", err
 			}
-			/*
-				if rf.traceKV {
-					prettyValue = value.String()
-				}
-			*/
+			if rf.traceKV {
+				prettyValue = rf.machine.colvecs[idx].PrettyValueAt(rf.machine.rowIdx)
+			}
 			if debugRowFetch {
-				log.Infof(ctx, "Scan %s -> %v", rf.machine.nextKV.Key, "?")
+				log.Infof(ctx, "Scan %s -> %v", rf.machine.nextKV.Key, prettyValue)
 			}
 			return prettyKey, prettyValue, nil
 		}
@@ -875,7 +899,7 @@ func (rf *CFetcher) processValueBytes(
 			return "", "", err
 		}
 		if rf.traceKV {
-			fmt.Fprintf(rf.machine.prettyValueBuf, "/?")
+			fmt.Fprintf(rf.machine.prettyValueBuf, "/%v", vec.PrettyValueAt(rf.machine.rowIdx))
 		}
 		valueColsFound++
 	}
