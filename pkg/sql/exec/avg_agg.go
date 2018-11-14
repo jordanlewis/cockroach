@@ -14,12 +14,7 @@
 
 package exec
 
-import (
-	"github.com/cockroachdb/apd"
-	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
-)
-
-type avgDecimalAgg struct {
+type avgFloatAgg struct {
 	done bool
 
 	groups  []bool
@@ -27,48 +22,48 @@ type avgDecimalAgg struct {
 		curIdx int
 		// groupSums[i] keeps track of the sum of elements belonging to the ith
 		// group.
-		groupSums []apd.Decimal
+		groupSums []float64
 		// groupCounts[i] keeps track of the number of elements that we've seen
 		// belonging to the ith group.
 		groupCounts []int64
 		// vec points to the output vector.
-		vec []apd.Decimal
+		vec []float64
 	}
 }
 
-var _ aggregateFunc = &avgDecimalAgg{}
+var _ aggregateFunc = &avgFloatAgg{}
 
-func (a *avgDecimalAgg) Init(groups []bool, v ColVec) {
+func (a *avgFloatAgg) Init(groups []bool, v ColVec) {
 	a.groups = groups
-	a.scratch.vec = v.Decimal()
-	a.scratch.groupSums = make([]apd.Decimal, len(a.scratch.vec))
+	a.scratch.vec = v.Float64()
+	a.scratch.groupSums = make([]float64, len(a.scratch.vec))
 	a.scratch.groupCounts = make([]int64, len(a.scratch.vec))
 	a.Reset()
 }
 
-func (a *avgDecimalAgg) Reset() {
-	copy(a.scratch.groupSums, zeroDecimalBatch)
+func (a *avgFloatAgg) Reset() {
+	copy(a.scratch.groupSums, zeroFloat64Batch)
 	copy(a.scratch.groupCounts, zeroInt64Batch)
-	copy(a.scratch.vec, zeroDecimalBatch)
+	copy(a.scratch.vec, zeroFloat64Batch)
 	a.scratch.curIdx = -1
 }
 
-func (a *avgDecimalAgg) CurrentOutputIndex() int {
+func (a *avgFloatAgg) CurrentOutputIndex() int {
 	return a.scratch.curIdx
 }
 
-func (a *avgDecimalAgg) SetOutputIndex(idx int) {
+func (a *avgFloatAgg) SetOutputIndex(idx int) {
 	if a.scratch.curIdx != -1 {
 		a.scratch.curIdx = idx
-		copy(a.scratch.groupSums[idx+1:], zeroDecimalBatch)
+		copy(a.scratch.groupSums[idx+1:], zeroFloat64Batch)
 		copy(a.scratch.groupCounts[idx+1:], zeroInt64Batch)
 		// TODO(asubiotto): We might not have to zero a.scratch.vec since we
 		// overwrite with an independent value.
-		copy(a.scratch.vec[idx+1:], zeroDecimalBatch)
+		copy(a.scratch.vec[idx+1:], zeroFloat64Batch)
 	}
 }
 
-func (a *avgDecimalAgg) Compute(b ColBatch, inputIdxs []uint32) {
+func (a *avgFloatAgg) Compute(b ColBatch, inputIdxs []uint32) {
 	if a.done {
 		return
 	}
@@ -79,16 +74,13 @@ func (a *avgDecimalAgg) Compute(b ColBatch, inputIdxs []uint32) {
 			// TODO(asubiotto): Wonder how best to template this part (and below).
 			// We'd like to do something similar to AssignFunc, where we have a
 			// separate method call on DDecimal per type.
-			a.scratch.vec[a.scratch.curIdx].SetInt64(a.scratch.groupCounts[a.scratch.curIdx])
-			if _, err := tree.DecimalCtx.Quo(&a.scratch.vec[a.scratch.curIdx], &a.scratch.groupSums[a.scratch.curIdx], &a.scratch.vec[a.scratch.curIdx]); err != nil {
-				panic(err)
-			}
+			a.scratch.vec[a.scratch.curIdx] = a.scratch.groupSums[a.scratch.curIdx] / a.scratch.vec[a.scratch.curIdx]
 		}
 		a.scratch.curIdx++
 		a.done = true
 		return
 	}
-	col, sel := b.ColVec(int(inputIdxs[0])).Decimal(), b.Selection()
+	col, sel := b.ColVec(int(inputIdxs[0])).Float64(), b.Selection()
 	if sel != nil {
 		sel = sel[:inputLen]
 		for _, i := range sel {
@@ -97,9 +89,8 @@ func (a *avgDecimalAgg) Compute(b ColBatch, inputIdxs []uint32) {
 				x = 1
 			}
 			a.scratch.curIdx += x
-			if _, err := tree.DecimalCtx.Add(&a.scratch.groupSums[a.scratch.curIdx], &a.scratch.groupSums[a.scratch.curIdx], &col[i]); err != nil {
-				panic(err)
-			}
+			a.scratch.vec[i] =
+			a.scratch.groupSums[a.scratch.curIdx] = a.scratch.groupSums[a.scratch.curIdx] + col[i]
 			a.scratch.groupCounts[a.scratch.curIdx]++
 		}
 	} else {
@@ -110,17 +101,12 @@ func (a *avgDecimalAgg) Compute(b ColBatch, inputIdxs []uint32) {
 				x = 1
 			}
 			a.scratch.curIdx += x
-			if _, err := tree.DecimalCtx.Add(&a.scratch.groupSums[a.scratch.curIdx], &a.scratch.groupSums[a.scratch.curIdx], &col[i]); err != nil {
-				panic(err)
-			}
+			a.scratch.groupSums[a.scratch.curIdx] = a.scratch.groupSums[a.scratch.curIdx] + col[i]
 			a.scratch.groupCounts[a.scratch.curIdx]++
 		}
 	}
 
 	for i := 0; i < a.scratch.curIdx; i++ {
-		a.scratch.vec[i].SetInt64(a.scratch.groupCounts[i])
-		if _, err := tree.DecimalCtx.Quo(&a.scratch.vec[i], &a.scratch.groupSums[i], &a.scratch.vec[i]); err != nil {
-			panic(err)
-		}
+		a.scratch.vec[i] = a.scratch.groupSums[i] / a.scratch.vec[i]
 	}
 }
