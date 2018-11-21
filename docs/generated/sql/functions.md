@@ -947,6 +947,8 @@ may increase either contention or retry errors, or both.</p>
 </span></td></tr>
 <tr><td><code>crdb_internal.set_vmodule(vmodule_string: <a href="string.html">string</a>) &rarr; <a href="int.html">int</a></code></td><td><span class="funcdesc"><p>This function is used for internal debugging purposes. Incorrect use can severely impact performance.</p>
 </span></td></tr>
+<tr><td><code>crdb_internal.stats(start_key: <a href="bytes.html">bytes</a>, end_key: <a href="bytes.html">bytes</a>) &rarr; <a href="int.html">int</a></code></td><td><span class="funcdesc"><p>This function is used to fetch the leaseholder corresponding to a request key</p>
+</span></td></tr>
 <tr><td><code>current_database() &rarr; <a href="string.html">string</a></code></td><td><span class="funcdesc"><p>Returns the current database.</p>
 </span></td></tr>
 <tr><td><code>current_schema() &rarr; <a href="string.html">string</a></code></td><td><span class="funcdesc"><p>Returns the current schema.</p>
