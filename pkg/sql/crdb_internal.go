@@ -763,7 +763,9 @@ var crdbInternalClusterQueriesTable = virtualSchemaTable{
 }
 
 func populateQueriesTable(
-	ctx context.Context, addRow func(...tree.Datum) error, response *serverpb.ListSessionsResponse,
+	ctx context.Context,
+	addRow func(...tree.Datum) error,
+	response *serverpb.ListSessionsResponse,
 ) error {
 	for _, session := range response.Sessions {
 		for _, query := range session.ActiveQueries {
@@ -860,7 +862,9 @@ var crdbInternalClusterSessionsTable = virtualSchemaTable{
 }
 
 func populateSessionsTable(
-	ctx context.Context, addRow func(...tree.Datum) error, response *serverpb.ListSessionsResponse,
+	ctx context.Context,
+	addRow func(...tree.Datum) error,
+	response *serverpb.ListSessionsResponse,
 ) error {
 	for _, session := range response.Sessions {
 		// Generate active_queries and oldest_query_start
@@ -1174,7 +1178,11 @@ CREATE TABLE crdb_internal.table_indexes (
   index_id         INT NOT NULL,
   index_name       STRING NOT NULL,
   index_type       STRING NOT NULL,
-  is_unique        BOOL NOT NULL
+  is_unique        BOOL NOT NULL,
+  start_key        BYTES NOT NULL,
+  end_key          BYTES NOT NULL,
+  approx_bytes     INT NOT NULL,
+  total_ranges     INT NOT NULL
 )
 `,
 	populate: func(ctx context.Context, p *planner, dbContext *DatabaseDescriptor, addRow func(...tree.Datum) error) error {
@@ -1184,6 +1192,23 @@ CREATE TABLE crdb_internal.table_indexes (
 			func(db *DatabaseDescriptor, _ string, table *TableDescriptor) error {
 				tableID := tree.NewDInt(tree.DInt(table.ID))
 				tableName := tree.NewDString(table.Name)
+				span := table.PrimaryIndexSpan()
+				startKey, err := keys.Addr(span.Key)
+				if err != nil {
+					return err
+				}
+				endKey, err := keys.Addr(span.EndKey)
+				if err != nil {
+					return err
+				}
+				req := &serverpb.SpanStatsRequest{
+					StartKey: startKey,
+					EndKey:   endKey,
+				}
+				resp, err := p.extendedEvalCtx.StatusServer.SpanStats(ctx, req)
+				if err != nil {
+					return err
+				}
 				if err := addRow(
 					tableID,
 					tableName,
@@ -1191,10 +1216,31 @@ CREATE TABLE crdb_internal.table_indexes (
 					tree.NewDString(table.PrimaryIndex.Name),
 					primary,
 					tree.MakeDBool(tree.DBool(table.PrimaryIndex.Unique)),
+					tree.NewDBytes(tree.DBytes([]byte(span.Key))),
+					tree.NewDBytes(tree.DBytes([]byte(span.EndKey))),
+					tree.NewDInt(tree.DInt(resp.ApproximateDiskBytes)),
+					tree.NewDInt(tree.DInt(resp.RangeCount)),
 				); err != nil {
 					return err
 				}
 				for _, idx := range table.Indexes {
+					span := table.IndexSpan(idx.ID)
+					startKey, err := keys.Addr(span.Key)
+					if err != nil {
+						return err
+					}
+					endKey, err := keys.Addr(span.EndKey)
+					if err != nil {
+						return err
+					}
+					req := &serverpb.SpanStatsRequest{
+						StartKey: startKey,
+						EndKey:   endKey,
+					}
+					resp, err := p.extendedEvalCtx.StatusServer.SpanStats(ctx, req)
+					if err != nil {
+						return err
+					}
 					if err := addRow(
 						tableID,
 						tableName,
@@ -1202,6 +1248,10 @@ CREATE TABLE crdb_internal.table_indexes (
 						tree.NewDString(idx.Name),
 						secondary,
 						tree.MakeDBool(tree.DBool(idx.Unique)),
+						tree.NewDBytes(tree.DBytes([]byte(span.Key))),
+						tree.NewDBytes(tree.DBytes([]byte(span.EndKey))),
+						tree.NewDInt(tree.DInt(resp.ApproximateDiskBytes)),
+						tree.NewDInt(tree.DInt(resp.RangeCount)),
 					); err != nil {
 						return err
 					}
