@@ -308,7 +308,7 @@ func (p *planner) makePlan(ctx context.Context, stmt Statement) error {
 	if err != nil {
 		return err
 	}
-	cols := planColumns(p.curPlan.plan)
+	cols := p.curPlan.columns()
 	if stmt.ExpectedTypes != nil {
 		if !stmt.ExpectedTypes.TypesEqual(cols) {
 			return pgerror.NewError(pgerror.CodeFeatureNotSupportedError,
@@ -632,7 +632,7 @@ func (p *planTop) start(params runParams) error {
 
 // columns retrieves the plan's columns.
 func (p *planTop) columns() sqlbase.ResultColumns {
-	return planColumns(p.plan)
+	return planColumnsWithoutHidden(p.plan)
 }
 
 func (p *planTop) collectSpans(params runParams) (readSpans, writeSpans roachpb.Spans, err error) {

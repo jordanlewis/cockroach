@@ -3334,6 +3334,7 @@ func (dsp *DistSQLPlanner) createPlanForWindow(
 				distsqlpb.PostProcessSpec{},
 				newResultTypes,
 			)
+			fmt.Println("WIndow result types:", newResultTypes)
 		} else {
 			// Set up the output routers from the previous stage.
 			// We use hash routers with hashing on the columns
@@ -3392,6 +3393,7 @@ func (dsp *DistSQLPlanner) createPlanForWindow(
 			plan.ResultTypes = newResultTypes
 		}
 	}
+	fmt.Println("WIndow result types:", plan.ResultTypes)
 
 	// We probably added/removed columns throughout all the stages of windowers,
 	// so we need to update PlanToStreamColMap.

@@ -352,6 +352,7 @@ func (ex *connExecutor) execBind(
 		}
 	}
 
+	fmt.Println("Prepare portal, cols=", ps.Columns)
 	numCols := len(ps.Columns)
 	if (len(bindCmd.OutFormats) > 1) && (len(bindCmd.OutFormats) != numCols) {
 		return retErr(pgwirebase.NewProtocolViolationErrorf(

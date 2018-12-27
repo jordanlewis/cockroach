@@ -897,7 +897,9 @@ func (c *conn) bufferRow(
 ) {
 	c.msgBuilder.initMsg(pgwirebase.ServerMsgDataRow)
 	c.msgBuilder.putInt16(int16(len(row)))
+	fmt.Println("Len row: ", len(row), len(formatCodes))
 	for i, col := range row {
+		fmt.Println(i, col)
 		fmtCode := pgwirebase.FormatText
 		if formatCodes != nil {
 			fmtCode = formatCodes[i]

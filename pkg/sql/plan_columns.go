@@ -36,6 +36,20 @@ func planColumns(plan planNode) sqlbase.ResultColumns {
 	return getPlanColumns(plan, false)
 }
 
+// planColumnsWithoutHidden is like planColumns but it omits hidden columns.
+func planColumnsWithoutHidden(plan planNode) sqlbase.ResultColumns {
+	cols := getPlanColumns(plan, false)
+	idx := 0
+	for i := range cols {
+		if cols[i].Hidden {
+			continue
+		}
+		cols[idx] = cols[i]
+		idx++
+	}
+	return cols[:idx]
+}
+
 // planMutableColumns is similar to planColumns() but returns a
 // ResultColumns slice that can be modified by the caller.
 func planMutableColumns(plan planNode) sqlbase.ResultColumns {
