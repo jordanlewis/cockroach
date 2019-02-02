@@ -223,7 +223,9 @@ func runDebugZip(cmd *cobra.Command, args []string) error {
 		{"SELECT * FROM crdb_internal.node_metrics;", metricsName},
 		{"SELECT * FROM crdb_internal.gossip_alerts;", alertsName},
 	} {
-		if err := dumpTableDataForZip(z, sqlConn, item.query, item.name); err != nil {
+		ctx, cancel := timeoutCtx(baseCtx)
+		defer cancel()
+		if err := dumpTableDataForZip(ctx, z, sqlConn, item.query, item.name); err != nil {
 			return errors.Wrap(err, item.name)
 		}
 	}
@@ -433,13 +435,15 @@ func runDebugZip(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func dumpTableDataForZip(z *zipper, conn *sqlConn, query string, name string) error {
+func dumpTableDataForZip(
+	ctx context.Context, z *zipper, conn *sqlConn, query string, name string,
+) error {
 	w, err := z.create(name, time.Time{})
 	if err != nil {
 		return err
 	}
 
-	if err = runQueryAndFormatResults(conn, w, makeQuery(query)); err != nil {
+	if err = runQueryAndFormatResults(ctx, conn, w, makeQuery(query)); err != nil {
 		if err := z.createError(name, err); err != nil {
 			return err
 		}

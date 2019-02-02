@@ -44,10 +44,8 @@ import (
 
 type sqlConnI interface {
 	driver.Conn
-	//lint:ignore SA1019 TODO(mjibson): clean this up to use go1.8 APIs
-	driver.Execer
-	//lint:ignore SA1019 TODO(mjibson): clean this up to use go1.8 APIs
-	driver.Queryer
+	driver.ExecerContext
+	driver.QueryerContext
 }
 
 type sqlConn struct {
@@ -104,7 +102,8 @@ func (c *sqlConn) ensureConn() error {
 		}
 		if c.reconnecting && c.dbName != "" {
 			// Attempt to reset the current database.
-			if _, err := conn.(sqlConnI).Exec(
+			if _, err := conn.(sqlConnI).ExecContext(
+				context.TODO(),
 				`SET DATABASE = `+tree.NameStringP(&c.dbName), nil,
 			); err != nil {
 				fmt.Fprintf(stderr, "warning: unable to restore current database: %v\n", err)
@@ -330,14 +329,27 @@ func (c *sqlConn) ExecTxn(fn func(*sqlConn) error) (err error) {
 	})
 }
 
+func valuesToNamedValues(values []driver.Value) []driver.NamedValue {
+	ret := make([]driver.NamedValue, len(values))
+	for i := range values {
+		ret[i].Value = values[i]
+		ret[i].Ordinal = i + 1
+	}
+	return ret
+}
+
 func (c *sqlConn) Exec(query string, args []driver.Value) error {
+	return c.ExecContext(context.Background(), query, valuesToNamedValues(args))
+}
+
+func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) error {
 	if err := c.ensureConn(); err != nil {
 		return err
 	}
 	if sqlCtx.echo {
 		fmt.Fprintln(stderr, ">", query)
 	}
-	_, err := c.conn.Exec(query, args)
+	_, err := c.conn.ExecContext(ctx, query, args)
 	if err == driver.ErrBadConn {
 		c.reconnecting = true
 		c.Close()
@@ -346,13 +358,19 @@ func (c *sqlConn) Exec(query string, args []driver.Value) error {
 }
 
 func (c *sqlConn) Query(query string, args []driver.Value) (*sqlRows, error) {
+	return c.QueryContext(context.Background(), query, valuesToNamedValues(args))
+}
+
+func (c *sqlConn) QueryContext(
+	ctx context.Context, query string, args []driver.NamedValue,
+) (*sqlRows, error) {
 	if err := c.ensureConn(); err != nil {
 		return nil, err
 	}
 	if sqlCtx.echo {
 		fmt.Fprintln(stderr, ">", query)
 	}
-	rows, err := c.conn.Query(query, args)
+	rows, err := c.conn.QueryContext(ctx, query, args)
 	if err == driver.ErrBadConn {
 		c.reconnecting = true
 		c.Close()
@@ -364,7 +382,7 @@ func (c *sqlConn) Query(query string, args []driver.Value) (*sqlRows, error) {
 }
 
 func (c *sqlConn) QueryRow(query string, args []driver.Value) ([]driver.Value, error) {
-	rows, err := makeQuery(query, args...)(c)
+	rows, err := makeQuery(query, args...)(context.TODO(), c)
 	if err != nil {
 		return nil, err
 	}
@@ -554,10 +572,10 @@ func makeSQLClient(appName string) (*sqlConn, error) {
 	return makeSQLConn(sqlURL), nil
 }
 
-type queryFunc func(conn *sqlConn) (*sqlRows, error)
+type queryFunc func(ctx context.Context, conn *sqlConn) (*sqlRows, error)
 
 func makeQuery(query string, parameters ...driver.Value) queryFunc {
-	return func(conn *sqlConn) (*sqlRows, error) {
+	return func(ctx context.Context, conn *sqlConn) (*sqlRows, error) {
 		// driver.Value is an alias for interface{}, but must adhere to a restricted
 		// set of types when being passed to driver.Queryer.Query (see
 		// driver.IsValue). We use driver.DefaultParameterConverter to perform the
@@ -571,14 +589,16 @@ func makeQuery(query string, parameters ...driver.Value) queryFunc {
 				return nil, err
 			}
 		}
-		return conn.Query(query, parameters)
+		return conn.QueryContext(ctx, query, valuesToNamedValues(parameters))
 	}
 }
 
 // runQuery takes a 'query' with optional 'parameters'.
 // It runs the sql query and returns a list of columns names and a list of rows.
-func runQuery(conn *sqlConn, fn queryFunc, showMoreChars bool) ([]string, [][]string, error) {
-	rows, err := fn(conn)
+func runQuery(
+	ctx context.Context, conn *sqlConn, fn queryFunc, showMoreChars bool,
+) ([]string, [][]string, error) {
+	rows, err := fn(ctx, conn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -589,8 +609,10 @@ func runQuery(conn *sqlConn, fn queryFunc, showMoreChars bool) ([]string, [][]st
 
 // runQueryRaw takes a 'query' with optional 'parameters'.
 // It returns the result rows as strings with minimal changes (no escaping, etc).
-func runQueryRaw(conn *sqlConn, fn queryFunc) (cols []string, results [][]string, err error) {
-	rows, err := fn(conn)
+func runQueryRaw(
+	ctx context.Context, conn *sqlConn, fn queryFunc,
+) (cols []string, results [][]string, err error) {
+	rows, err := fn(ctx, conn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -660,9 +682,9 @@ var tagsWithRowsAffected = map[string]struct{}{
 
 // runQueryAndFormatResults takes a 'query' with optional 'parameters'.
 // It runs the sql query and writes output to 'w'.
-func runQueryAndFormatResults(conn *sqlConn, w io.Writer, fn queryFunc) error {
+func runQueryAndFormatResults(ctx context.Context, conn *sqlConn, w io.Writer, fn queryFunc) error {
 	startTime := timeutil.Now()
-	rows, err := fn(conn)
+	rows, err := fn(ctx, conn)
 	if err != nil {
 		return handleCopyError(conn, err)
 	}

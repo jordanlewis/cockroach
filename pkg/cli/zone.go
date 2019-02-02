@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -42,7 +43,7 @@ func runQueryRawMaybeExperimental(conn *sqlConn, txnFn func(runQuery runQueryRaw
 	withExecute := ""
 	eqSign := "="
 	runQueryFn := func(q string, parameters ...driver.Value) ([]string, [][]string, error) {
-		return runQueryRaw(conn, makeQuery(fmt.Sprintf(q, withExecute, eqSign), parameters...))
+		return runQueryRaw(context.TODO(), conn, makeQuery(fmt.Sprintf(q, withExecute, eqSign), parameters...))
 	}
 	queryFn := func(_ *sqlConn) error { return txnFn(runQueryFn) }
 

@@ -16,6 +16,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql/driver"
 	"fmt"
 	"net/url"
@@ -120,8 +121,10 @@ func TestRunQuery(t *testing.T) {
 
 	var b bytes.Buffer
 
+	ctx := context.Background()
+
 	// Non-query statement.
-	if err := runQueryAndFormatResults(conn, &b, makeQuery(`SET DATABASE=system`)); err != nil {
+	if err := runQueryAndFormatResults(ctx, conn, &b, makeQuery(`SET DATABASE=system`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +137,7 @@ SET
 	b.Reset()
 
 	// Use system database for sample query/output as they are fairly fixed.
-	cols, rows, err := runQuery(conn, makeQuery(`SHOW COLUMNS FROM system.namespace`), false)
+	cols, rows, err := runQuery(ctx, conn, makeQuery(`SHOW COLUMNS FROM system.namespace`), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ SET
 		t.Fatalf("expected:\n%v\ngot:\n%v", expectedRows, rows)
 	}
 
-	if err := runQueryAndFormatResults(conn, &b,
+	if err := runQueryAndFormatResults(ctx, conn, &b,
 		makeQuery(`SHOW COLUMNS FROM system.namespace`)); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +184,7 @@ SET
 	b.Reset()
 
 	// Test placeholders.
-	if err := runQueryAndFormatResults(conn, &b,
+	if err := runQueryAndFormatResults(ctx, conn, &b,
 		makeQuery(`SELECT * FROM system.namespace WHERE name=$1`, "descriptor")); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +201,7 @@ SET
 	b.Reset()
 
 	// Test multiple results.
-	if err := runQueryAndFormatResults(conn, &b,
+	if err := runQueryAndFormatResults(ctx, conn, &b,
 		makeQuery(`SELECT 1 AS "1"; SELECT 2 AS "2", 3 AS "3"; SELECT 'hello' AS "'hello'"`)); err != nil {
 		t.Fatal(err)
 	}

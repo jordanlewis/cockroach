@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 
 	"github.com/cockroachdb/cockroach/pkg/security"
@@ -53,7 +54,7 @@ func runGetUser(cmd *cobra.Command, args []string) error {
 	if err := conn.requireServerVersion(verGetUser); err != nil {
 		return err
 	}
-	return runQueryAndFormatResults(conn, os.Stdout,
+	return runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 		makeQuery(`
 SELECT username AS user_name,
        "isRole" as is_role
@@ -78,7 +79,7 @@ func runLsUsers(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
-	return runQueryAndFormatResults(conn, os.Stdout,
+	return runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 		makeQuery(`SHOW USERS`))
 }
 
@@ -105,7 +106,7 @@ func runRmUser(cmd *cobra.Command, args []string) error {
 	if err := conn.requireServerVersion(verRmUser); err != nil {
 		return err
 	}
-	return runQueryAndFormatResults(conn, os.Stdout,
+	return runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 		makeQuery(`DROP USER $1`, args[0]))
 }
 
@@ -153,17 +154,17 @@ func runSetUser(cmd *cobra.Command, args []string) error {
 	}
 
 	if password {
-		if err := runQueryAndFormatResults(conn, os.Stdout,
+		if err := runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 			makeQuery(`CREATE USER $1 PASSWORD $2`, args[0], pwdString),
 		); err != nil {
 			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == pgerror.CodeDuplicateObjectError {
-				return runQueryAndFormatResults(conn, os.Stdout,
+				return runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 					makeQuery(`ALTER USER $1 WITH PASSWORD $2`, args[0], pwdString))
 			}
 			return err
 		}
 	}
-	return runQueryAndFormatResults(conn, os.Stdout,
+	return runQueryAndFormatResults(context.Background(), conn, os.Stdout,
 		makeQuery(`CREATE USER IF NOT EXISTS $1`, args[0]))
 }
 

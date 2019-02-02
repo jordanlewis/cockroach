@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -41,8 +42,9 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	readline "github.com/knz/go-libedit"
 	"github.com/lib/pq"
-	isatty "github.com/mattn/go-isatty"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -753,7 +755,7 @@ func (c *cliState) GetCompletions(_ string) []string {
 		return nil
 	}
 
-	_, pgErr := c.serverSideParse(sql)
+	_, pgErr := c.serverSideParse(context.TODO(), sql)
 	if pgErr != nil {
 		if pgErr.Message == "help token in input" && strings.HasPrefix(pgErr.Hint, "help:") {
 			fmt.Fprintf(c.ins.Stdout(), "\nSuggestion:\n%s\n", pgErr.Hint[6:])
@@ -1090,9 +1092,11 @@ func (c *cliState) doPrepareStatementLine(
 	return checkState
 }
 
-func (c *cliState) doCheckStatement(startState, contState, execState cliStateEnum) cliStateEnum {
+func (c *cliState) doCheckStatement(
+	ctx context.Context, startState, contState, execState cliStateEnum,
+) cliStateEnum {
 	// From here on, client-side syntax checking is enabled.
-	parsedStmts, pgErr := c.serverSideParse(c.concatLines)
+	parsedStmts, pgErr := c.serverSideParse(ctx, c.concatLines)
 	if pgErr != nil {
 		if pgErr.Message == "help token in input" && strings.HasPrefix(pgErr.Hint, "help:") {
 			fmt.Println(pgErr.Hint[6:])
@@ -1140,7 +1144,7 @@ func (c *cliState) doCheckStatement(startState, contState, execState cliStateEnu
 	return nextState
 }
 
-func (c *cliState) doRunStatement(nextState cliStateEnum) cliStateEnum {
+func (c *cliState) doRunStatement(ctx context.Context, nextState cliStateEnum) cliStateEnum {
 	// Once we send something to the server, the txn status may change arbitrarily.
 	// Clear the known state so that further entries do not assume anything.
 	c.lastKnownTxnStatus = " ?"
@@ -1160,8 +1164,23 @@ func (c *cliState) doRunStatement(nextState cliStateEnum) cliStateEnum {
 		}
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, unix.SIGINT)
+	go func() {
+		for _ = range signalCh {
+			fmt.Println("received interrupt")
+			cancel()
+		}
+	}()
+	defer signal.Stop(signalCh)
+	defer close(signalCh)
+
 	// Now run the statement/query.
-	c.exitErr = runQueryAndFormatResults(c.conn, os.Stdout, makeQuery(c.concatLines))
+
+	c.exitErr = runQueryAndFormatResults(ctx, c.conn, os.Stdout, makeQuery(c.concatLines))
 	if c.exitErr != nil {
 		fmt.Fprintln(stderr, c.exitErr)
 		maybeShowErrorDetails(stderr, c.exitErr, false)
@@ -1190,7 +1209,7 @@ func (c *cliState) doRunStatement(nextState cliStateEnum) cliStateEnum {
 			if strings.Contains(c.autoTrace, "kv") {
 				traceType = "kv"
 			}
-			if err := runQueryAndFormatResults(c.conn, os.Stdout,
+			if err := runQueryAndFormatResults(ctx, c.conn, os.Stdout,
 				makeQuery(fmt.Sprintf("SHOW %s TRACE FOR SESSION", traceType))); err != nil {
 				fmt.Fprintln(stderr, err)
 				maybeShowErrorDetails(stderr, err, false)
@@ -1255,6 +1274,8 @@ func (c *cliState) doDecidePath() cliStateEnum {
 // a prompt to the user for each statement.
 func runInteractive(conn *sqlConn) (exitErr error) {
 	c := cliState{conn: conn}
+
+	ctx := context.Background()
 
 	state := cliStart
 	for {
@@ -1347,10 +1368,10 @@ func runInteractive(conn *sqlConn) (exitErr error) {
 			)
 
 		case cliCheckStatement:
-			state = c.doCheckStatement(cliStartLine, cliContinueLine, cliRunStatement)
+			state = c.doCheckStatement(ctx, cliStartLine, cliContinueLine, cliRunStatement)
 
 		case cliRunStatement:
-			state = c.doRunStatement(cliStartLine)
+			state = c.doRunStatement(ctx, cliStartLine)
 
 		default:
 			panic(fmt.Sprintf("unknown state: %d", state))
@@ -1368,7 +1389,7 @@ func (c *cliState) runStatements(stmts []string) error {
 		// because we need a different error handling mechanism:
 		// the error, if any, must not be printed to stderr if
 		// we are returning directly.
-		c.exitErr = runQueryAndFormatResults(c.conn, os.Stdout, makeQuery(stmt))
+		c.exitErr = runQueryAndFormatResults(context.TODO(), c.conn, os.Stdout, makeQuery(stmt))
 		if c.exitErr != nil {
 			if !c.errExit && i < len(stmts)-1 {
 				// Print the error now because we don't get a chance later.
@@ -1477,8 +1498,10 @@ func (c *cliState) tryEnableCheckSyntax() {
 // If the syntax is correct, the function returns the statement
 // decomposition in the first return value. If it is not, the function
 // assembles a pgerror.Error with suitable Detail and Hint fields.
-func (c *cliState) serverSideParse(sql string) (stmts []string, pgErr *pgerror.Error) {
-	cols, rows, err := runQuery(c.conn, makeQuery("SHOW SYNTAX "+lex.EscapeSQLString(sql)), true)
+func (c *cliState) serverSideParse(
+	ctx context.Context, sql string,
+) (stmts []string, pgErr *pgerror.Error) {
+	cols, rows, err := runQuery(ctx, c.conn, makeQuery("SHOW SYNTAX "+lex.EscapeSQLString(sql)), true)
 	if err != nil {
 		// The query failed with some error. This is not a syntax error
 		// detected by SHOW SYNTAX (those show up as valid rows) but

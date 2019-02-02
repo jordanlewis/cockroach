@@ -63,6 +63,7 @@ func runLsNodes(cmd *cobra.Command, args []string) error {
 	}
 
 	_, rows, err := runQuery(
+		context.Background(),
 		conn,
 		makeQuery(`SELECT node_id FROM crdb_internal.gossip_liveness
                WHERE decommissioning = false OR split_part(expiration,',',1)::decimal > now()::decimal`),
@@ -223,17 +224,18 @@ FROM crdb_internal.gossip_liveness JOIN crdb_internal.gossip_nodes USING (node_i
 
 	queryString := "SELECT * FROM " + joinUsingID(queriesToJoin)
 
+	ctx := context.Background()
 	switch len(args) {
 	case 0:
 		query := makeQuery(queryString + " ORDER BY id")
-		return runQuery(conn, query, false)
+		return runQuery(ctx, conn, query, false)
 	case 1:
 		nodeID, err := strconv.Atoi(args[0])
 		if err != nil {
 			return nil, nil, errors.Errorf("could not parse node_id %s", args[0])
 		}
 		query := makeQuery(queryString+" WHERE id = $1", nodeID)
-		headers, rows, err := runQuery(conn, query, false)
+		headers, rows, err := runQuery(ctx, conn, query, false)
 		if err != nil {
 			return nil, nil, err
 		}
