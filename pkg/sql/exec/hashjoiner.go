@@ -455,7 +455,7 @@ func (ht *hashTable) loadBatch(batch ColBatch) {
 // initHash initializes the hash value of each key to its initial state for
 // rehashing purposes.
 func (ht *hashTable) initHash(buckets []uint64, nKeys uint64) {
-	for i := uint64(0); i < nKeys; i++ {
+	for i := range buckets[:nKeys] {
 		buckets[i] = 1
 	}
 }
@@ -467,7 +467,7 @@ func (ht *hashTable) initHash(buckets []uint64, nKeys uint64) {
 // finalizeHash takes each key's hash value and applies a final transformation
 // onto it so that it fits within the hashTable's bucket size.
 func (ht *hashTable) finalizeHash(buckets []uint64, nKeys uint64) {
-	for i := uint64(0); i < nKeys; i++ {
+	for i := range buckets[:nKeys] {
 		// Since bucketSize is a power of 2, modulo bucketSize could be optimized
 		// into a bitwise operation which improves benchmark performance by 20%.
 		// In effect, the following code is equivalent to (but faster than):
@@ -542,7 +542,7 @@ func (builder *hashJoinBuilder) exec() {
 	// buckets is used to store the computed hash value of each key.
 	nKeys := len(builder.ht.keyCols)
 	keyCols := make([]ColVec, nKeys)
-	for i := 0; i < nKeys; i++ {
+	for i := range keyCols {
 		keyCols[i] = builder.ht.vals[builder.ht.keyCols[i]]
 	}
 
@@ -766,16 +766,16 @@ func (prober *hashJoinProber) exec() {
 // toCheck with all indices in the range [0, batchSize).
 func (prober *hashJoinProber) lookupInitial(batchSize uint16, sel []uint16) {
 	prober.ht.computeBuckets(prober.buckets, prober.keys, uint64(batchSize), sel)
-	for i := uint16(0); i < batchSize; i++ {
+	for i := range prober.groupID[:batchSize] {
 		prober.groupID[i] = prober.ht.first[prober.buckets[i]]
-		prober.toCheck[i] = i
+		prober.toCheck[i] = uint16(i)
 	}
 }
 
 // findNext determines the id of the next key inside the groupID buckets for
 // each equality column key in toCheck.
 func (prober *hashJoinProber) findNext(nToCheck uint16) {
-	for i := uint16(0); i < nToCheck; i++ {
+	for i := range prober.toCheck[:nToCheck] {
 		prober.groupID[prober.toCheck[i]] = prober.ht.next[prober.groupID[prober.toCheck[i]]]
 	}
 }
@@ -798,7 +798,7 @@ func (prober *hashJoinProber) check(nToCheck uint16, sel []uint16) uint16 {
 	prober.checkCols(nToCheck, sel)
 
 	nDiffers := uint16(0)
-	for i := uint16(0); i < nToCheck; i++ {
+	for i := range prober.toCheck[:nToCheck] {
 		if !prober.differs[prober.toCheck[i]] {
 			// If the current key matches with the probe key, we want to update head
 			// with the current key if it has not been set yet.
@@ -865,13 +865,13 @@ func (prober *hashJoinProber) congregate(nResults uint16, batch ColBatch, batchS
 		// In order to determine which rows to emit for the outer join on the build
 		// table in the end, we need to mark the matched build table rows.
 		if prober.spec.outer {
-			for i := uint16(0); i < nResults; i++ {
+			for i := range prober.buildIdx[:nResults] {
 				if !prober.probeRowUnmatched[i] {
 					prober.buildRowMatched[prober.buildIdx[i]] = true
 				}
 			}
 		} else {
-			for i := uint16(0); i < nResults; i++ {
+			for i := range prober.buildIdx[:nResults] {
 				prober.buildRowMatched[prober.buildIdx[i]] = true
 			}
 		}
@@ -890,7 +890,7 @@ func (prober *hashJoinProber) distinctCheck(nToCheck uint16, sel []uint16) uint1
 
 	// Select the indices that differ and put them into toCheck.
 	nDiffers := uint16(0)
-	for i := uint16(0); i < nToCheck; i++ {
+	for i := range prober.toCheck[:nToCheck] {
 		if prober.differs[prober.toCheck[i]] {
 			prober.differs[prober.toCheck[i]] = false
 			prober.toCheck[nDiffers] = prober.toCheck[i]

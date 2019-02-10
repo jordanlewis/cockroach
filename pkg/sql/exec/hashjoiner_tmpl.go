@@ -89,7 +89,7 @@ func _CHECK_COL_BODY(
 	_BUILD_HAS_NULLS bool,
 ) { // */}}
 	// {{define "checkColBody"}}
-	for i := uint16(0); i < nToCheck; i++ {
+	for i := range prober.toCheck[:nToCheck] {
 		// keyID of 0 is reserved to represent the end of the next chain.
 
 		if keyID := prober.groupID[prober.toCheck[i]]; keyID != 0 {
@@ -138,7 +138,7 @@ func _CHECK_COL_WITH_NULLS(
 
 func _REHASH_BODY(buckets []uint64, keys []interface{}, nKeys uint64, _SEL_STRING string) { // */}}
 	// {{define "rehashBody"}}
-	for i := uint64(0); i < nKeys; i++ {
+	for i := range buckets[:nKeys] {
 		v := keys[_SEL_IND]
 		var hash uint64
 		_ASSIGN_HASH(hash, v)
