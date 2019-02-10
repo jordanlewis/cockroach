@@ -73,8 +73,8 @@ func (m *memColumn) AppendWithSel(
 		toCol := append(m._TemplateType()[:toLength], make([]_GOTYPE, batchSize)...)
 		fromCol := vec._TemplateType()
 
-		for i := uint16(0); i < batchSize; i++ {
-			toCol[uint64(i)+toLength] = fromCol[sel[i]]
+		for i, idx := range sel[:batchSize] {
+			toCol[uint64(i)+toLength] = fromCol[idx]
 		}
 
 		m.col = toCol
@@ -85,8 +85,8 @@ func (m *memColumn) AppendWithSel(
 
 	if batchSize > 0 {
 		m.nulls = append(m.nulls, make([]int64, (batchSize-1)>>6+1)...)
-		for i := uint16(0); i < batchSize; i++ {
-			if vec.NullAt(sel[i]) {
+		for i, idx := range sel[:batchSize] {
+			if vec.NullAt(idx) {
 				m.SetNull64(toLength + uint64(i))
 			}
 		}
@@ -115,16 +115,16 @@ func (m *memColumn) CopyWithSelInt64(vec ColVec, sel []uint64, nSel uint16, colT
 		fromCol := vec._TemplateType()
 
 		if vec.HasNulls() {
-			for i := uint16(0); i < nSel; i++ {
-				if vec.NullAt64(sel[i]) {
-					m.SetNull(i)
+			for i, idx := range sel[:nSel] {
+				if vec.NullAt64(idx) {
+					m.SetNull(uint16(i))
 				} else {
-					toCol[i] = fromCol[sel[i]]
+					toCol[i] = fromCol[idx]
 				}
 			}
 		} else {
-			for i := uint16(0); i < nSel; i++ {
-				toCol[i] = fromCol[sel[i]]
+			for i, idx := range sel[:nSel] {
+				toCol[i] = fromCol[idx]
 			}
 		}
 		// {{end}}
@@ -151,8 +151,8 @@ func (m *memColumn) CopyWithSelInt16(vec ColVec, sel []uint16, nSel uint16, colT
 				}
 			}
 		} else {
-			for i := uint16(0); i < nSel; i++ {
-				toCol[i] = fromCol[sel[i]]
+			for i, idx := range sel[:nSel] {
+				toCol[i] = fromCol[idx]
 			}
 		}
 		// {{end}}
@@ -174,23 +174,24 @@ func (m *memColumn) CopyWithSelAndNilsInt64(
 
 		if vec.HasNulls() {
 			// TODO(jordan): copy the null arrays in batch.
-			for i := uint16(0); i < nSel; i++ {
+			nils = nils[:nSel]
+			for i, idx := range sel[:nSel] {
 				if nils[i] {
-					m.SetNull(i)
+					m.SetNull(uint16(i))
 				} else {
-					if vec.NullAt64(sel[i]) {
-						m.SetNull(i)
+					if vec.NullAt64(idx) {
+						m.SetNull(uint16(i))
 					} else {
-						toCol[i] = fromCol[sel[i]]
+						toCol[i] = fromCol[idx]
 					}
 				}
 			}
 		} else {
-			for i := uint16(0); i < nSel; i++ {
+			for i, idx := range sel[:nSel] {
 				if nils[i] {
-					m.SetNull(i)
+					m.SetNull(uint16(i))
 				} else {
-					toCol[i] = fromCol[sel[i]]
+					toCol[i] = fromCol[idx]
 				}
 			}
 		}
