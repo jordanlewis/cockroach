@@ -163,10 +163,17 @@ func (m *outbox) flush(ctx context.Context) error {
 	sendErr := m.stream.Send(msg)
 	if sendErr != nil {
 		// Make sure the stream is not used any more.
-		m.stream = nil
 		if log.V(1) {
 			log.Errorf(ctx, "outbox flush error: %s", sendErr)
 		}
+		for {
+			_, err := m.stream.Recv()
+			if err != nil {
+				log.Errorf(ctx, "server status was %s", err)
+				break
+			}
+		}
+		m.stream = nil
 	} else if log.V(3) {
 		log.Infof(ctx, "outbox flushed")
 	}
