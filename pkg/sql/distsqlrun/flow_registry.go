@@ -244,7 +244,7 @@ func (fr *flowRegistry) RegisterFlow(
 
 func (fr *flowRegistry) cancelPendingStreamsLocked(id distsqlpb.FlowID) []RowReceiver {
 	entry := fr.flows[id]
-	if entry.flow == nil {
+	if entry == nil || entry.flow == nil {
 		return nil
 	}
 	pendingReceivers := make([]RowReceiver, 0)
