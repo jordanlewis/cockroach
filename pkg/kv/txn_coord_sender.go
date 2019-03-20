@@ -463,12 +463,16 @@ func NewTxnCoordSenderFactory(
 func (tcf *TxnCoordSenderFactory) TransactionalSender(
 	typ client.TxnType, meta roachpb.TxnCoordMeta,
 ) client.TxnSender {
+	start := time.Now()
+	times := make([]time.Time, 5)
+	times = append(times, start)
 	meta.Txn.AssertInitialized(context.TODO())
 	tcs := &TxnCoordSender{
 		typ:                   typ,
 		TxnCoordSenderFactory: tcf,
 	}
 	tcs.mu.txnState = txnPending
+	times = append(times, time.Now())
 
 	// Create a stack of request/response interceptors. All of the objects in
 	// this stack are pre-allocated on the TxnCoordSender struct, so this just
@@ -480,6 +484,7 @@ func (tcf *TxnCoordSenderFactory) TransactionalSender(
 	if ds, ok := tcf.wrapped.(*DistSender); ok {
 		ri = NewRangeIterator(ds)
 	}
+	times = append(times, time.Now())
 	// Some interceptors are only needed by roots.
 	if typ == client.RootTxn {
 		tcs.interceptorAlloc.txnHeartbeater.init(
@@ -503,6 +508,7 @@ func (tcf *TxnCoordSenderFactory) TransactionalSender(
 			txn:     &tcs.mu.txn,
 		}
 	}
+	times = append(times, time.Now())
 	tcs.interceptorAlloc.txnPipeliner = txnPipeliner{
 		st: tcf.st,
 	}
@@ -520,6 +526,7 @@ func (tcf *TxnCoordSenderFactory) TransactionalSender(
 		wrapped: tcs.wrapped,
 		mu:      &tcs.mu.Mutex,
 	}
+	times = append(times, time.Now())
 
 	// Once the interceptors are initialized, piece them all together in the
 	// correct order.
@@ -574,15 +581,23 @@ func (tcf *TxnCoordSenderFactory) TransactionalSender(
 	default:
 		panic(fmt.Sprintf("unknown TxnType %v", typ))
 	}
+	times = append(times, time.Now())
 	for i, reqInt := range tcs.interceptorStack {
 		if i < len(tcs.interceptorStack)-1 {
 			reqInt.setWrapped(tcs.interceptorStack[i+1])
+	times = append(times, time.Now())
 		} else {
 			reqInt.setWrapped(&tcs.interceptorAlloc.txnLockGatekeeper)
+	times = append(times, time.Now())
 		}
 	}
 
 	tcs.augmentMetaLocked(context.TODO(), meta)
+	times = append(times, time.Now())
+	dur := time.Since(start)
+        if dur > time.Second {
+                log.Infof(context.TODO(), "dur txn %s %+v", dur, times)
+        }
 	return tcs
 }
 
@@ -635,15 +650,25 @@ func (tc *TxnCoordSender) AugmentMeta(ctx context.Context, meta roachpb.TxnCoord
 }
 
 func (tc *TxnCoordSender) augmentMetaLocked(ctx context.Context, meta roachpb.TxnCoordMeta) {
+	start := time.Now()
+	times := make([]time.Time, 5)
+	times = append(times, start)
 	if meta.Txn.Status != roachpb.PENDING {
 		// Non-pending transactions should only come in errors, which are not
 		// handled by this method.
 		log.Fatalf(ctx, "unexpected non-pending txn in augmentMetaLocked: %s", meta.Txn)
 	}
+	times = append(times, time.Now())
 	tc.mu.txn.Update(&meta.Txn)
+	times = append(times, time.Now())
 	for _, reqInt := range tc.interceptorStack {
 		reqInt.augmentMetaLocked(meta)
+		times = append(times, time.Now())
 	}
+	dur := time.Since(start)
+        if dur > time.Second {
+                log.Infof(context.TODO(), "dur aug %s %+v", dur, times)
+        }
 }
 
 // OnFinish is part of the client.TxnSender interface.
