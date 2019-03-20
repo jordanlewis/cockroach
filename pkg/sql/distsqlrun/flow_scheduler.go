@@ -116,6 +116,13 @@ func (fs *flowScheduler) runFlowNow(ctx context.Context, f *Flow) error {
 func (fs *flowScheduler) ScheduleFlow(ctx context.Context, f *Flow) error {
 	return fs.stopper.RunTaskWithErr(
 		ctx, "distsqlrun.flowScheduler: scheduling flow", func(ctx context.Context) error {
+			start := time.Now()
+			defer func() {
+				dur := time.Since(start)
+				if dur > time.Second {
+					log.Infof(ctx, "%v took %s to lock scheduler mutex", f.id, dur)
+				}
+			}()
 			fs.mu.Lock()
 			defer fs.mu.Unlock()
 

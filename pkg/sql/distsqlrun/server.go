@@ -306,6 +306,8 @@ func (ds *ServerImpl) setupFlow(
 		log.Warning(ctx, err)
 		return ctx, nil, err
 	}
+
+	start1 := time.Now()
 	nodeID := ds.ServerConfig.NodeID.Get()
 	if nodeID == 0 {
 		return nil, nil, pgerror.NewAssertionErrorf("setupFlow called before the NodeID was resolved")
@@ -327,6 +329,7 @@ func (ds *ServerImpl) setupFlow(
 			tracing.LogTagsFromCtx(ctx),
 		)
 	}
+
 	// sp will be Finish()ed by Flow.Cleanup().
 	ctx = opentracing.ContextWithSpan(ctx, sp)
 
@@ -360,6 +363,12 @@ func (ds *ServerImpl) setupFlow(
 		txn = localState.Txn
 	}
 
+	dur1 := time.Since(start1)
+	if dur1 > time.Second {
+		log.Infof(ctx, "dur 1 %s", dur1)
+	}
+
+	start2 := time.Now()
 	var evalCtx *tree.EvalContext
 	if localState.EvalContext != nil {
 		evalCtx = localState.EvalContext
@@ -459,6 +468,12 @@ func (ds *ServerImpl) setupFlow(
 		traceKV:        req.TraceKV,
 		local:          localState.IsLocal,
 	}
+	dur2 := time.Since(start2)
+	if dur2 > time.Second {
+		log.Infof(ctx, "dur 2 %s", dur2)
+	}
+
+	start3 := time.Now()
 	f := newFlow(flowCtx, ds.flowRegistry, syncFlowConsumer, localState.LocalProcs)
 	if err := f.setup(ctx, &req.Flow); err != nil {
 		log.Errorf(ctx, "error setting up flow: %s", err)
@@ -469,6 +484,10 @@ func (ds *ServerImpl) setupFlow(
 	if !f.isLocal() {
 		flowCtx.AddLogTag("f", f.id.Short())
 		flowCtx.AnnotateCtx(ctx)
+	}
+	dur3 := time.Since(start3)
+	if dur3 > time.Second {
+		log.Info(ctx, "dur 3 %s", dur3)
 	}
 	return ctx, f, nil
 }
@@ -559,12 +578,24 @@ func (ds *ServerImpl) SetupFlow(
 	ctx context.Context, req *distsqlpb.SetupFlowRequest,
 ) (*distsqlpb.SimpleResponse, error) {
 	log.Eventf(ctx, "received SetupFlow request from n%v for flow %v", req.Flow.Gateway, req.Flow.FlowID)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > time.Second {
+			log.Infof(ctx, "SetupFlow for flow %s took %s", req.Flow.FlowID, dur)
+		}
+	}()
 	parentSpan := opentracing.SpanFromContext(ctx)
 
 	// Note: the passed context will be canceled when this RPC completes, so we
 	// can't associate it with the flow.
 	ctx = ds.AnnotateCtx(context.Background())
+	sStart := time.Now()
 	ctx, f, err := ds.setupFlow(ctx, parentSpan, &ds.memMonitor, req, nil /* syncFlowConsumer */, LocalState{})
+	dur := time.Since(sStart)
+	if dur > time.Second {
+		log.Infof(ctx, "inner sflow %s took %s", req.Flow.FlowID, dur)
+	}
 	if err == nil {
 		err = ds.flowScheduler.ScheduleFlow(ctx, f)
 	}
