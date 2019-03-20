@@ -308,10 +308,13 @@ func (ds *ServerImpl) setupFlow(
 	}
 
 	start1 := time.Now()
+	times := make([]time.Time, 0, 5)
+	times = append(times, start1)
 	nodeID := ds.ServerConfig.NodeID.Get()
 	if nodeID == 0 {
 		return nil, nil, pgerror.NewAssertionErrorf("setupFlow called before the NodeID was resolved")
 	}
+	times = append(times, time.Now())
 
 	const opName = "flow"
 	var sp opentracing.Span
@@ -329,10 +332,12 @@ func (ds *ServerImpl) setupFlow(
 			tracing.LogTagsFromCtx(ctx),
 		)
 	}
+	times = append(times, time.Now())
 
 	// sp will be Finish()ed by Flow.Cleanup().
 	ctx = opentracing.ContextWithSpan(ctx, sp)
 
+	times = append(times, time.Now())
 	// The monitor opened here are closed in Flow.Cleanup().
 	monitor := mon.MakeMonitor(
 		"flow",
@@ -344,6 +349,7 @@ func (ds *ServerImpl) setupFlow(
 		ds.Settings,
 	)
 	monitor.Start(ctx, parentMonitor, mon.BoundAccount{})
+	times = append(times, time.Now())
 
 	// Figure out what txn the flow needs to run in, if any.
 	// For local flows, the txn comes from localState.Txn. For non-local ones, we
@@ -362,10 +368,11 @@ func (ds *ServerImpl) setupFlow(
 	} else {
 		txn = localState.Txn
 	}
+	times = append(times, time.Now())
 
 	dur1 := time.Since(start1)
 	if dur1 > time.Second {
-		log.Infof(ctx, "dur 1 %s", dur1)
+		log.Infof(ctx, "dur 1 %s %+v", dur1, times)
 	}
 
 	start2 := time.Now()
