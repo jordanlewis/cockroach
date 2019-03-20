@@ -319,6 +319,7 @@ func (m *outbox) mainLoop(ctx context.Context) error {
 			}
 		case drainSignal := <-drainCh:
 			if drainSignal.err != nil {
+				log.Infof(ctx, "draing signal err was not nil, outbox canceling flow %v, err was %v", m.flowCtx.id, drainSignal.err)
 				// Stop work from proceeding in this flow. This also causes FlowStream
 				// RPCs that have this node as consumer to return errors.
 				m.flowCtxCancel()

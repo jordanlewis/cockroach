@@ -155,6 +155,8 @@ type startable interface {
 type Flow struct {
 	FlowCtx
 
+	blockCh chan struct{}
+
 	flowRegistry *flowRegistry
 	// processors contains a subset of the processors in the flow - the ones that
 	// run in their own goroutines. Some processors that implement RowSource are
@@ -529,6 +531,7 @@ func (f *Flow) setup(ctx context.Context, spec *distsqlpb.FlowSpec) error {
 // goroutine. The caller must forward any returned error to syncFlowConsumer if
 // set.
 func (f *Flow) startInternal(ctx context.Context, doneFn func()) error {
+	f.blockCh = make(chan struct{})
 	f.doneFn = doneFn
 	log.VEventf(
 		ctx, 1, "starting (%d processors, %d startables)", len(f.processors), len(f.startables),
@@ -661,6 +664,7 @@ type Releasable interface {
 // Cleanup should be called when the flow completes (after all processors and
 // mailboxes exited).
 func (f *Flow) Cleanup(ctx context.Context) {
+	log.Infof(ctx, "flow %s cleaning up", f.id)
 	if f.status == FlowFinished {
 		panic("flow cleanup called twice")
 	}
@@ -697,6 +701,9 @@ func (f *Flow) cancel() {
 	if f.isLocal() {
 		return
 	}
+	//log.Info(context.TODO(), "blocking on channel cancel")
+	//<-f.blockCh
+	log.Infof(context.TODO(), "flow %v canceled", f.FlowCtx.id)
 	f.flowRegistry.Lock()
 	timedOutReceivers := f.flowRegistry.cancelPendingStreamsLocked(f.id)
 	f.flowRegistry.Unlock()

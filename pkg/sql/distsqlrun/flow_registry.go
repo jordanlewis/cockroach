@@ -208,8 +208,12 @@ func (fr *flowRegistry) RegisterFlow(
 	}
 
 	if len(inboundStreams) > 0 {
+		flowid := entry.flow.id
+		//blockCh := entry.flow.blockCh
 		// Set up a function to time out inbound streams after a while.
 		entry.streamTimer = time.AfterFunc(timeout, func() {
+			//log.Info(ctx, "blocking on channel timed out")
+			//<-blockCh
 			fr.Lock()
 			// We're giving up waiting for these inbound streams. We will push an
 			// error to its consumer after fr.Unlock; the error will propagate and
@@ -229,6 +233,7 @@ func (fr *flowRegistry) RegisterFlow(
 					timeout,
 				)
 			}
+			log.Infof(ctx, "flow %v timed out %d receivers", flowid, len(timedOutReceivers))
 			for _, r := range timedOutReceivers {
 				go func(r RowReceiver) {
 					r.Push(
