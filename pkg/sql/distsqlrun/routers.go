@@ -157,7 +157,9 @@ func (ro *routerOutput) popRowsLocked(
 					return err
 				}
 				// TODO(radu): use an EncDatumRowAlloc?
-				rowBuf[n] = make(sqlbase.EncDatumRow, len(row))
+				if rowBuf[n] == nil {
+					rowBuf[n] = make(sqlbase.EncDatumRow, len(row))
+				}
 				copy(rowBuf[n], row)
 				n++
 			}
