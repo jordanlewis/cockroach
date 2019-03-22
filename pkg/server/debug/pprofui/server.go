@@ -21,7 +21,9 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
 	"path"
+	"runtime/debug"
 	runtimepprof "runtime/pprof"
 	"sort"
 	"strconv"
@@ -131,6 +133,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(names)
 		msg := fmt.Sprintf("Try %s for one of %s", path.Join(r.RequestURI, "<profileName>"), strings.Join(names, ", "))
 		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
+
+	if id == "heapdump" {
+		f, err := os.Create("heapdump")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		debug.WriteHeapDump(f.Fd())
+		http.Error(w, "success", http.StatusAccepted)
 		return
 	}
 
