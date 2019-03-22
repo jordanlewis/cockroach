@@ -75,6 +75,7 @@ const routerRowBufSize = rowChannelBufSize
 type routerOutput struct {
 	stream   RowReceiver
 	streamID distsqlpb.StreamID
+	rowAlloc sqlbase.EncDatumRowAlloc
 	mu       struct {
 		syncutil.Mutex
 		// cond is signaled whenever the main router routine adds a metadata item, a
@@ -167,8 +168,7 @@ func (ro *routerOutput) popRowsLocked(
 			rowsToAllocate = len(rowBuf)
 		}
 		for i := 0; i < rowsToAllocate; i++ {
-			// TODO(radu): use an EncDatumRowAlloc?
-			rowBuf[i] = make(sqlbase.EncDatumRow, len(ro.types))
+			rowBuf[i] = ro.rowAlloc.AllocRow(len(ro.types))
 		}
 		ro.mu.Lock()
 		if err := func() error {
@@ -185,7 +185,7 @@ func (ro *routerOutput) popRowsLocked(
 					return err
 				}
 				if n >= rowsToAllocate {
-					rowBuf[n] = make(sqlbase.EncDatumRow, len(row))
+					rowBuf[n] = ro.rowAlloc.AllocRow(len(ro.types))
 				}
 				copy(rowBuf[n], row)
 				n++
