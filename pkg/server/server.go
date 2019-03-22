@@ -599,7 +599,9 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 
 	loggerCtx, _ := s.stopper.WithCancelOnStop(ctx)
 
-	distSQLNodeDialer := nodedialer.New(s.rpcContext, gossip.AddressResolver(s.gossip))
+	distsqlRPCContext := rpc.NewContext(s.cfg.AmbientCtx, s.cfg.Config, s.clock, s.stopper, &cfg.Settings.Version)
+	distsqlRPCContext.HeartbeatCB = func() {}
+	distSQLNodeDialer := nodedialer.New(distsqlRPCContext, gossip.AddressResolver(s.gossip))
 	execCfg = sql.ExecutorConfig{
 		Settings:                s.st,
 		NodeInfo:                nodeInfo,
