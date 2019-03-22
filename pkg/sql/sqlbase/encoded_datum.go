@@ -481,6 +481,15 @@ func (r EncDatumRow) CompareToDatums(
 	return 0, nil
 }
 
+func (r EncDatumRow) EnsureDecoded(types []ColumnType, alloc *DatumAlloc) error {
+	for i := range r {
+		if err := r[i].EnsureDecoded(&types[i], alloc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EncDatumRows is a slice of EncDatumRows having the same schema.
 type EncDatumRows []EncDatumRow
 

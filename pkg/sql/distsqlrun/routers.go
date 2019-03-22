@@ -61,9 +61,6 @@ func makeRouter(spec *distsqlpb.OutputRouterSpec, streams []RowReceiver) (router
 	case distsqlpb.OutputRouterSpec_BY_HASH:
 		return makeHashRouter(rb, spec.HashColumns)
 
-	case distsqlpb.OutputRouterSpec_MIRROR:
-		return makeMirrorRouter(rb)
-
 	case distsqlpb.OutputRouterSpec_BY_RANGE:
 		return makeRangeRouter(rb, spec.RangeRouterSpec)
 
@@ -113,6 +110,23 @@ func (ro *routerOutput) addMetadataLocked(meta *ProducerMetadata) {
 	// We don't need any fancy buffering because normally there is not a lot of
 	// metadata being passed around.
 	ro.mu.metadataBuf = append(ro.mu.metadataBuf, meta)
+}
+
+func (ro *routerOutput) addRow(
+	ctx context.Context,
+	row sqlbase.EncDatumRow,
+	types []sqlbase.ColumnType,
+	alloc *sqlbase.DatumAlloc,
+) error {
+	if err := row.EnsureDecoded(types, alloc); err != nil {
+		return err
+	}
+	ro.mu.Lock()
+	err := ro.addRowLocked(context.TODO(), row)
+	ro.mu.Unlock()
+	ro.mu.cond.Signal()
+
+	return err
 }
 
 // addRowLocked adds a row to rowBuf (potentially evicting the oldest row into
@@ -444,10 +458,6 @@ func (rb *routerBase) shouldUseSemaphore() bool {
 	return false
 }
 
-type mirrorRouter struct {
-	routerBase
-}
-
 type hashRouter struct {
 	routerBase
 
@@ -475,53 +485,8 @@ type rangeRouter struct {
 	defaultDest *int
 }
 
-var _ RowReceiver = &mirrorRouter{}
 var _ RowReceiver = &hashRouter{}
 var _ RowReceiver = &rangeRouter{}
-
-func makeMirrorRouter(rb routerBase) (router, error) {
-	if len(rb.outputs) < 2 {
-		return nil, errors.Errorf("need at least two streams for mirror router")
-	}
-	return &mirrorRouter{routerBase: rb}, nil
-}
-
-// Push is part of the RowReceiver interface.
-func (mr *mirrorRouter) Push(row sqlbase.EncDatumRow, meta *ProducerMetadata) ConsumerStatus {
-	aggStatus := mr.aggStatus()
-	if meta != nil {
-		mr.fwdMetadata(meta)
-		return aggStatus
-	}
-	if aggStatus != NeedMoreRows {
-		return aggStatus
-	}
-
-	useSema := mr.shouldUseSemaphore()
-	if useSema {
-		mr.semaphore <- struct{}{}
-	}
-
-	for i := range mr.outputs {
-		ro := &mr.outputs[i]
-		ro.mu.Lock()
-		err := ro.addRowLocked(context.TODO(), row)
-		ro.mu.Unlock()
-		if err != nil {
-			if useSema {
-				<-mr.semaphore
-			}
-			mr.fwdMetadata(&ProducerMetadata{Err: err})
-			atomic.StoreUint32(&mr.aggregatedStatus, uint32(ConsumerClosed))
-			return ConsumerClosed
-		}
-		ro.mu.cond.Signal()
-	}
-	if useSema {
-		<-mr.semaphore
-	}
-	return aggStatus
-}
 
 var crc32Table = crc32.MakeTable(crc32.Castagnoli)
 
@@ -558,10 +523,7 @@ func (hr *hashRouter) Push(row sqlbase.EncDatumRow, meta *ProducerMetadata) Cons
 	streamIdx, err := hr.computeDestination(row)
 	if err == nil {
 		ro := &hr.outputs[streamIdx]
-		ro.mu.Lock()
-		err = ro.addRowLocked(context.TODO(), row)
-		ro.mu.Unlock()
-		ro.mu.cond.Signal()
+		err = ro.addRow(context.TODO(), row, hr.types, &hr.alloc)
 	}
 	if useSema {
 		<-hr.semaphore
@@ -643,10 +605,7 @@ func (rr *rangeRouter) Push(row sqlbase.EncDatumRow, meta *ProducerMetadata) Con
 	streamIdx, err := rr.computeDestination(row)
 	if err == nil {
 		ro := &rr.outputs[streamIdx]
-		ro.mu.Lock()
-		err = ro.addRowLocked(context.TODO(), row)
-		ro.mu.Unlock()
-		ro.mu.cond.Signal()
+		err = ro.addRow(context.TODO(), row, rr.types, &rr.alloc)
 	}
 	if useSema {
 		<-rr.semaphore
