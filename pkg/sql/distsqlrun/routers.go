@@ -104,6 +104,7 @@ type routerOutput struct {
 	// memoryMonitor and diskMonitor are references to mu.rowContainer's monitors,
 	// used for stats extraction.
 	memoryMonitor, diskMonitor *mon.BytesMonitor
+	types                      []sqlbase.ColumnType
 }
 
 func (ro *routerOutput) addMetadataLocked(meta *ProducerMetadata) {
@@ -113,12 +114,9 @@ func (ro *routerOutput) addMetadataLocked(meta *ProducerMetadata) {
 }
 
 func (ro *routerOutput) addRow(
-	ctx context.Context,
-	row sqlbase.EncDatumRow,
-	types []sqlbase.ColumnType,
-	alloc *sqlbase.DatumAlloc,
+	ctx context.Context, row sqlbase.EncDatumRow, alloc *sqlbase.DatumAlloc,
 ) error {
-	if err := row.EnsureDecoded(types, alloc); err != nil {
+	if err := row.EnsureDecoded(ro.types, alloc); err != nil {
 		return err
 	}
 	ro.mu.Lock()
@@ -156,7 +154,23 @@ func (ro *routerOutput) popRowsLocked(
 ) ([]sqlbase.EncDatumRow, error) {
 	n := 0
 	// First try to get rows from the row container.
-	if ro.mu.rowContainer.Len() > 0 {
+	containerLen := ro.mu.rowContainer.Len()
+	if containerLen > 0 {
+		// Allocate the new rows outside of lock, since it's expensive to do so.
+		// The worst thing that can happen here is that more rows will pile up in
+		// the container while we allocate, in which case we'll have to allocate
+		// some rows under lock as a last resort. But most of the time, this will
+		// help significantly.
+		ro.mu.Unlock()
+		rowsToAllocate := containerLen
+		if rowsToAllocate > len(rowBuf) {
+			rowsToAllocate = len(rowBuf)
+		}
+		for i := 0; i < rowsToAllocate; i++ {
+			// TODO(radu): use an EncDatumRowAlloc?
+			rowBuf[i] = make(sqlbase.EncDatumRow, len(ro.types))
+		}
+		ro.mu.Lock()
 		if err := func() error {
 			i := ro.mu.rowContainer.NewFinalIterator(ctx)
 			defer i.Close()
@@ -170,8 +184,9 @@ func (ro *routerOutput) popRowsLocked(
 				if err != nil {
 					return err
 				}
-				// TODO(radu): use an EncDatumRowAlloc?
-				rowBuf[n] = make(sqlbase.EncDatumRow, len(row))
+				if n >= rowsToAllocate {
+					rowBuf[n] = make(sqlbase.EncDatumRow, len(row))
+				}
 				copy(rowBuf[n], row)
 				n++
 			}
@@ -279,6 +294,7 @@ func (rb *routerBase) init(ctx context.Context, flowCtx *FlowCtx, types []sqlbas
 		)
 		rb.outputs[i].memoryMonitor = memoryMonitor
 		rb.outputs[i].diskMonitor = diskMonitor
+		rb.outputs[i].types = rb.types
 
 		// Initialize any outboxes.
 		if o, ok := rb.outputs[i].stream.(*outbox); ok {
@@ -523,7 +539,7 @@ func (hr *hashRouter) Push(row sqlbase.EncDatumRow, meta *ProducerMetadata) Cons
 	streamIdx, err := hr.computeDestination(row)
 	if err == nil {
 		ro := &hr.outputs[streamIdx]
-		err = ro.addRow(context.TODO(), row, hr.types, &hr.alloc)
+		err = ro.addRow(context.TODO(), row, &hr.alloc)
 	}
 	if useSema {
 		<-hr.semaphore
@@ -605,7 +621,7 @@ func (rr *rangeRouter) Push(row sqlbase.EncDatumRow, meta *ProducerMetadata) Con
 	streamIdx, err := rr.computeDestination(row)
 	if err == nil {
 		ro := &rr.outputs[streamIdx]
-		err = ro.addRow(context.TODO(), row, rr.types, &rr.alloc)
+		err = ro.addRow(context.TODO(), row, &rr.alloc)
 	}
 	if useSema {
 		<-rr.semaphore
