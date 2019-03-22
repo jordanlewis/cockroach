@@ -599,6 +599,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 
 	loggerCtx, _ := s.stopper.WithCancelOnStop(ctx)
 
+	distSQLNodeDialer := nodedialer.New(s.rpcContext, gossip.AddressResolver(s.gossip))
 	execCfg = sql.ExecutorConfig{
 		Settings:                s.st,
 		NodeInfo:                nodeInfo,
@@ -633,7 +634,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 			s.gossip,
 			s.stopper,
 			s.nodeLiveness,
-			s.nodeDialer,
+			distSQLNodeDialer,
 		),
 
 		TableStatsCache: stats.NewTableStatisticsCache(
