@@ -234,14 +234,14 @@ func (a *orderedAggregator) Next() coldata.Batch {
 		for i := 0; i < len(a.outputTyps); i++ {
 			// According to the aggregate function interface contract, the value at
 			// the current index must also be copied.
-			a.scratch.ColVec(i).Copy(a.scratch.ColVec(i), uint64(a.scratch.outputSize),
-				uint64(a.scratch.resumeIdx+1), a.outputTyps[i])
+			a.scratch.ColVec(i).Copy(a.scratch.ColVec(i), a.scratch.outputSize,
+				a.scratch.resumeIdx+1, a.outputTyps[i])
 			a.aggregateFuncs[i].SetOutputIndex(newResumeIdx)
 		}
 		a.scratch.resumeIdx = newResumeIdx
 		if a.scratch.resumeIdx >= a.scratch.outputSize {
 			// We still have overflow output values.
-			a.scratch.SetLength(uint16(a.scratch.outputSize))
+			a.scratch.SetLength(int(a.scratch.outputSize))
 			return a.scratch
 		}
 	}
@@ -263,9 +263,9 @@ func (a *orderedAggregator) Next() coldata.Batch {
 	}
 
 	if a.scratch.resumeIdx > a.scratch.outputSize {
-		a.scratch.SetLength(uint16(a.scratch.outputSize))
+		a.scratch.SetLength(a.scratch.outputSize)
 	} else {
-		a.scratch.SetLength(uint16(a.scratch.resumeIdx))
+		a.scratch.SetLength(a.scratch.resumeIdx)
 	}
 
 	return a.scratch

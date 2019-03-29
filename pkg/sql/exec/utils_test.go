@@ -40,7 +40,7 @@ type tuples []tuple
 func runTests(t *testing.T, tups []tuples, test func(t *testing.T, inputs []Operator)) {
 	rng, _ := randutil.NewPseudoRand()
 
-	for _, batchSize := range []uint16{1, 2, 3, 16, 1024} {
+	for _, batchSize := range []int{1, 2, 3, 16, 1024} {
 		for _, useSel := range []bool{false, true} {
 			t.Run(fmt.Sprintf("batchSize=%d/sel=%t", batchSize, useSel), func(t *testing.T) {
 				inputSources := make([]Operator, len(tups))
@@ -64,9 +64,9 @@ func runTests(t *testing.T, tups []tuples, test func(t *testing.T, inputs []Oper
 // function that takes a list of input Operators, which will give back the
 // tuples provided in batches.
 func runTestsWithFixedSel(
-	t *testing.T, tups []tuples, sel []uint16, test func(t *testing.T, inputs []Operator),
+	t *testing.T, tups []tuples, sel []int, test func(t *testing.T, inputs []Operator),
 ) {
-	for _, batchSize := range []uint16{1, 2, 3, 16, 1024} {
+	for _, batchSize := range []int{1, 2, 3, 16, 1024} {
 		t.Run(fmt.Sprintf("batchSize=%d/fixedSel", batchSize), func(t *testing.T) {
 			inputSources := make([]Operator, len(tups))
 			for i, tup := range tups {
@@ -94,12 +94,12 @@ func runTestsWithFixedSel(
 type opTestInput struct {
 	typs []types.T
 
-	batchSize uint16
+	batchSize int
 	tuples    tuples
 	batch     coldata.Batch
 	useSel    bool
 	rng       *rand.Rand
-	selection []uint16
+	selection []int
 }
 
 var _ Operator = &opTestInput{}
@@ -107,7 +107,7 @@ var _ Operator = &opTestInput{}
 // newOpTestInput returns a new opTestInput with the given input tuples. The
 // input tuples are translated into types automatically, using simple rules
 // (e.g. integers always become Int64).
-func newOpTestInput(batchSize uint16, tuples tuples) *opTestInput {
+func newOpTestInput(batchSize int, tuples tuples) *opTestInput {
 	ret := &opTestInput{
 		batchSize: batchSize,
 		tuples:    tuples,
@@ -115,7 +115,7 @@ func newOpTestInput(batchSize uint16, tuples tuples) *opTestInput {
 	return ret
 }
 
-func newOpTestSelInput(rng *rand.Rand, batchSize uint16, tuples tuples) *opTestInput {
+func newOpTestSelInput(rng *rand.Rand, batchSize int, tuples tuples) *opTestInput {
 	ret := &opTestInput{
 		useSel:    true,
 		rng:       rng,
@@ -146,9 +146,9 @@ func (s *opTestInput) Init() {
 	s.typs = typs
 	s.batch = coldata.NewMemBatch(typs)
 
-	s.selection = make([]uint16, coldata.BatchSize)
+	s.selection = make([]int, coldata.BatchSize)
 	for i := range s.selection {
-		s.selection[i] = uint16(i)
+		s.selection[i] = i
 	}
 }
 
@@ -159,7 +159,7 @@ func (s *opTestInput) Next() coldata.Batch {
 	}
 	batchSize := s.batchSize
 	if len(s.tuples) < int(batchSize) {
-		batchSize = uint16(len(s.tuples))
+		batchSize = len(s.tuples)
 	}
 	tups := s.tuples[:batchSize]
 	s.tuples = s.tuples[batchSize:]
@@ -205,7 +205,7 @@ func (s *opTestInput) Next() coldata.Batch {
 		// Automatically convert the Go values into exec.Type slice elements using
 		// reflection. This is slow, but acceptable for tests.
 		col := reflect.ValueOf(vec.Col())
-		for j := uint16(0); j < batchSize; j++ {
+		for j := 0; j < batchSize; j++ {
 			outputIdx := s.selection[j]
 			if tups[j][i] == nil {
 				vec.SetNull(outputIdx)
@@ -223,14 +223,14 @@ func (s *opTestInput) Next() coldata.Batch {
 type opFixedSelTestInput struct {
 	typs []types.T
 
-	batchSize uint16
+	batchSize int
 	tuples    tuples
 	batch     coldata.Batch
-	sel       []uint16
+	sel       []int
 	// idx is the index of the tuple to be emitted next. We need to maintain it
 	// in case the provided selection vector or provided tuples (if sel is nil)
 	// is longer than requested batch size.
-	idx uint16
+	idx int
 }
 
 var _ Operator = &opFixedSelTestInput{}
@@ -238,7 +238,7 @@ var _ Operator = &opFixedSelTestInput{}
 // newOpFixedSelTestInput returns a new opFixedSelTestInput with the given
 // input tuples and selection vector. The input tuples are translated into
 // types automatically, using simple rules (e.g. integers always become Int64).
-func newOpFixedSelTestInput(sel []uint16, batchSize uint16, tuples tuples) *opFixedSelTestInput {
+func newOpFixedSelTestInput(sel []int, batchSize int, tuples tuples) *opFixedSelTestInput {
 	ret := &opFixedSelTestInput{
 		batchSize: batchSize,
 		sel:       sel,
@@ -288,7 +288,7 @@ func (s *opFixedSelTestInput) Init() {
 			col := reflect.ValueOf(vec.Col())
 			for j := 0; j < len(s.tuples); j++ {
 				if s.tuples[j][i] == nil {
-					vec.SetNull(uint16(j))
+					vec.SetNull(j)
 				} else {
 					col.Index(j).Set(
 						reflect.ValueOf(s.tuples[j][i]).Convert(reflect.TypeOf(vec.Col()).Elem()))
@@ -300,11 +300,11 @@ func (s *opFixedSelTestInput) Init() {
 }
 
 func (s *opFixedSelTestInput) Next() coldata.Batch {
-	var batchSize uint16
+	var batchSize int
 	if s.sel == nil {
 		batchSize = s.batchSize
-		if uint16(len(s.tuples))-s.idx < batchSize {
-			batchSize = uint16(len(s.tuples)) - s.idx
+		if len(s.tuples)-s.idx < batchSize {
+			batchSize = len(s.tuples) - s.idx
 		}
 		// When nil selection vector is given, we convert only the tuples that fit
 		// into the current batch (keeping the s.idx in mind).
@@ -314,7 +314,7 @@ func (s *opFixedSelTestInput) Next() coldata.Batch {
 			// Automatically convert the Go values into exec.Type slice elements using
 			// reflection. This is slow, but acceptable for tests.
 			col := reflect.ValueOf(vec.Col())
-			for j := uint16(0); j < batchSize; j++ {
+			for j := 0; j < batchSize; j++ {
 				if s.tuples[s.idx+j][i] == nil {
 					vec.SetNull(j)
 				} else {
@@ -324,13 +324,13 @@ func (s *opFixedSelTestInput) Next() coldata.Batch {
 			}
 		}
 	} else {
-		if s.idx == uint16(len(s.sel)) {
+		if s.idx == len(s.sel) {
 			s.batch.SetLength(0)
 			return s.batch
 		}
 		batchSize = s.batchSize
-		if uint16(len(s.sel))-s.idx < batchSize {
-			batchSize = uint16(len(s.sel)) - s.idx
+		if len(s.sel)-s.idx < batchSize {
+			batchSize = len(s.sel) - s.idx
 		}
 		// All tuples have already been converted to the Go values, so we only need
 		// to set the right selection vector for s.batch.
@@ -348,7 +348,7 @@ type opTestOutput struct {
 	cols     []int
 	expected tuples
 
-	curIdx uint16
+	curIdx int
 	batch  coldata.Batch
 }
 
@@ -488,9 +488,9 @@ func assertTuplesOrderedEqual(expected tuples, actual tuples) error {
 // repeatableBatchSource is an Operator that returns the same batch forever.
 type repeatableBatchSource struct {
 	internalBatch coldata.Batch
-	batchLen      uint16
+	batchLen      int
 	// sel specifies the desired selection vector for the batch.
-	sel []uint16
+	sel []int
 
 	batchesToReturn int
 	batchesReturned int
@@ -506,7 +506,7 @@ func newRepeatableBatchSource(batch coldata.Batch) *repeatableBatchSource {
 		batchLen:      batch.Length(),
 	}
 	if batch.Selection() != nil {
-		src.sel = make([]uint16, batch.Length())
+		src.sel = make([]int, batch.Length())
 		copy(src.sel, batch.Selection())
 	}
 	return src
@@ -589,7 +589,7 @@ func (r *randomLengthBatchSource) Init() {
 }
 
 func (r *randomLengthBatchSource) Next() coldata.Batch {
-	r.internalBatch.SetLength(uint16(randutil.RandIntInRange(r.rng, 1, int(coldata.BatchSize))))
+	r.internalBatch.SetLength(randutil.RandIntInRange(r.rng, 1, int(coldata.BatchSize)))
 	return r.internalBatch
 }
 
@@ -667,7 +667,7 @@ func TestOpTestInputOutput(t *testing.T) {
 
 func TestRepeatableBatchSource(t *testing.T) {
 	batch := coldata.NewMemBatch([]types.T{types.Int64})
-	batchLen := uint16(10)
+	batchLen := 10
 	batch.SetLength(batchLen)
 	input := newRepeatableBatchSource(batch)
 
@@ -687,7 +687,7 @@ func TestRepeatableBatchSource(t *testing.T) {
 func TestRepeatableBatchSourceWithFixedSel(t *testing.T) {
 	batch := coldata.NewMemBatch([]types.T{types.Int64})
 	sel := generateSelectionVector(10 /* batchSize */, 0 /* probOfOmitting */)
-	batchLen := uint16(len(sel))
+	batchLen := len(sel)
 	batch.SetLength(batchLen)
 	batch.SetSelection(true)
 	copy(batch.Selection(), sel)
@@ -703,7 +703,7 @@ func TestRepeatableBatchSourceWithFixedSel(t *testing.T) {
 	if b.Selection() == nil {
 		t.Fatalf("expected repeatableBatchSource to reset selection vector, expected %v but found %+v", sel, b.Selection())
 	} else {
-		for i := uint16(0); i < batchLen; i++ {
+		for i := 0; i < batchLen; i++ {
 			if b.Selection()[i] != sel[i] {
 				t.Fatalf("expected repeatableBatchSource to reset selection vector, expected %v but found %+v", sel, b.Selection())
 			}
@@ -711,7 +711,7 @@ func TestRepeatableBatchSourceWithFixedSel(t *testing.T) {
 	}
 
 	newSel := generateSelectionVector(10 /* batchSize */, 0.2 /* probOfOmitting */)
-	newBatchLen := uint16(len(sel))
+	newBatchLen := len(sel)
 	b.SetLength(newBatchLen)
 	b.SetSelection(true)
 	copy(b.Selection(), newSel)
@@ -722,7 +722,7 @@ func TestRepeatableBatchSourceWithFixedSel(t *testing.T) {
 	if b.Selection() == nil {
 		t.Fatalf("expected repeatableBatchSource to reset selection vector, expected %v but found %+v", sel, b.Selection())
 	} else {
-		for i := uint16(0); i < batchLen; i++ {
+		for i := 0; i < batchLen; i++ {
 			if b.Selection()[i] != sel[i] {
 				t.Fatalf("expected repeatableBatchSource to reset selection vector, expected %v but found %+v", sel, b.Selection())
 			}
@@ -736,21 +736,21 @@ func TestRepeatableBatchSourceWithFixedSel(t *testing.T) {
 // So if probOfOmitting is 0, then the selection vector will contain all rows,
 // but if it is > 0, then some rows might be omitted and the length of the
 // selection vector might be less than batchSize.
-func generateSelectionVector(batchSize uint16, probOfOmitting float64) []uint16 {
+func generateSelectionVector(batchSize int, probOfOmitting float64) []int {
 	if probOfOmitting < 0 || probOfOmitting > 1 {
 		panic(fmt.Sprintf("probability of omitting a row is %f - outside of [0, 1] range", probOfOmitting))
 	}
-	sel := make([]uint16, batchSize)
+	sel := make([]int, batchSize)
 	used := make([]bool, batchSize)
 	rng, _ := randutil.NewPseudoRand()
-	for i := uint16(0); i < batchSize; i++ {
+	for i := 0; i < batchSize; i++ {
 		if rng.Float64() < probOfOmitting {
 			batchSize--
 			i--
 			continue
 		}
 		for {
-			j := uint16(rng.Intn(int(batchSize)))
+			j := rng.Intn(int(batchSize))
 			if !used[j] {
 				used[j] = true
 				sel[i] = j
@@ -766,15 +766,15 @@ func generateSelectionVector(batchSize uint16, probOfOmitting float64) []uint16 
 type chunkingBatchSource struct {
 	typs []types.T
 	cols []coldata.Vec
-	len  uint64
+	len  int
 
-	curIdx uint64
+	curIdx int
 	batch  coldata.Batch
 }
 
 // newChunkingBatchSource returns a new chunkingBatchSource with the given
 // column types, columns, and length.
-func newChunkingBatchSource(typs []types.T, cols []coldata.Vec, len uint64) *chunkingBatchSource {
+func newChunkingBatchSource(typs []types.T, cols []coldata.Vec, len int) *chunkingBatchSource {
 	return &chunkingBatchSource{
 		typs: typs,
 		cols: cols,
@@ -800,7 +800,7 @@ func (c *chunkingBatchSource) Next() coldata.Batch {
 	for i, vec := range c.batch.ColVecs() {
 		vec.SetCol(c.cols[i].Slice(c.typs[i], c.curIdx, lastIdx).Col())
 	}
-	c.batch.SetLength(uint16(lastIdx - c.curIdx))
+	c.batch.SetLength(lastIdx - c.curIdx)
 	c.curIdx = lastIdx
 	return c.batch
 }

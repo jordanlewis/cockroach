@@ -36,7 +36,7 @@ func TestMergeJoiner(t *testing.T) {
 		rightEqCols     []uint32
 		expected        []tuple
 		expectedOutCols []int
-		outputBatchSize uint16
+		outputBatchSize int
 	}{
 		{
 			description:     "basic test",
@@ -519,7 +519,7 @@ func TestMergeJoiner(t *testing.T) {
 func TestMergeJoinerMultiBatch(t *testing.T) {
 	for _, groupSize := range []int{1, 2, coldata.BatchSize / 4, coldata.BatchSize / 2} {
 		for _, numInputBatches := range []int{1, 2, 16} {
-			for _, outBatchSize := range []uint16{1, 16, coldata.BatchSize} {
+			for _, outBatchSize := range []int{1, 16, coldata.BatchSize} {
 				t.Run(fmt.Sprintf("groupSize=%d/numInputBatches=%d", groupSize, numInputBatches),
 					func(t *testing.T) {
 						nTuples := coldata.BatchSize * numInputBatches
@@ -530,8 +530,8 @@ func TestMergeJoinerMultiBatch(t *testing.T) {
 							groups[i] = int64(i)
 						}
 
-						leftSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
-						rightSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
+						leftSource := newChunkingBatchSource(typs, cols, nTuples)
+						rightSource := newChunkingBatchSource(typs, cols, nTuples)
 
 						a := NewMergeJoinOp(
 							leftSource,
@@ -551,7 +551,7 @@ func TestMergeJoinerMultiBatch(t *testing.T) {
 						// Keep track of the last comparison value.
 						lastVal := int64(0)
 						for b := a.Next(); b.Length() != 0; b = a.Next() {
-							count += int(b.Length())
+							count += b.Length()
 							outCol := b.ColVec(0).Int64()
 							for j := int64(0); j < int64(b.Length()); j++ {
 								outVal := outCol[j]
@@ -587,8 +587,8 @@ func TestMergeJoinerMultiBatchRuns(t *testing.T) {
 						cols[1].Int64()[i] = int64(i / groupSize)
 					}
 
-					leftSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
-					rightSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
+					leftSource := newChunkingBatchSource(typs, cols, nTuples)
+					rightSource := newChunkingBatchSource(typs, cols, nTuples)
 
 					a := NewMergeJoinOp(
 						leftSource,
@@ -634,7 +634,7 @@ func TestMergeJoinerMultiBatchRuns(t *testing.T) {
 func TestMergeJoinerLongMultiBatchCount(t *testing.T) {
 	for _, groupSize := range []int{1, 2, coldata.BatchSize / 4, coldata.BatchSize / 2} {
 		for _, numInputBatches := range []int{1, 2, 16} {
-			for _, outBatchSize := range []uint16{1, 16, coldata.BatchSize} {
+			for _, outBatchSize := range []int{1, 16, coldata.BatchSize} {
 				t.Run(fmt.Sprintf("groupSize=%d/numInputBatches=%d", groupSize, numInputBatches),
 					func(t *testing.T) {
 						nTuples := coldata.BatchSize * numInputBatches
@@ -645,8 +645,8 @@ func TestMergeJoinerLongMultiBatchCount(t *testing.T) {
 							groups[i] = int64(i)
 						}
 
-						leftSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
-						rightSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
+						leftSource := newChunkingBatchSource(typs, cols, nTuples)
+						rightSource := newChunkingBatchSource(typs, cols, nTuples)
 
 						a := NewMergeJoinOp(
 							leftSource,
@@ -689,8 +689,8 @@ func TestMergeJoinerMultiBatchCountRuns(t *testing.T) {
 						groups[i] = int64(i / groupSize)
 					}
 
-					leftSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
-					rightSource := newChunkingBatchSource(typs, cols, uint64(nTuples))
+					leftSource := newChunkingBatchSource(typs, cols, nTuples)
+					rightSource := newChunkingBatchSource(typs, cols, nTuples)
 
 					a := NewMergeJoinOp(
 						leftSource,
@@ -798,8 +798,8 @@ func TestMergeJoinerRandomized(t *testing.T) {
 							nTuples := coldata.BatchSize * numInputBatches
 							typs := []types.T{types.Int64}
 							lCols, rCols, exp := newBatchesOfRandIntRows(nTuples, typs, maxRunLength, skipValues, randomIncrement)
-							leftSource := newChunkingBatchSource(typs, lCols, uint64(nTuples))
-							rightSource := newChunkingBatchSource(typs, rCols, uint64(nTuples))
+							leftSource := newChunkingBatchSource(typs, lCols, nTuples)
+							rightSource := newChunkingBatchSource(typs, rCols, nTuples)
 
 							a := NewMergeJoinOp(
 								leftSource,

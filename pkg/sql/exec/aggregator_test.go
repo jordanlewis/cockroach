@@ -230,7 +230,7 @@ func TestAggregatorOneFunc(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			tupleSource := newOpTestInput(uint16(tc.batchSize), tc.input)
+			tupleSource := newOpTestInput(tc.batchSize, tc.input)
 			a, err := NewOrderedAggregator(
 				tupleSource, tc.groupCols, tc.groupTypes, tc.aggFns, tc.aggCols, tc.aggTypes,
 			)
@@ -444,7 +444,7 @@ func TestAggregatorRandomCountSum(t *testing.T) {
 					for b := a.Next(); b.Length() != 0; b = a.Next() {
 						countCol := b.ColVec(0).Int64()
 						sumCol := b.ColVec(1).Int64()
-						for j := uint16(0); j < b.Length(); j++ {
+						for j := 0; j < b.Length(); j++ {
 							count := countCol[j]
 							sum := sumCol[j]
 							expCount := expCounts[int(j)%len(expCounts)]

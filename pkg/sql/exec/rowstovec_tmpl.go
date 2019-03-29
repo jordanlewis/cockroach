@@ -49,10 +49,10 @@ func _ROWS_TO_COL_VEC(
 	rows sqlbase.EncDatumRows, vec coldata.Vec, columnIdx int, alloc *sqlbase.DatumAlloc,
 ) error { // */}}
 	// {{define "rowsToColVec"}}
-	nRows := uint16(len(rows))
+	nRows := len(rows)
 	col := vec._TemplateType()
 	datumToPhysicalFn := conv.GetDatumToPhysicalFn(*columnType)
-	for i := uint16(0); i < nRows; i++ {
+	for i := 0; i < nRows; i++ {
 		if rows[i][columnIdx].Datum == nil {
 			if err := rows[i][columnIdx].EnsureDecoded(columnType, alloc); err != nil {
 				return err

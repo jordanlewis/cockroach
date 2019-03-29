@@ -22,14 +22,14 @@ type offsetOp struct {
 	input Operator
 
 	internalBatch coldata.Batch
-	offset        uint64
+	offset        int
 
 	// seen is the number of tuples seen so far.
-	seen uint64
+	seen int
 }
 
 // NewOffsetOp returns a new offset operator with the given offset.
-func NewOffsetOp(input Operator, offset uint64) Operator {
+func NewOffsetOp(input Operator, offset int) Operator {
 	c := &offsetOp{
 		input:  input,
 		offset: offset,
@@ -50,24 +50,24 @@ func (c *offsetOp) Next() coldata.Batch {
 			return bat
 		}
 
-		c.seen += uint64(length)
+		c.seen += length
 
 		delta := c.seen - c.offset
 		// If the current batch encompasses the offset "boundary",
 		// add the elements after the boundary to the selection vector.
-		if delta > 0 && delta < uint64(length) {
+		if delta > 0 && delta < length {
 			sel := bat.Selection()
-			outputStartIdx := length - uint16(delta)
+			outputStartIdx := length - delta
 			if sel != nil {
 				copy(sel, sel[outputStartIdx:length])
 			} else {
 				bat.SetSelection(true)
 				sel = bat.Selection()[:delta] // slice for bounds check elimination
 				for i := range sel {
-					sel[i] = outputStartIdx + uint16(i)
+					sel[i] = outputStartIdx + i
 				}
 			}
-			bat.SetLength(uint16(delta))
+			bat.SetLength(delta)
 		}
 
 		if c.seen > c.offset {

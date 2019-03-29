@@ -62,52 +62,52 @@ type Vec interface {
 
 	// Append appends fromLength elements of the given Vec to toLength
 	// elements of this Vec, assuming that both Vecs are of type colType.
-	Append(vec Vec, colType types.T, toLength uint64, fromLength uint16)
+	Append(vec Vec, colType types.T, toLength int, fromLength int)
 
 	// AppendSlice appends vec[srcStartIdx:srcEndIdx] elements to
 	// this Vec starting at destStartIdx.
-	AppendSlice(vec Vec, colType types.T, destStartIdx uint64, srcStartIdx uint16, srcEndIdx uint16)
+	AppendSlice(vec Vec, colType types.T, destStartIdx int, srcStartIdx int, srcEndIdx int)
 
 	// AppendWithSel appends into itself another column vector from a Batch with
 	// maximum size of BatchSize, filtered by the given selection vector.
-	AppendWithSel(vec Vec, sel []uint16, batchSize uint16, colType types.T, toLength uint64)
+	AppendWithSel(vec Vec, sel []int, batchSize int, colType types.T, toLength int)
 
 	// AppendSliceWithSel appends srcEndIdx - srcStartIdx elements to this Vec starting
 	// at destStartIdx. These elements come from vec, filtered by the selection
 	// vector sel.
-	AppendSliceWithSel(vec Vec, colType types.T, destStartIdx uint64, srcStartIdx uint16, srcEndIdx uint16, sel []uint16)
+	AppendSliceWithSel(vec Vec, colType types.T, destStartIdx int, srcStartIdx int, srcEndIdx int, sel []int)
 
 	// Copy copies src[srcStartIdx:srcEndIdx] into this Vec.
-	Copy(src Vec, srcStartIdx, srcEndIdx uint64, typ types.T)
+	Copy(src Vec, srcStartIdx, srcEndIdx int, typ types.T)
 
 	// CopyWithSelInt64 copies vec, filtered by sel, into this Vec. It replaces
 	// the contents of this Vec.
-	CopyWithSelInt64(vec Vec, sel []uint64, nSel uint16, colType types.T)
+	CopyWithSelInt64(vec Vec, sel []int, nSel int, colType types.T)
 
 	// CopyWithSelInt16 copies vec, filtered by sel, into this Vec. It replaces
 	// the contents of this Vec.
-	CopyWithSelInt16(vec Vec, sel []uint16, nSel uint16, colType types.T)
+	CopyWithSelInt16(vec Vec, sel []int, nSel int, colType types.T)
 
 	// CopyWithSelAndNilsInt64 copies vec, filtered by sel, unless nils is set,
 	// into Vec. It replaces the contents of this Vec.
-	CopyWithSelAndNilsInt64(vec Vec, sel []uint64, nSel uint16, nils []bool, colType types.T)
+	CopyWithSelAndNilsInt64(vec Vec, sel []int, nSel int, nils []bool, colType types.T)
 
 	// Slice returns a new Vec representing a slice of the current Vec from
 	// [start, end).
-	Slice(colType types.T, start uint64, end uint64) Vec
+	Slice(colType types.T, start int, end int) Vec
 
 	// PrettyValueAt returns a "pretty"value for the idx'th value in this Vec.
 	// It uses the reflect package and is not suitable for calling in hot paths.
-	PrettyValueAt(idx uint16, colType types.T) string
+	PrettyValueAt(idx int, colType types.T) string
 
 	// ExtendNulls extends the null member of a Vec to accommodate toAppend tuples
 	// and sets the right indexes to null, needed when the length of the underlying column changes.
-	ExtendNulls(vec Vec, destStartIdx uint64, srcStartIdx uint16, toAppend uint16)
+	ExtendNulls(vec Vec, destStartIdx int, srcStartIdx int, toAppend int)
 
 	// ExtendNullsWithSel extends the null member of a Vec to accommodate toAppend tuples
 	// and sets the right indexes to null with the selection vector in mind, needed when the
 	// length of the underlying column changes.
-	ExtendNullsWithSel(vec Vec, destStartIdx uint64, srcStartIdx uint16, toAppend uint16, sel []uint16)
+	ExtendNullsWithSel(vec Vec, destStartIdx int, srcStartIdx int, toAppend int, sel []int)
 }
 
 // Nulls represents a list of potentially nullable values.
@@ -115,17 +115,11 @@ type Nulls interface {
 	// HasNulls returns true if the column has any null values.
 	HasNulls() bool
 
-	// NullAt takes in a uint16 and returns true if the ith value of the column is
+	// NullAt takes in a int and returns true if the ith value of the column is
 	// null.
-	NullAt(i uint16) bool
-	// SetNull takes in a uint16 and sets the ith value of the column to null.
-	SetNull(i uint16)
-
-	// NullAt64 takes in a uint64 and returns true if the ith value of the column
-	// is null.
-	NullAt64(i uint64) bool
-	// SetNull64 takes in a uint64 and sets the ith value of the column to null.
-	SetNull64(i uint64)
+	NullAt(i int) bool
+	// SetNull takes in a int and sets the ith value of the column to null.
+	SetNull(i int)
 
 	// UnsetNulls sets the column to have 0 null values.
 	UnsetNulls()
@@ -197,12 +191,15 @@ func (m *memColumn) HasNulls() bool {
 	return m.hasNulls
 }
 
-func (m *memColumn) NullAt(i uint16) bool {
-	return m.NullAt64(uint64(i))
+func (m *memColumn) NullAt(i int) bool {
+	intIdx := i >> 6
+	return ((m.nulls[intIdx] >> (uint(i) % 64)) & 1) == 1
 }
 
-func (m *memColumn) SetNull(i uint16) {
-	m.SetNull64(uint64(i))
+func (m *memColumn) SetNull(i int) {
+	m.hasNulls = true
+	intIdx := i >> 6
+	m.nulls[intIdx] |= 1 << (uint(i) % 64)
 }
 
 func (m *memColumn) SetCol(col interface{}) {
@@ -225,17 +222,6 @@ func (m *memColumn) SetNulls() {
 	for startIdx < len(m.nulls) {
 		startIdx += copy(m.nulls[startIdx:], filledNulls[:])
 	}
-}
-
-func (m *memColumn) NullAt64(i uint64) bool {
-	intIdx := i >> 6
-	return ((m.nulls[intIdx] >> (i % 64)) & 1) == 1
-}
-
-func (m *memColumn) SetNull64(i uint64) {
-	m.hasNulls = true
-	intIdx := i >> 6
-	m.nulls[intIdx] |= 1 << (i % 64)
 }
 
 func (m *memColumn) Bool() []bool {

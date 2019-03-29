@@ -434,10 +434,10 @@ func newColOperator(
 		op = exec.NewSimpleProjectOp(op, renderedCols)
 	}
 	if post.Offset != 0 {
-		op = exec.NewOffsetOp(op, post.Offset)
+		op = exec.NewOffsetOp(op, int(post.Offset))
 	}
 	if post.Limit != 0 {
-		op = exec.NewLimitOp(op, post.Limit)
+		op = exec.NewLimitOp(op, int(post.Limit))
 	}
 	return op, nil
 }

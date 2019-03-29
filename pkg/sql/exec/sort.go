@@ -76,7 +76,7 @@ type spooler interface {
 	// getValues returns ith Vec of the already spooled data.
 	getValues(i int) coldata.Vec
 	// getNumTuples returns the number of spooled tuples.
-	getNumTuples() uint64
+	getNumTuples() int
 	// getPartitionsCol returns a partitions column vector in which every true
 	// value indicates a start of a different partition (i.e. "chunk") within
 	// spooled tuples. It should return nil if all the tuples belong to the same
@@ -95,7 +95,7 @@ type allSpooler struct {
 	// this slice is the entire column from the input.
 	values []coldata.Vec
 	// spooledTuples is the number of tuples spooled.
-	spooledTuples uint64
+	spooledTuples int
 	// spooled indicates whether spool() has already been called.
 	spooled bool
 }
@@ -121,7 +121,7 @@ func (p *allSpooler) spool() {
 	}
 	p.spooled = true
 	batch := p.input.Next()
-	var nTuples uint64
+	var nTuples int
 	for ; batch.Length() != 0; batch = p.input.Next() {
 		for i := 0; i < len(p.values); i++ {
 			if batch.Selection() == nil {
@@ -139,7 +139,7 @@ func (p *allSpooler) spool() {
 				)
 			}
 		}
-		nTuples += uint64(batch.Length())
+		nTuples += batch.Length()
 	}
 	p.spooledTuples = nTuples
 }
@@ -151,7 +151,7 @@ func (p *allSpooler) getValues(i int) coldata.Vec {
 	return p.values[i]
 }
 
-func (p *allSpooler) getNumTuples() uint64 {
+func (p *allSpooler) getNumTuples() int {
 	if !p.spooled {
 		panic("getNumTuples() is called before spool()")
 	}
@@ -196,13 +196,13 @@ type sortOp struct {
 	// at index i in order is the ordinal value of the tuple in the input that
 	// belongs at index i. For example, if the input column to sort was
 	// [c,b,a,d], the order vector after sorting would be [2,1,0,3].
-	order []uint64
+	order []int
 	// emitted is the number of tuples emitted so far.
-	emitted uint64
+	emitted int
 	// state is the current state of the sort.
 	state sortState
 
-	workingSpace []uint64
+	workingSpace []int
 	output       coldata.Batch
 }
 
@@ -212,12 +212,12 @@ type colSorter interface {
 	// which must be the same size as the input Vec and will be permuted with
 	// the same swaps as the column. workingSpace is a vector of the same size as
 	// the column that is needed for temporary space.
-	init(col coldata.Vec, order []uint64, workingSpace []uint64)
+	init(col coldata.Vec, order []int, workingSpace []int)
 	// sort globally sorts this sorter's column.
 	sort()
 	// sortPartitions sorts this sorter's column once for every partition in the
 	// partition slice.
-	sortPartitions(partitions []uint64)
+	sortPartitions(partitions []int)
 	// reorder reorders this sorter's column according to its order vector.
 	reorder()
 }
@@ -257,7 +257,7 @@ func (p *sortOp) Next() coldata.Batch {
 		if newEmitted > p.input.getNumTuples() {
 			newEmitted = p.input.getNumTuples()
 		}
-		p.output.SetLength(uint16(newEmitted - p.emitted))
+		p.output.SetLength(newEmitted - p.emitted)
 		if p.output.Length() == 0 {
 			return p.output
 		}
@@ -286,15 +286,15 @@ func (p *sortOp) sort() {
 	}
 	// Allocate p.order and p.workingSpace if it hasn't been allocated yet or the
 	// underlying memory is insufficient.
-	if p.order == nil || uint64(cap(p.order)) < spooledTuples {
-		p.order = make([]uint64, spooledTuples)
-		p.workingSpace = make([]uint64, spooledTuples)
+	if p.order == nil || cap(p.order) < spooledTuples {
+		p.order = make([]int, spooledTuples)
+		p.workingSpace = make([]int, spooledTuples)
 	}
 	p.order = p.order[:spooledTuples]
 	p.workingSpace = p.workingSpace[:spooledTuples]
 
 	// Initialize the order vector to the ordinal positions within the input set.
-	for i := uint64(0); i < uint64(len(p.order)); i++ {
+	for i := 0; i < len(p.order); i++ {
 		p.order[i] = i
 	}
 
@@ -352,7 +352,7 @@ func (p *sortOp) sort() {
 	// 2 a
 	// 2 b
 
-	partitions := make([]uint64, 0, 16)
+	partitions := make([]int, 0, 16)
 	for i, sorter := range sorters {
 		if !omitNextPartitioning {
 			// We partition the previous column by running an ordered distinct operation
@@ -365,7 +365,7 @@ func (p *sortOp) sort() {
 		}
 		// Convert the distinct vector into a selection vector - a vector of indices
 		// that were true in the distinct vector.
-		partitions = boolVecToSel64(partitionsCol, partitions[:0])
+		partitions = boolVecToSel(partitionsCol, partitions[:0])
 		// Reorder the column we're about to sort, based on the swaps we've seen in
 		// the sort so far.
 		sorter.reorder()

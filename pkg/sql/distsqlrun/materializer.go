@@ -46,7 +46,7 @@ type materializer struct {
 
 	// curIdx represents the current index into the column batch: the next row the
 	// materializer will emit.
-	curIdx uint16
+	curIdx int
 	// batch is the current Batch the materializer is processing.
 	batch coldata.Batch
 

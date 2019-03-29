@@ -33,7 +33,7 @@ import (
 // See the analog in sqlbase/index_encoding.go.
 func DecodeIndexKeyToCols(
 	vecs []coldata.Vec,
-	idx uint16,
+	idx int,
 	desc *sqlbase.ImmutableTableDescriptor,
 	index *sqlbase.IndexDescriptor,
 	indexColIdx []int,
@@ -121,7 +121,7 @@ func DecodeIndexKeyToCols(
 // See the analog in sqlbase/index_encoding.go.
 func DecodeKeyValsToCols(
 	vecs []coldata.Vec,
-	idx uint16,
+	idx int,
 	indexColIdx []int,
 	types []sqlbase.ColumnType,
 	directions []sqlbase.IndexDescriptor_Direction,
@@ -152,7 +152,7 @@ func DecodeKeyValsToCols(
 // See the analog, DecodeTableKey, in
 func decodeTableKeyToCol(
 	vec coldata.Vec,
-	idx uint16,
+	idx int,
 	valType *sqlbase.ColumnType,
 	key []byte,
 	dir sqlbase.IndexDescriptor_Direction,
@@ -287,7 +287,7 @@ func skipTableKey(
 // not match the column's type.
 // See the analog, UnmarshalColumnValue, in sqlbase/column_type_encoding.go
 func UnmarshalColumnValueToCol(
-	vec coldata.Vec, idx uint16, typ sqlbase.ColumnType, value roachpb.Value,
+	vec coldata.Vec, idx int, typ sqlbase.ColumnType, value roachpb.Value,
 ) error {
 	if value.RawBytes == nil {
 		vec.SetNull(idx)

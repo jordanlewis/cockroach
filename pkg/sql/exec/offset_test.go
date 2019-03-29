@@ -23,7 +23,7 @@ import (
 
 func TestOffset(t *testing.T) {
 	tcs := []struct {
-		offset   uint64
+		offset   int
 		tuples   []tuple
 		expected []tuple
 	}{

@@ -115,7 +115,7 @@ func newSingleOrderedDistinct(
 type partitioner interface {
 	// partition partitions the input colVec of size n, writing true to the
 	// outputCol for every value that differs from the previous one.
-	partition(colVec coldata.Vec, outputCol []bool, n uint64)
+	partition(colVec coldata.Vec, outputCol []bool, n int)
 }
 
 // newPartitioner returns a new partitioner on type t.
@@ -182,7 +182,7 @@ func (p *sortedDistinct_TYPEOp) Next() coldata.Batch {
 		}
 	}
 
-	startIdx := uint16(0)
+	startIdx := 0
 	if !p.foundFirstRow {
 		startIdx = 1
 	}
@@ -215,7 +215,7 @@ func (p *sortedDistinct_TYPEOp) Next() coldata.Batch {
 // input column.
 type partitioner_TYPE struct{}
 
-func (p partitioner_TYPE) partition(colVec coldata.Vec, outputCol []bool, n uint64) {
+func (p partitioner_TYPE) partition(colVec coldata.Vec, outputCol []bool, n int) {
 	col := colVec._TemplateType()
 	lastVal := col[0]
 	outputCol[0] = true

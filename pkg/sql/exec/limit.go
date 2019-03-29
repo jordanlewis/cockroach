@@ -22,16 +22,16 @@ type limitOp struct {
 	input Operator
 
 	internalBatch coldata.Batch
-	limit         uint64
+	limit         int
 
 	// seen is the number of tuples seen so far.
-	seen uint64
+	seen int
 	// done is true if the limit has been reached.
 	done bool
 }
 
 // NewLimitOp returns a new limit operator with the given limit.
-func NewLimitOp(input Operator, limit uint64) Operator {
+func NewLimitOp(input Operator, limit int) Operator {
 	c := &limitOp{
 		input: input,
 		limit: limit,
@@ -54,10 +54,10 @@ func (c *limitOp) Next() coldata.Batch {
 	if length == 0 {
 		return bat
 	}
-	newSeen := c.seen + uint64(length)
+	newSeen := c.seen + length
 	if newSeen >= c.limit {
 		c.done = true
-		bat.SetLength(uint16(c.limit - c.seen))
+		bat.SetLength(c.limit - c.seen)
 		return bat
 	}
 	c.seen = newSeen

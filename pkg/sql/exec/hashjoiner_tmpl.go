@@ -50,13 +50,13 @@ var _ bytes.Buffer
 
 // _ASSIGN_HASH is the template equality function for assigning the first input
 // to the result of the hash value of the second input.
-func _ASSIGN_HASH(_, _ interface{}) uint64 {
+func _ASSIGN_HASH(_, _ interface{}) int {
 	panic("")
 }
 
 // _ASSIGN_NE is the template equality function for assigning the first input
 // to the result of the the second input != the third input.
-func _ASSIGN_NE(_, _, _ interface{}) uint64 {
+func _ASSIGN_NE(_, _, _ interface{}) int {
 	panic("")
 }
 
@@ -68,9 +68,7 @@ const _TYPES_T = types.Unhandled
 // i or sel[i] depending on whether we're in a selection or not.
 const _SEL_IND = 0
 
-func _CHECK_COL_MAIN(
-	prober *hashJoinProber, buildKeys, probeKeys []interface{}, keyID uint64, i uint16,
-) { // */}}
+func _CHECK_COL_MAIN(prober *hashJoinProber, buildKeys, probeKeys []interface{}, keyID int, i int) { // */}}
 	// {{define "checkColMain"}}
 	buildVal := buildKeys[keyID-1]
 	probeVal := probeKeys[_SEL_IND]
@@ -89,12 +87,12 @@ func _CHECK_COL_BODY(
 	prober *hashJoinProber,
 	probeVec, buildVec coldata.Vec,
 	buildKeys, probeKeys []interface{},
-	nToCheck uint16,
+	nToCheck int,
 	_PROBE_HAS_NULLS bool,
 	_BUILD_HAS_NULLS bool,
 ) { // */}}
 	// {{define "checkColBody"}}
-	for i := uint16(0); i < nToCheck; i++ {
+	for i := 0; i < nToCheck; i++ {
 		// keyID of 0 is reserved to represent the end of the next chain.
 
 		if keyID := prober.groupID[prober.toCheck[i]]; keyID != 0 {
@@ -105,7 +103,7 @@ func _CHECK_COL_BODY(
 			/* {{if .ProbeHasNulls }} */
 			if probeVec.NullAt(_SEL_IND) {
 				prober.groupID[prober.toCheck[i]] = 0
-			} else /*{{end}} {{if .BuildHasNulls}} */ if buildVec.NullAt64(keyID - 1) {
+			} else /*{{end}} {{if .BuildHasNulls}} */ if buildVec.NullAt(keyID - 1) {
 				prober.differs[prober.toCheck[i]] = true
 			} else /*{{end}} */ {
 				_CHECK_COL_MAIN(prober, buildKeys, probeKeys, keyID, i)
@@ -120,7 +118,7 @@ func _CHECK_COL_WITH_NULLS(
 	prober *hashJoinProber,
 	probeVec, buildVec coldata.Vec,
 	buildKeys, probeKeys []interface{},
-	nToCheck uint16,
+	nToCheck int,
 	_SEL_STRING string,
 ) { // */}}
 	// {{define "checkColWithNulls"}}
@@ -141,13 +139,13 @@ func _CHECK_COL_WITH_NULLS(
 	// {{/*
 }
 
-func _REHASH_BODY(buckets []uint64, keys []interface{}, nKeys uint64, _SEL_STRING string) { // */}}
+func _REHASH_BODY(buckets []int, keys []interface{}, nKeys int, _SEL_STRING string) { // */}}
 	// {{define "rehashBody"}}
-	for i := uint64(0); i < nKeys; i++ {
+	for i := 0; i < nKeys; i++ {
 		v := keys[_SEL_IND]
 		p := uintptr(buckets[i])
 		_ASSIGN_HASH(p, v)
-		buckets[i] = uint64(p)
+		buckets[i] = int(p)
 	}
 	// {{end}}
 
@@ -155,14 +153,10 @@ func _REHASH_BODY(buckets []uint64, keys []interface{}, nKeys uint64, _SEL_STRIN
 }
 
 func _COLLECT_RIGHT_OUTER(
-	prober *hashJoinProber,
-	batchSize uint16,
-	nResults uint16,
-	batch coldata.Batch,
-	_SEL_STRING string,
-) uint16 { // */}}
+	prober *hashJoinProber, batchSize int, nResults int, batch coldata.Batch, _SEL_STRING string,
+) int { // */}}
 	// {{define "collectRightOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
+	for i := 0; i < batchSize; i++ {
 		currentID := prober.head[i]
 
 		if currentID == 0 {
@@ -193,14 +187,10 @@ func _COLLECT_RIGHT_OUTER(
 }
 
 func _COLLECT_NO_OUTER(
-	prober *hashJoinProber,
-	batchSize uint16,
-	nResults uint16,
-	batch coldata.Batch,
-	_SEL_STRING string,
-) uint16 { // */}}
+	prober *hashJoinProber, batchSize int, nResults int, batch coldata.Batch, _SEL_STRING string,
+) int { // */}}
 	// {{define "collectNoOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
+	for i := 0; i < batchSize; i++ {
 		currentID := prober.head[i]
 		for currentID != 0 {
 			if nResults >= coldata.BatchSize {
@@ -221,9 +211,9 @@ func _COLLECT_NO_OUTER(
 	return 0
 }
 
-func _DISTINCT_COLLECT_RIGHT_OUTER(prober *hashJoinProber, batchSize uint16, _SEL_STRING string) { // */}}
+func _DISTINCT_COLLECT_RIGHT_OUTER(prober *hashJoinProber, batchSize int, _SEL_STRING string) { // */}}
 	// {{define "distinctCollectRightOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
+	for i := 0; i < batchSize; i++ {
 		// Index of keys and outputs in the hash table is calculated as ID - 1.
 		prober.buildIdx[i] = prober.groupID[i] - 1
 		prober.probeIdx[i] = _SEL_IND
@@ -234,11 +224,9 @@ func _DISTINCT_COLLECT_RIGHT_OUTER(prober *hashJoinProber, batchSize uint16, _SE
 	// {{/*
 }
 
-func _DISTINCT_COLLECT_NO_OUTER(
-	prober *hashJoinProber, batchSize uint16, nResults uint16, _ string,
-) { // */}}
+func _DISTINCT_COLLECT_NO_OUTER(prober *hashJoinProber, batchSize int, nResults int, _ string) { // */}}
 	// {{define "distinctCollectNoOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
+	for i := 0; i < batchSize; i++ {
 		if prober.groupID[i] != 0 {
 			// Index of keys and outputs in the hash table is calculated as ID - 1.
 			prober.buildIdx[nResults] = prober.groupID[i] - 1
@@ -256,7 +244,7 @@ func _DISTINCT_COLLECT_NO_OUTER(
 // column values) at a given column and computes a new hash by applying a
 // transformation to the existing hash.
 func (ht *hashTable) rehash(
-	buckets []uint64, keyIdx int, t types.T, col coldata.Vec, nKeys uint64, sel []uint16,
+	buckets []int, keyIdx int, t types.T, col coldata.Vec, nKeys int, sel []int,
 ) {
 	switch t {
 	// {{range $hashType := .HashTemplate}}
@@ -278,7 +266,7 @@ func (ht *hashTable) rehash(
 // the specified equality column key. If there is a match, then the key is added
 // to differs. If the bucket has reached the end, the key is rejected. If any
 // element in the key is null, then there is no match.
-func (prober *hashJoinProber) checkCol(t types.T, keyColIdx int, nToCheck uint16, sel []uint16) {
+func (prober *hashJoinProber) checkCol(t types.T, keyColIdx int, nToCheck int, sel []int) {
 	switch t {
 	// {{range $neType := .NETemplate}}
 	case _TYPES_T:
@@ -312,8 +300,8 @@ func (prober *hashJoinProber) checkCol(t types.T, keyColIdx int, nToCheck uint16
 // collect prepares the buildIdx and probeIdx arrays where the buildIdx and
 // probeIdx at each index are joined to make an output row. The total number of
 // resulting rows is returned.
-func (prober *hashJoinProber) collect(batch coldata.Batch, batchSize uint16, sel []uint16) uint16 {
-	nResults := uint16(0)
+func (prober *hashJoinProber) collect(batch coldata.Batch, batchSize int, sel []int) int {
+	nResults := 0
 
 	if prober.spec.outer {
 		if sel != nil {
@@ -335,10 +323,8 @@ func (prober *hashJoinProber) collect(batch coldata.Batch, batchSize uint16, sel
 // distinctCollect prepares the batch with the joined output columns where the build
 // row index for each probe row is given in the groupID slice. This function
 // requires assumes a N-1 hash join.
-func (prober *hashJoinProber) distinctCollect(
-	batch coldata.Batch, batchSize uint16, sel []uint16,
-) uint16 {
-	nResults := uint16(0)
+func (prober *hashJoinProber) distinctCollect(batch coldata.Batch, batchSize int, sel []int) int {
+	nResults := 0
 
 	if prober.spec.outer {
 		nResults = batchSize

@@ -49,7 +49,7 @@ func _COPY_WITH_SEL(
 	t_src coldata.Vec,
 	t_srcStartIdx int,
 	t_srcEndIdx int,
-	t_sel []uint16,
+	t_sel []int,
 ) { // */}}
 	// {{define "copyWithSel"}}
 	batchSize := t_srcEndIdx - t_srcStartIdx
@@ -88,8 +88,8 @@ func (o *mergeJoinOp) buildLeftGroups(
 	colOffset int,
 	input *mergeJoinInput,
 	bat coldata.Batch,
-	destStartIdx uint16,
-) (outStartIdx uint16) {
+	destStartIdx int,
+) (outStartIdx int) {
 	o.builderState.left.finished = false
 	sel := bat.Selection()
 	outStartIdx = destStartIdx
@@ -224,7 +224,7 @@ func (o *mergeJoinOp) buildRightGroups(
 	colOffset int,
 	input *mergeJoinInput,
 	bat coldata.Batch,
-	destStartIdx uint16,
+	destStartIdx int,
 ) {
 	o.builderState.right.finished = false
 	initialBuilderState := o.builderState.right

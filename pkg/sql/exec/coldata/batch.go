@@ -22,9 +22,9 @@ import "github.com/cockroachdb/cockroach/pkg/sql/exec/types"
 // batch are selected).
 type Batch interface {
 	// Length returns the number of values in the columns in the batch.
-	Length() uint16
+	Length() int
 	// SetLength sets the number of values in the columns in the batch.
-	SetLength(uint16)
+	SetLength(int)
 	// Width returns the number of columns in the batch.
 	Width() int
 	// Vec returns the ith Vec in this batch.
@@ -34,7 +34,7 @@ type Batch interface {
 	// Selection, if not nil, returns the selection vector on this batch: a
 	// densely-packed list of the indices in each column that have not been
 	// filtered out by a previous step.
-	Selection() []uint16
+	Selection() []int
 	// SetSelection sets whether this batch is using its selection vector or not.
 	SetSelection(bool)
 	// AppendCol appends a Vec with the specified type to this batch.
@@ -62,23 +62,23 @@ func NewMemBatchWithSize(types []types.T, size int) Batch {
 	for i, t := range types {
 		b.b[i] = NewMemColumn(t, size)
 	}
-	b.sel = make([]uint16, size)
+	b.sel = make([]int, size)
 
 	return b
 }
 
 type memBatch struct {
 	// length of batch or sel in tuples
-	n uint16
+	n int
 	// slice of columns in this batch.
 	b      []Vec
 	useSel bool
 	// if useSel is true, a selection vector from upstream. a selection vector is
 	// a list of selected column indexes in this memBatch's columns.
-	sel []uint16
+	sel []int
 }
 
-func (m *memBatch) Length() uint16 {
+func (m *memBatch) Length() int {
 	return m.n
 }
 
@@ -94,7 +94,7 @@ func (m *memBatch) ColVecs() []Vec {
 	return m.b
 }
 
-func (m *memBatch) Selection() []uint16 {
+func (m *memBatch) Selection() []int {
 	if !m.useSel {
 		return nil
 	}
@@ -105,7 +105,7 @@ func (m *memBatch) SetSelection(b bool) {
 	m.useSel = b
 }
 
-func (m *memBatch) SetLength(n uint16) {
+func (m *memBatch) SetLength(n int) {
 	m.n = n
 }
 

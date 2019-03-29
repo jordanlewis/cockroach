@@ -70,18 +70,18 @@ func (p *coalescerOp) Next() coldata.Batch {
 
 			if batchSize <= leftover {
 				if sel != nil {
-					toCol.AppendWithSel(fromCol, sel, batchSize, t, uint64(p.group.Length()))
+					toCol.AppendWithSel(fromCol, sel, batchSize, t, p.group.Length())
 				} else {
-					toCol.Append(fromCol, t, uint64(p.group.Length()), batchSize)
+					toCol.Append(fromCol, t, p.group.Length(), batchSize)
 				}
 			} else {
 				bufferCol := p.buffer.ColVec(i)
 				if sel != nil {
-					toCol.AppendWithSel(fromCol, sel, leftover, t, uint64(p.group.Length()))
+					toCol.AppendWithSel(fromCol, sel, leftover, t, p.group.Length())
 					bufferCol.CopyWithSelInt16(fromCol, sel[leftover:batchSize], batchSize-leftover, t)
 				} else {
-					toCol.Append(fromCol, t, uint64(p.group.Length()), leftover)
-					bufferCol.Copy(fromCol, uint64(leftover), uint64(batchSize), t)
+					toCol.Append(fromCol, t, p.group.Length(), leftover)
+					bufferCol.Copy(fromCol, leftover, batchSize, t)
 				}
 			}
 		}

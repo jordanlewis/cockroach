@@ -70,7 +70,7 @@ func (c *columnarizer) Init() {
 
 func (c *columnarizer) Next() coldata.Batch {
 	// Buffer up n rows.
-	nRows := uint16(0)
+	nRows := 0
 	columnTypes := c.OutputTypes()
 	for ; nRows < coldata.BatchSize; nRows++ {
 		row, meta := c.input.Next()

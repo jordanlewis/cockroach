@@ -44,10 +44,10 @@ func (p *boolVecToSelOp) Next() coldata.Batch {
 		// tuple whose outputCol value is true.
 		// Note that, if the input already had a selection vector, the output
 		// selection vector will be a subset of the input selection vector.
-		idx := uint16(0)
+		idx := 0
 		n := batch.Length()
 		if sel := batch.Selection(); sel != nil {
-			for s := uint16(0); s < n; s++ {
+			for s := 0; s < n; s++ {
 				i := sel[s]
 				if outputCol[i] {
 					sel[idx] = i
@@ -57,7 +57,7 @@ func (p *boolVecToSelOp) Next() coldata.Batch {
 		} else {
 			batch.SetSelection(true)
 			sel := batch.Selection()
-			for i := uint16(0); i < n; i++ {
+			for i := 0; i < n; i++ {
 				if outputCol[i] {
 					sel[idx] = i
 					idx++
@@ -83,9 +83,9 @@ func (p *boolVecToSelOp) Init() {
 	p.input.Init()
 }
 
-func boolVecToSel64(vec []bool, sel []uint64) []uint64 {
-	l := uint64(len(vec))
-	for i := uint64(0); i < l; i++ {
+func boolVecToSel(vec []bool, sel []int) []int {
+	l := len(vec)
+	for i := 0; i < l; i++ {
 		if vec[i] {
 			sel = append(sel, i)
 		}

@@ -193,7 +193,7 @@ type CFetcher struct {
 		// rowIdx is always set to the ordinal of the row we're currently writing to
 		// within the current batch. It's incremented as soon as we detect that a row
 		// is finished.
-		rowIdx uint16
+		rowIdx int
 		// curSpan is the current span that the kv fetcher just returned data from.
 		curSpan roachpb.Span
 		// nextKV is the kv to process next.

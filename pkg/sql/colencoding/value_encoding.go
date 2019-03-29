@@ -26,12 +26,7 @@ import (
 // the result to the idx'th position of the input exec.Vec.
 // See the analog in sqlbase/column_type_encoding.go.
 func DecodeTableValueToCol(
-	vec coldata.Vec,
-	idx uint16,
-	typ encoding.Type,
-	dataOffset int,
-	valTyp *sqlbase.ColumnType,
-	b []byte,
+	vec coldata.Vec, idx int, typ encoding.Type, dataOffset int, valTyp *sqlbase.ColumnType, b []byte,
 ) ([]byte, error) {
 	// NULL is special because it is a valid value for any type.
 	if typ == encoding.Null {
@@ -56,7 +51,7 @@ func DecodeTableValueToCol(
 // the tag directly.
 // See the analog in sqlbase/column_type_encoding.go.
 func decodeUntaggedDatumToCol(
-	vec coldata.Vec, idx uint16, t *sqlbase.ColumnType, buf []byte,
+	vec coldata.Vec, idx int, t *sqlbase.ColumnType, buf []byte,
 ) ([]byte, error) {
 	var err error
 	switch t.SemanticType {

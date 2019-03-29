@@ -18,7 +18,7 @@ import "testing"
 
 func TestLimit(t *testing.T) {
 	tcs := []struct {
-		limit    uint64
+		limit    int
 		tuples   []tuple
 		expected []tuple
 	}{

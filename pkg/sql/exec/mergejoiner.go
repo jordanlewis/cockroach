@@ -41,7 +41,7 @@ type mjBuilderState struct {
 	groupsLen int
 
 	// outCount keeps record of the current number of rows in the output.
-	outCount uint16
+	outCount int
 
 	// Cross product materialization state.
 	left  mjBuilderCrossProductState
@@ -150,11 +150,11 @@ type mergeJoinOp struct {
 
 	// Member to keep track of count overflow, in the case that calculateOutputCount
 	// returns a number that doesn't fit into a uint16.
-	countOverflow uint64
+	countOverflow int
 
 	// Output buffer definition.
 	output          coldata.Batch
-	outputBatchSize uint16
+	outputBatchSize int
 
 	// Local buffer for the "working" repeated groups.
 	groups circularGroupsBuffer
@@ -186,12 +186,12 @@ func (o *mergeJoinOp) Init() {
 	o.initWithBatchSize(coldata.BatchSize)
 }
 
-func (o *mergeJoinOp) initWithBatchSize(outBatchSize uint16) {
+func (o *mergeJoinOp) initWithBatchSize(outBatchSize int) {
 	outColTypes := make([]types.T, len(o.left.sourceTypes)+len(o.right.sourceTypes))
 	copy(outColTypes, o.left.sourceTypes)
 	copy(outColTypes[len(o.left.sourceTypes):], o.right.sourceTypes)
 
-	o.output = coldata.NewMemBatchWithSize(outColTypes, int(outBatchSize))
+	o.output = coldata.NewMemBatchWithSize(outColTypes, outBatchSize)
 	o.left.source.Init()
 	o.right.source.Init()
 	o.outputBatchSize = outBatchSize
@@ -265,7 +265,7 @@ func (o *mergeJoinOp) getBatch(input *mergeJoinInput) coldata.Batch {
 
 // getValForIdx returns the value for comparison given a slice and an index.
 // TODO(georgeutsin): template this to work for all types.
-func getValForIdx(keys []int64, idx int, sel []uint16) int64 {
+func getValForIdx(keys []int64, idx int, sel []int) int64 {
 	if sel != nil {
 		return keys[sel[idx]]
 	}
@@ -277,7 +277,7 @@ func getValForIdx(keys []int64, idx int, sel []uint16) int64 {
 // starting at idx, given the comparison value. Also returns a boolean indicating whether the group
 // is known to be complete.
 func getGroupLengthForValue(
-	idx int, length int, keys []int64, sel []uint16, compVal int64,
+	idx int, length int, keys []int64, sel []int, compVal int64,
 ) (int, bool) {
 	if length == 0 {
 		return 0, true
@@ -299,23 +299,21 @@ func getGroupLengthForValue(
 // count to determine what the new output count is.
 // SIDE EFFECT: if there is overflow in the output count, the overflow amount is added to
 // countOverflow.
-func (o *mergeJoinOp) calculateOutputCount(
-	groups []group, groupsLen int, curOutputCount uint16,
-) uint16 {
-	count := uint64(0)
+func (o *mergeJoinOp) calculateOutputCount(groups []group, groupsLen int, curOutputCount int) int {
+	count := 0
 	for i := 0; i < groupsLen; i++ {
-		count += uint64((groups[i].rowEndIdx - groups[i].rowStartIdx) * groups[i].numRepeats)
+		count += (groups[i].rowEndIdx - groups[i].rowStartIdx) * groups[i].numRepeats
 	}
 
 	// Add count to overflow if it is larger than a uint16.
-	if count+uint64(curOutputCount) > (1<<16 - 1) {
-		o.countOverflow += count + uint64(curOutputCount) - (1<<16 - 1)
+	if count+curOutputCount > (1<<16 - 1) {
+		o.countOverflow += count + curOutputCount - (1<<16 - 1)
 		count = 1<<16 - 1
 	} else {
-		count = count + uint64(curOutputCount)
+		count = count + curOutputCount
 	}
 
-	return uint16(count)
+	return count
 }
 
 // completeGroup extends the group in state given the source input.
@@ -383,7 +381,7 @@ func (o *mergeJoinOp) saveGroupToState(
 	idx int,
 	groupLength int,
 	bat coldata.Batch,
-	sel []uint16,
+	sel []int,
 	src *mergeJoinInput,
 	destBatch coldata.Batch,
 	destStartIdx *int,
@@ -391,11 +389,11 @@ func (o *mergeJoinOp) saveGroupToState(
 	endIdx := idx + groupLength
 	if sel != nil {
 		for cIdx, cType := range src.sourceTypes {
-			destBatch.ColVec(cIdx).AppendSliceWithSel(bat.ColVec(cIdx), cType, uint64(*destStartIdx), uint16(idx), uint16(endIdx), sel)
+			destBatch.ColVec(cIdx).AppendSliceWithSel(bat.ColVec(cIdx), cType, *destStartIdx, idx, endIdx, sel)
 		}
 	} else {
 		for cIdx, cType := range src.sourceTypes {
-			destBatch.ColVec(cIdx).AppendSlice(bat.ColVec(cIdx), cType, uint64(*destStartIdx), uint16(idx), uint16(endIdx))
+			destBatch.ColVec(cIdx).AppendSlice(bat.ColVec(cIdx), cType, *destStartIdx, idx, endIdx)
 		}
 	}
 
@@ -544,7 +542,7 @@ func (o *mergeJoinOp) Next() coldata.Batch {
 			outCount = 1<<16 - 1
 		}
 		o.countOverflow -= outCount
-		o.output.SetLength(uint16(outCount))
+		o.output.SetLength(outCount)
 		return o.output
 	}
 
@@ -589,7 +587,7 @@ func (o *mergeJoinOp) Next() coldata.Batch {
 			if o.proberState.inputDone || o.builderState.outCount == o.outputBatchSize {
 				o.output.SetLength(o.builderState.outCount)
 				// Reset builder out count.
-				o.builderState.outCount = uint16(0)
+				o.builderState.outCount = 0
 				return o.output
 			}
 		default:

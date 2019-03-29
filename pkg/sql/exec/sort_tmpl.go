@@ -88,11 +88,11 @@ func newSingleSorter(t types.T, dir distsqlpb.Ordering_Column_Direction) (colSor
 
 type sort_TYPE_DIROp struct {
 	sortCol      []_GOTYPE
-	order        []uint64
-	workingSpace []uint64
+	order        []int
+	workingSpace []int
 }
 
-func (s *sort_TYPE_DIROp) init(col coldata.Vec, order []uint64, workingSpace []uint64) {
+func (s *sort_TYPE_DIROp) init(col coldata.Vec, order []int, workingSpace []int) {
 	s.sortCol = col._TemplateType()
 	s.order = order
 	s.workingSpace = workingSpace
@@ -112,30 +112,30 @@ func (s *sort_TYPE_DIROp) reorder() {
 	// [3,2,0,1].
 	index := s.workingSpace
 	for idx, ord := range s.order {
-		index[int(ord)] = uint64(idx)
+		index[ord] = idx
 	}
 	// Once we have our permutation, we apply it to our value column by following
 	// each cycle within the permutation until we reach the identity. This
 	// algorithm takes just O(n) swaps to reorder the sortCol. It also returns
 	// the index array to an ordinal list in the process.
 	for i := range index {
-		for index[i] != uint64(i) {
+		for index[i] != i {
 			s.sortCol[index[i]], s.sortCol[i] = s.sortCol[i], s.sortCol[index[i]]
 			index[i], index[index[i]] = index[index[i]], index[i]
 		}
 	}
 }
 
-func (s *sort_TYPE_DIROp) sortPartitions(partitions []uint64) {
+func (s *sort_TYPE_DIROp) sortPartitions(partitions []int) {
 	if len(partitions) < 1 {
 		panic(fmt.Sprintf("invalid partitions list %v", partitions))
 	}
 	order := s.order
 	sortCol := s.sortCol
 	for i, partitionStart := range partitions {
-		var partitionEnd uint64
+		var partitionEnd int
 		if i == len(partitions)-1 {
-			partitionEnd = uint64(len(order))
+			partitionEnd = len(order)
 		} else {
 			partitionEnd = partitions[i+1]
 		}

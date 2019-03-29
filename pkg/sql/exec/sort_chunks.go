@@ -158,7 +158,7 @@ type chunker struct {
 	// found in the last read batch. Note: the first chunk might be a part of
 	// the chunk that is currently being buffered, and similarly the last chunk
 	// might include tuples from the batches to be read.
-	chunks []uint64
+	chunks []int
 	// chunksProcessedIdx indicates which chunk within s.chunks should be
 	// processed next.
 	chunksProcessedIdx int
@@ -168,7 +168,7 @@ type chunker struct {
 	chunksStartIdx int
 
 	// buffered indicates the number of currently buffered tuples.
-	buffered uint64
+	buffered int
 	// bufferedColumns is a buffer to store tuples when a chunk is bigger than
 	// col.BatchSize or when the chunk is the last in the last read batch (we
 	// don't know yet where the end of such chunk is).
@@ -207,7 +207,7 @@ func (s *chunker) init() {
 		s.bufferedColumns[i] = coldata.NewMemColumn(s.inputTypes[i], 0)
 	}
 	s.partitionCol = make([]bool, coldata.BatchSize)
-	s.chunks = make([]uint64, 0, 16)
+	s.chunks = make([]int, 0, 16)
 }
 
 // done indicates whether the chunker has fully consumed its input.
@@ -244,9 +244,9 @@ func (s *chunker) prepareNextChunks() chunkerReadingState {
 			// boundaries of the chunks (stored in s.chunks) to sort further.
 			copy(s.partitionCol, zeroBoolVec)
 			for i, orderedCol := range s.alreadySortedCols {
-				s.partitioners[i].partition(s.batch.ColVec(int(orderedCol.ColIdx)), s.partitionCol, uint64(s.batch.Length()))
+				s.partitioners[i].partition(s.batch.ColVec(int(orderedCol.ColIdx)), s.partitionCol, s.batch.Length())
 			}
-			s.chunks = boolVecToSel64(s.partitionCol, s.chunks[:0])
+			s.chunks = boolVecToSel(s.partitionCol, s.chunks[:0])
 
 			if s.buffered == 0 {
 				// There are no buffered tuples, so a new chunk starts in the current
@@ -299,7 +299,7 @@ func (s *chunker) prepareNextChunks() chunkerReadingState {
 				// First s.chunks[1] tuples belong to the same chunk that is being
 				// buffered, so we buffer them and proceed to emitting all buffered
 				// tuples.
-				s.buffer(0 /* start */, uint16(s.chunks[1]))
+				s.buffer(0 /* start */, s.chunks[1])
 				s.chunksProcessedIdx = 1
 				s.state = chunkerEmittingFromBuffer
 				continue
@@ -320,7 +320,7 @@ func (s *chunker) prepareNextChunks() chunkerReadingState {
 				return chunkerReadFromBatch
 			} else if s.chunksProcessedIdx == len(s.chunks)-1 {
 				// Other tuples might belong to this chunk, so we buffer it.
-				s.buffer(uint16(s.chunks[s.chunksProcessedIdx]), s.batch.Length())
+				s.buffer(s.chunks[s.chunksProcessedIdx], s.batch.Length())
 				// All tuples in s.batch have been processed, so we reset s.chunks and
 				// the corresponding variables.
 				s.chunks = s.chunks[:0]
@@ -342,7 +342,7 @@ func (s *chunker) prepareNextChunks() chunkerReadingState {
 
 // buffer appends all tuples in range [start,end) from s.batch to already
 // buffered tuples.
-func (s *chunker) buffer(start uint16, end uint16) {
+func (s *chunker) buffer(start int, end int) {
 	for i := 0; i < len(s.bufferedColumns); i++ {
 		s.bufferedColumns[i].AppendSlice(
 			s.batch.ColVec(i),
@@ -352,7 +352,7 @@ func (s *chunker) buffer(start uint16, end uint16) {
 			end,
 		)
 	}
-	s.buffered += uint64(end - start)
+	s.buffered += end - start
 }
 
 func (s *chunker) spool() {
@@ -370,7 +370,7 @@ func (s *chunker) getValues(i int) coldata.Vec {
 	}
 }
 
-func (s *chunker) getNumTuples() uint64 {
+func (s *chunker) getNumTuples() int {
 	switch s.readFrom {
 	case chunkerReadFromBuffer:
 		return s.buffered
