@@ -45,23 +45,30 @@ func (p *boolVecToSelOp) Next() coldata.Batch {
 		// Note that, if the input already had a selection vector, the output
 		// selection vector will be a subset of the input selection vector.
 		idx := uint16(0)
-		n := batch.Length()
 		if sel := batch.Selection(); sel != nil {
-			for s := uint16(0); s < n; s++ {
+			sel = sel[:batch.Length()]
+			for s := range sel {
 				i := sel[s]
+				var inc uint16
+				// This form is transformed into a data dependency by the compiler,
+				// avoiding an expensive conditional branch.
 				if outputCol[i] {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = i
+				idx += inc
 			}
 		} else {
 			batch.SetSelection(true)
 			sel := batch.Selection()
-			for i := uint16(0); i < n; i++ {
+			for i := range outputCol {
+				var inc uint16
+				// Ditto above: replace a conditional with a data dependency.
 				if outputCol[i] {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = uint16(i)
+				idx += inc
 			}
 		}
 
@@ -70,9 +77,7 @@ func (p *boolVecToSelOp) Next() coldata.Batch {
 		}
 
 		// Zero our output column for next time.
-		for i := range p.outputCol {
-			p.outputCol[i] = false
-		}
+		copy(p.outputCol, zeroBoolVec)
 
 		batch.SetLength(idx)
 		return batch

@@ -172,6 +172,7 @@ func (p *sortedDistinct_TYPEOp) Next() coldata.Batch {
 	// We always output the first row.
 	lastVal := p.lastVal
 	sel := batch.Selection()
+	startIdx := uint16(0)
 	if !p.foundFirstRow {
 		if sel != nil {
 			lastVal = col[sel[0]]
@@ -180,11 +181,12 @@ func (p *sortedDistinct_TYPEOp) Next() coldata.Batch {
 			lastVal = col[0]
 			outputCol[0] = true
 		}
-	}
-
-	startIdx := uint16(0)
-	if !p.foundFirstRow {
 		startIdx = 1
+		p.foundFirstRow = true
+		if batch.Length() == 1 {
+			p.lastVal = lastVal
+			return batch
+		}
 	}
 
 	n := batch.Length()
@@ -198,13 +200,13 @@ func (p *sortedDistinct_TYPEOp) Next() coldata.Batch {
 		// Bounds check elimination.
 		col = col[startIdx:n]
 		outputCol = outputCol[startIdx:n]
+		_ = outputCol[len(col)-1]
 		for i := range col {
 			_INNER_LOOP(i, lastVal, col, outputCol)
 		}
 	}
 
 	p.lastVal = lastVal
-	p.foundFirstRow = true
 
 	return batch
 }
@@ -237,8 +239,6 @@ func _INNER_LOOP(i int, lastVal _GOTYPE, col []interface{}, outputCol []bool) { 
 
 	// {{define "innerLoop"}}
 	v := col[i]
-	// Note that not inlining this unique var actually makes a non-trivial
-	// performance difference.
 	var unique bool
 	_ASSIGN_NE("unique", "v", "lastVal")
 	outputCol[i] = outputCol[i] || unique
