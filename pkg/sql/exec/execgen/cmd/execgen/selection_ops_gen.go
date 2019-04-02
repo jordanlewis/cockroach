@@ -54,33 +54,38 @@ type {{template "opConstName" .}} struct {
 func (p *{{template "opConstName" .}}) Next() coldata.Batch {
 	for {
 		batch := p.input.Next()
-		if batch.Length() == 0 {
+		n := batch.Length()
+		if n == 0 {
 			return batch
 		}
 
 		coldata := batch.ColVec(p.colIdx).{{.LTyp}}()[:coldata.BatchSize]
 		var idx uint16
-		n := batch.Length()
 		if sel := batch.Selection(); sel != nil {
 			sel := sel[:n]
 			for _, i := range sel {
 				var cmp bool
 				{{(.Assign "cmp" "coldata[i]" "p.constArg")}}
+				var inc uint16
 				if cmp {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = i
+				idx += inc
 			}
 		} else {
 			batch.SetSelection(true)
 			sel := batch.Selection()
-			for i := uint16(0); i < n; i++ {
+			coldata = coldata[:n]
+			for i := range coldata {
 				var cmp bool
 				{{(.Assign "cmp" "coldata[i]" "p.constArg")}}
+				var inc uint16
 				if cmp {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = uint16(i)
+				idx += inc
 			}
 		}
 		if idx > 0 {
@@ -104,13 +109,13 @@ type {{template "opName" .}} struct {
 func (p *{{template "opName" .}}) Next() coldata.Batch {
 	for {
 		batch := p.input.Next()
-		if batch.Length() == 0 {
+		n := batch.Length()
+		if n == 0 {
 			return batch
 		}
 
 		col1 := batch.ColVec(p.col1Idx).{{.LTyp}}()[:coldata.BatchSize]
 		col2 := batch.ColVec(p.col2Idx).{{.RTyp}}()[:coldata.BatchSize]
-		n := batch.Length()
 
 		var idx uint16
 		if sel := batch.Selection(); sel != nil {
@@ -118,21 +123,27 @@ func (p *{{template "opName" .}}) Next() coldata.Batch {
 			for _, i := range sel {
 				var cmp bool
 				{{(.Assign "cmp" "col1[i]" "col2[i]")}}
+				var inc uint16
 				if cmp {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = i
+				idx += inc
 			}
 		} else {
 			batch.SetSelection(true)
 			sel := batch.Selection()
-			for i := uint16(0); i < n; i++ {
+			col1 = col1[:n]
+			_ = col2[len(col1)-1]
+			for i := range col1 {
 				var cmp bool
 				{{(.Assign "cmp" "col1[i]" "col2[i]")}}
+				var inc uint16
 				if cmp {
-					sel[idx] = i
-					idx++
+					inc = 1
 				}
+				sel[idx] = uint16(i)
+				idx += inc
 			}
 		}
 		if idx > 0 {
