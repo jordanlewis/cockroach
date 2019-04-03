@@ -53,11 +53,8 @@ fi
 # Absolute path to the toplevel cockroach directory.
 cockroach_toplevel=$(dirname "$(cd "$(dirname "${0}")"; pwd)")
 
-# Ensure the artifact sub-directory always exists and redirect
-# temporary file creation to it, so that CI always picks up temp files
-# (including stray log files).
+# Ensure the artifact sub-directory always exists.
 mkdir -p "${cockroach_toplevel}"/artifacts
-export TMPDIR=$cockroach_toplevel/artifacts
 
 # We'll mount a fresh directory owned by the invoking user as the container
 # user's home directory because various utilities (e.g. bash writing to
@@ -172,7 +169,6 @@ docker run --init --privileged -i ${tty-} --rm \
   -u "$uid:$gid" \
   ${vols} \
   --workdir="/go/src/github.com/cockroachdb/cockroach" \
-  --env="TMPDIR=/go/src/github.com/cockroachdb/cockroach/artifacts" \
   --env="PAGER=cat" \
   --env="GOTRACEBACK=${GOTRACEBACK-all}" \
   --env="TZ=America/New_York" \
