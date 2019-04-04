@@ -144,7 +144,9 @@ func _CHECK_COL_WITH_NULLS(
 
 func _REHASH_BODY(buckets []uint64, keys []interface{}, nKeys uint64, _SEL_STRING string) { // */}}
 	// {{define "rehashBody"}}
-	for i := uint64(0); i < nKeys; i++ {
+	keys = keys[:nKeys]
+	_ = buckets[len(keys)-1]
+	for i := range keys {
 		v := keys[_SEL_IND]
 		p := uintptr(buckets[i])
 		_ASSIGN_HASH(p, v)
