@@ -94,19 +94,20 @@ func _CHECK_COL_BODY(
 	_BUILD_HAS_NULLS bool,
 ) { // */}}
 	// {{define "checkColBody"}}
-	for i := uint16(0); i < nToCheck; i++ {
+	toCheck := prober.toCheck[:nToCheck]
+	for i, v := range toCheck {
 		// keyID of 0 is reserved to represent the end of the next chain.
 
-		if keyID := prober.groupID[prober.toCheck[i]]; keyID != 0 {
+		if keyID := prober.groupID[v]; keyID != 0 {
 			// the build table key (calculated using keys[keyID - 1] = key) is
 			// compared to the corresponding probe table to determine if a match is
 			// found.
 
 			/* {{if .ProbeHasNulls }} */
 			if probeVec.NullAt(_SEL_IND) {
-				prober.groupID[prober.toCheck[i]] = 0
+				prober.groupID[v] = 0
 			} else /*{{end}} {{if .BuildHasNulls}} */ if buildVec.NullAt64(keyID - 1) {
-				prober.differs[prober.toCheck[i]] = true
+				prober.differs[v] = true
 			} else /*{{end}} */ {
 				_CHECK_COL_MAIN(prober, buildKeys, probeKeys, keyID, i)
 			}
