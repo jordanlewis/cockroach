@@ -163,9 +163,7 @@ func _COLLECT_RIGHT_OUTER(
 	_SEL_STRING string,
 ) uint16 { // */}}
 	// {{define "collectRightOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
-		currentID := prober.head[i]
-
+	for i, currentID := range prober.head[:batchSize] {
 		if currentID == 0 {
 			prober.probeRowUnmatched[nResults] = true
 		}
@@ -177,7 +175,7 @@ func _COLLECT_RIGHT_OUTER(
 			}
 
 			prober.buildIdx[nResults] = currentID - 1
-			prober.probeIdx[nResults] = _SEL_IND
+			prober.probeIdx[nResults] = uint16(_SEL_IND)
 			currentID = prober.ht.same[currentID]
 			prober.head[i] = currentID
 			nResults++
@@ -201,8 +199,7 @@ func _COLLECT_NO_OUTER(
 	_SEL_STRING string,
 ) uint16 { // */}}
 	// {{define "collectNoOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
-		currentID := prober.head[i]
+	for i, currentID := range prober.head[:batchSize] {
 		for currentID != 0 {
 			if nResults >= coldata.BatchSize {
 				prober.prevBatch = batch
@@ -210,7 +207,7 @@ func _COLLECT_NO_OUTER(
 			}
 
 			prober.buildIdx[nResults] = currentID - 1
-			prober.probeIdx[nResults] = _SEL_IND
+			prober.probeIdx[nResults] = uint16(_SEL_IND)
 			currentID = prober.ht.same[currentID]
 			prober.head[i] = currentID
 			nResults++
@@ -224,12 +221,11 @@ func _COLLECT_NO_OUTER(
 
 func _DISTINCT_COLLECT_RIGHT_OUTER(prober *hashJoinProber, batchSize uint16, _SEL_STRING string) { // */}}
 	// {{define "distinctCollectRightOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
+	for i, groupID := range groupIDs {
 		// Index of keys and outputs in the hash table is calculated as ID - 1.
-		prober.buildIdx[i] = prober.groupID[i] - 1
-		prober.probeIdx[i] = _SEL_IND
-
-		prober.probeRowUnmatched[i] = prober.groupID[i] == 0
+		buildIdx[i] = groupID - 1
+		probeIdx[i] = uint16(_SEL_IND)
+		probeRowUnmatched[i] = groupID == 0
 	}
 	// {{end}}
 	// {{/*
@@ -239,11 +235,11 @@ func _DISTINCT_COLLECT_NO_OUTER(
 	prober *hashJoinProber, batchSize uint16, nResults uint16, _ string,
 ) { // */}}
 	// {{define "distinctCollectNoOuter"}}
-	for i := uint16(0); i < batchSize; i++ {
-		if prober.groupID[i] != 0 {
+	for i, g := range prober.groupID[:batchSize] {
+		if g != 0 {
 			// Index of keys and outputs in the hash table is calculated as ID - 1.
-			prober.buildIdx[nResults] = prober.groupID[i] - 1
-			prober.probeIdx[nResults] = _SEL_IND
+			prober.buildIdx[nResults] = g - 1
+			prober.probeIdx[nResults] = uint16(_SEL_IND)
 			nResults++
 		}
 	}
@@ -344,7 +340,19 @@ func (prober *hashJoinProber) distinctCollect(
 	if prober.spec.outer {
 		nResults = batchSize
 
+		// Bounds check elimination. Go doesn't eliminate these bounds checks unless
+		// the slices are locals, so define them, and then provoke a bounds check
+		// that relates all of the slices to the length of the groupIDs slice, which
+		// we range over in _DISTINCT_COLLECT_RIGHT_OUTER.
+		groupIDs := prober.groupID[:batchSize]
+		buildIdx := prober.buildIdx
+		probeIdx := prober.probeIdx
+		probeRowUnmatched := prober.probeRowUnmatched
+		_ = buildIdx[len(groupIDs)-1]
+		_ = probeIdx[len(groupIDs)-1]
+		_ = probeRowUnmatched[len(groupIDs)-1]
 		if sel != nil {
+			_ = sel[len(groupIDs)-1]
 			_DISTINCT_COLLECT_RIGHT_OUTER(prober, batchSize, "sel[i]")
 		} else {
 			_DISTINCT_COLLECT_RIGHT_OUTER(prober, batchSize, "i")
