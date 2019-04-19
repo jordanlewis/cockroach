@@ -43,7 +43,7 @@ type tpch struct {
 	flags     workload.Flags
 	connFlags *workload.ConnFlags
 
-	seed        int64
+	seed        uint64
 	scaleFactor int
 
 	distsql bool
@@ -67,7 +67,7 @@ var tpchMeta = workload.Meta{
 			`queries`:  {RuntimeOnly: true},
 			`dist-sql`: {RuntimeOnly: true},
 		}
-		g.flags.Int64Var(&g.seed, `seed`, 1, `Random number generator seed`)
+		g.flags.Uint64Var(&g.seed, `seed`, 1, `Random number generator seed`)
 		g.flags.IntVar(&g.scaleFactor, `scale-factor`, 1,
 			`Linear scale of how much data to use (each SF is ~1GB)`)
 		g.flags.StringVar(&g.queriesRaw, `queries`, `1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22`,
@@ -105,12 +105,12 @@ func (w *tpch) Tables() []workload.Table {
 	nation := workload.Table{
 		Name:        `nation`,
 		Schema:      tpchNationSchema,
-		InitialRows: workload.Tuples(numNation, nil),
+		InitialRows: workload.Tuples(numNation, w.tpchNationInitialRow),
 	}
 	region := workload.Table{
 		Name:        `region`,
 		Schema:      tpchRegionSchema,
-		InitialRows: workload.Tuples(numRegion, nil),
+		InitialRows: workload.Tuples(numRegion, w.tpchRegionInitialRow),
 	}
 	part := workload.Table{
 		Name:        `part`,
@@ -120,7 +120,7 @@ func (w *tpch) Tables() []workload.Table {
 	supplier := workload.Table{
 		Name:        `supplier`,
 		Schema:      tpchSupplierSchema,
-		InitialRows: workload.Tuples(numSupplierPerSF*w.scaleFactor, nil),
+		InitialRows: workload.Tuples(numSupplierPerSF*w.scaleFactor, w.tpchSupplierInitialRow),
 	}
 	partsupp := workload.Table{
 		Name:        `partsupp`,
