@@ -19,7 +19,9 @@ package tpch
 import (
 	"fmt"
 
-	"golang.org/x/exp/rand"
+	"github.com/cockroachdb/cockroach/pkg/sql/exec/coldata"
+	"github.com/cockroachdb/cockroach/pkg/sql/exec/types"
+	"github.com/cockroachdb/cockroach/pkg/util/bufalloc"
 )
 
 var regionNames = [...]string{`AFRICA`, `AMERICA`, `ASIA`, `EUROPE`, `MIDDLE EAST`}
@@ -54,42 +56,74 @@ var nations = [...]struct {
 	{name: `UNITED STATES`, regionKey: 1},
 }
 
-func (w *tpch) tpchNationInitialRow(batchIdx int) []interface{} {
-	rng := rand.New(rand.NewSource(w.seed + uint64(batchIdx)))
-
-	regionKey := batchIdx
-	return []interface{}{
-		regionKey,                    // r_regionkey
-		regionNames[regionKey],       // r_name
-		randTextString(rng, 31, 115), // r_comment
-	}
+var nationColTypes = []types.T{
+	types.Int16,
+	types.Bytes,
+	types.Bytes,
 }
 
-func (w *tpch) tpchRegionInitialRow(batchIdx int) []interface{} {
-	rng := rand.New(rand.NewSource(w.seed + uint64(batchIdx)))
+func (w *tpch) tpchNationInitialRowBatch(
+	batchIdx int, cb coldata.Batch, a *bufalloc.ByteAllocator,
+) {
+	l := w.localsPool.Get().(*generateLocals)
+	defer w.localsPool.Put(l)
+	rng := l.rng
+
+	regionKey := batchIdx
+	cb.Reset(nationColTypes, 1)
+	cb.ColVec(0).Int16()[0] = int16(regionKey)                         // r_regionkey
+	cb.ColVec(1).Bytes()[0] = []byte(regionNames[regionKey])           // r_name
+	cb.ColVec(2).Bytes()[0] = randTextString(rng, w.textPool, 31, 115) // r_comment
+}
+
+var regionColTypes = []types.T{
+	types.Int16,
+	types.Bytes,
+	types.Int16,
+	types.Bytes,
+}
+
+func (w *tpch) tpchRegionInitialRowBatch(
+	batchIdx int, cb coldata.Batch, a *bufalloc.ByteAllocator,
+) {
+	l := w.localsPool.Get().(*generateLocals)
+	defer w.localsPool.Put(l)
+	rng := l.rng
 
 	nationKey := batchIdx
 	nation := nations[nationKey]
-	return []interface{}{
-		nationKey,                    // n_nationkey
-		nation.name,                  // n_name
-		nation.regionKey,             // n_regionkey
-		randTextString(rng, 31, 114), // n_comment
-	}
+	cb.Reset(regionColTypes, 1)
+	cb.ColVec(0).Int16()[0] = int16(nationKey)                         // n_nationkey
+	cb.ColVec(1).Bytes()[0] = []byte(nation.name)                      // n_name
+	cb.ColVec(2).Int16()[0] = int16(nation.regionKey)                  // n_regionkey
+	cb.ColVec(3).Bytes()[0] = randTextString(rng, w.textPool, 31, 115) // r_comment
 }
 
-func (w *tpch) tpchSupplierInitialRow(batchIdx int) []interface{} {
-	rng := rand.New(rand.NewSource(w.seed + uint64(batchIdx)))
+var supplierColTypes = []types.T{
+	types.Int64,
+	types.Bytes,
+	types.Bytes,
+	types.Int16,
+	types.Bytes,
+	types.Float32,
+	types.Bytes,
+}
 
-	suppKey := batchIdx
-	nationKey := randInt(rng, 0, 24)
-	return []interface{}{
-		suppKey,                               // s_suppkey
-		fmt.Sprintf(`Supplier#%09d`, suppKey), // s_name
-		randVString(rng, 10, 40),              // s_address
-		nationKey,                             // s_nationkey
-		randPhone(rng, nationKey),             // s_phone
-		randFloat(rng, -99999, 999999, 100),
-		randTextString(rng, 25, 100), // s_comment
-	}
+func (w *tpch) tpchSupplierInitialRowBatch(
+	batchIdx int, cb coldata.Batch, a *bufalloc.ByteAllocator,
+) {
+	l := w.localsPool.Get().(*generateLocals)
+	defer w.localsPool.Put(l)
+	rng := l.rng
+
+	suppKey := int64(batchIdx)
+	nationKey := int16(randInt(rng, 0, 24))
+	cb.Reset(supplierColTypes, 1)
+	cb.ColVec(0).Int64()[0] = suppKey                                       // s_suppkey
+	cb.ColVec(1).Bytes()[0] = []byte(fmt.Sprintf(`Supplier#%09d`, suppKey)) // s_name
+	cb.ColVec(2).Bytes()[0] = randVString(rng, a, 10, 40)                   // s_address
+	cb.ColVec(3).Int16()[0] = nationKey                                     // s_nationkey
+	cb.ColVec(4).Bytes()[0] = randPhone(rng, nationKey)                     // s_phone
+	cb.ColVec(5).Float32()[0] = randFloat(rng, -99999, 999999, 100)         // s_acctbal
+	cb.ColVec(6).Bytes()[0] = randTextString(rng, w.textPool, 25, 100)      // s_comment
 }

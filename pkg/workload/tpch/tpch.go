@@ -18,7 +18,10 @@ package tpch
 import (
 	"context"
 	gosql "database/sql"
+	"fmt"
+	"io/ioutil"
 	"strings"
+	"sync"
 
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
@@ -26,6 +29,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/workload/histogram"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
+	"golang.org/x/exp/rand"
 )
 
 const (
@@ -50,6 +54,9 @@ type tpch struct {
 
 	queriesRaw      string
 	selectedQueries []string
+
+	textPool   []byte
+	localsPool *sync.Pool
 }
 
 func init() {
@@ -99,18 +106,43 @@ func (w *tpch) Hooks() workload.Hooks {
 	}
 }
 
+type generateLocals struct {
+	rng *rand.Rand
+}
+
 // Tables implements the Generator interface.
 func (w *tpch) Tables() []workload.Table {
+	if w.localsPool == nil {
+		w.localsPool = &sync.Pool{
+			New: func() interface{} {
+				return &generateLocals{
+					rng: rand.New(rand.NewSource(uint64(timeutil.Now().UnixNano()))),
+				}
+			},
+		}
+	}
+
+	var err error
+	w.textPool, err = ioutil.ReadFile("pool.txt")
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't open pool.txt: %v", err))
+	}
 	// TODO(dan): Implement the InitialRowFns for these.
 	nation := workload.Table{
-		Name:        `nation`,
-		Schema:      tpchNationSchema,
-		InitialRows: workload.Tuples(numNation, w.tpchNationInitialRow),
+		Name:   `nation`,
+		Schema: tpchNationSchema,
+		InitialRows: workload.BatchedTuples{
+			NumBatches: numNation,
+			FillBatch:  w.tpchNationInitialRowBatch,
+		},
 	}
 	region := workload.Table{
-		Name:        `region`,
-		Schema:      tpchRegionSchema,
-		InitialRows: workload.Tuples(numRegion, w.tpchRegionInitialRow),
+		Name:   `region`,
+		Schema: tpchRegionSchema,
+		InitialRows: workload.BatchedTuples{
+			NumBatches: numRegion,
+			FillBatch:  w.tpchRegionInitialRowBatch,
+		},
 	}
 	part := workload.Table{
 		Name:        `part`,
@@ -120,7 +152,11 @@ func (w *tpch) Tables() []workload.Table {
 	supplier := workload.Table{
 		Name:        `supplier`,
 		Schema:      tpchSupplierSchema,
-		InitialRows: workload.Tuples(numSupplierPerSF*w.scaleFactor, w.tpchSupplierInitialRow),
+		InitialRows: workload.Tuples(numSupplierPerSF*w.scaleFactor, w.tpchSupplierInitialRowBatch),
+		InitialRows: workload.BatchedTuples{
+			NumBatches: numSupplierPerSF * w.scaleFactor,
+			FillBatch:  w.tpchRegionInitialRowBatch,
+		},
 	}
 	partsupp := workload.Table{
 		Name:        `partsupp`,

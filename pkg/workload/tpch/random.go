@@ -18,6 +18,7 @@ package tpch
 import (
 	"fmt"
 
+	"github.com/cockroachdb/cockroach/pkg/util/bufalloc"
 	"golang.org/x/exp/rand"
 )
 
@@ -34,31 +35,34 @@ func randFloat(rng *rand.Rand, x, y, shift int) float32 {
 	return float32(randInt(rng, x, y)) / float32(shift)
 }
 
-// TODO(dan): This is not even a little bit right. See 4.2.2.10.
-func randTextString(rng *rand.Rand, minLen, maxLen int) string {
-	buf := make([]byte, randInt(rng, minLen, maxLen))
-	for i := range buf {
-		buf[i] = alphabet[rng.Intn(len(alphabet))]
-	}
-	return string(buf)
+// 4.2.2.10:
+// The term text string[min, max] represents a substring of a 300 MB string
+// populated according to the pseudo text grammar defined in Clause 4.2.2.14.
+// The length of the substring is a random number between min and max inclusive.
+// The substring offset is randomly chosen.
+func randTextString(rng *rand.Rand, pool []byte, minLen, maxLen int) []byte {
+	start := rng.Intn(len(pool) - maxLen)
+	end := start + rng.Intn(maxLen-minLen) + minLen
+	return pool[start:end]
 }
 
 // randVString returns "a string comprised of randomly generated alphanumeric
 // characters within a character set of at least 64 symbols. The length of the
 // string is a random value between min and max inclusive". See 4.2.2.7.
-func randVString(rng *rand.Rand, minLen, maxLen int) string {
-	buf := make([]byte, randInt(rng, minLen, maxLen))
+func randVString(rng *rand.Rand, a *bufalloc.ByteAllocator, minLen, maxLen int) []byte {
+	var buf []byte
+	*a, buf = a.Alloc(randInt(rng, minLen, maxLen), 0)
 	for i := range buf {
 		buf[i] = alphanumericLen64[rng.Intn(len(alphanumericLen64))]
 	}
-	return string(buf)
+	return buf
 }
 
 // randPhone returns a phone number generated according to 4.2.2.9.
-func randPhone(rng *rand.Rand, nationKey int) string {
+func randPhone(rng *rand.Rand, nationKey int16) []byte {
 	countryCode := nationKey + 10
 	localNumber1 := randInt(rng, 100, 999)
 	localNumber2 := randInt(rng, 1000, 9999)
 	localNumber3 := randInt(rng, 1000, 9999)
-	return fmt.Sprintf(`%d-%d-%d-%d`, countryCode, localNumber1, localNumber2, localNumber3)
+	return []byte(fmt.Sprintf(`%d-%d-%d-%d`, countryCode, localNumber1, localNumber2, localNumber3))
 }
