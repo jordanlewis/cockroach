@@ -25,6 +25,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil/pgdate"
 	"github.com/cockroachdb/cockroach/pkg/workload"
 	"github.com/cockroachdb/cockroach/pkg/workload/histogram"
 	"github.com/pkg/errors"
@@ -33,14 +34,14 @@ import (
 )
 
 const (
-	numNation        = 25
-	numRegion        = 5
-	numPartPerSF     = 200000
-	numSupplierPerSF = 10000
-	numPartSuppPerSF = 800000
-	numCustomerPerSF = 150000
-	numOrderPerSF    = 1500000
-	numLineItemPerSF = 6001215
+	numNation           = 25
+	numRegion           = 5
+	numPartPerSF        = 200000
+	numPartSuppPerPart  = 4
+	numSupplierPerSF    = 10000
+	numCustomerPerSF    = 150000
+	numOrderPerCustomer = 10
+	numLineItemPerSF    = 6001215
 )
 
 type tpch struct {
@@ -61,6 +62,12 @@ type tpch struct {
 
 func init() {
 	workload.Register(tpchMeta)
+}
+
+// FromWarehouses returns a tpch generator pre-configured with the specified
+// scale factor.
+func FromScaleFactor(scaleFactor int) workload.Generator {
+	return workload.FromFlags(tpchMeta, fmt.Sprintf(`--scale-factor=%d`, scaleFactor))
 }
 
 var tpchMeta = workload.Meta{
@@ -108,6 +115,20 @@ func (w *tpch) Hooks() workload.Hooks {
 
 type generateLocals struct {
 	rng *rand.Rand
+
+	// namePerm is a slice of ordinals into randPartNames.
+	namePerm []int
+
+	orderData *orderSharedRandomData
+}
+
+func intToDate(i interface{}) interface{} {
+	i64 := i.(int64)
+	d, err := pgdate.MakeDateFromUnixEpoch(i64)
+	if err != nil {
+		panic(err)
+	}
+	return d.String()
 }
 
 // Tables implements the Generator interface.
@@ -115,19 +136,30 @@ func (w *tpch) Tables() []workload.Table {
 	if w.localsPool == nil {
 		w.localsPool = &sync.Pool{
 			New: func() interface{} {
+				namePerm := make([]int, len(randPartNames))
+				for i := range namePerm {
+					namePerm[i] = i
+				}
 				return &generateLocals{
-					rng: rand.New(rand.NewSource(uint64(timeutil.Now().UnixNano()))),
+					rng:      rand.New(rand.NewSource(uint64(timeutil.Now().UnixNano()))),
+					namePerm: namePerm,
+					orderData: &orderSharedRandomData{
+						partKeys:   make([]int, 0, 7),
+						shipDates:  make([]int64, 0, 7),
+						quantities: make([]float32, 0, 7),
+						discount:   make([]float32, 0, 7),
+						tax:        make([]float32, 0, 7),
+					},
 				}
 			},
 		}
 	}
 
 	var err error
-	w.textPool, err = ioutil.ReadFile("pool.txt")
+	w.textPool, err = ioutil.ReadFile("/Users/jordan/go/src/github.com/cockroachdb/cockroach/pool.txt")
 	if err != nil {
 		panic(fmt.Sprintf("Couldn't open pool.txt: %v", err))
 	}
-	// TODO(dan): Implement the InitialRowFns for these.
 	nation := workload.Table{
 		Name:   `nation`,
 		Schema: tpchNationSchema,
@@ -144,39 +176,66 @@ func (w *tpch) Tables() []workload.Table {
 			FillBatch:  w.tpchRegionInitialRowBatch,
 		},
 	}
-	part := workload.Table{
-		Name:        `part`,
-		Schema:      tpchPartSchema,
-		InitialRows: workload.Tuples(numPartPerSF*w.scaleFactor, nil),
-	}
 	supplier := workload.Table{
-		Name:        `supplier`,
-		Schema:      tpchSupplierSchema,
-		InitialRows: workload.Tuples(numSupplierPerSF*w.scaleFactor, w.tpchSupplierInitialRowBatch),
+		Name:   `supplier`,
+		Schema: tpchSupplierSchema,
 		InitialRows: workload.BatchedTuples{
 			NumBatches: numSupplierPerSF * w.scaleFactor,
-			FillBatch:  w.tpchRegionInitialRowBatch,
+			FillBatch:  w.tpchSupplierInitialRowBatch,
+		},
+	}
+	part := workload.Table{
+		Name:   `part`,
+		Schema: tpchPartSchema,
+		InitialRows: workload.BatchedTuples{
+			NumBatches: numPartPerSF * w.scaleFactor,
+			FillBatch:  w.tpchPartInitialRowBatch,
 		},
 	}
 	partsupp := workload.Table{
-		Name:        `partsupp`,
-		Schema:      tpchPartSuppSchema,
-		InitialRows: workload.Tuples(numPartSuppPerSF*w.scaleFactor, nil),
+		Name:   `partsupp`,
+		Schema: tpchPartSuppSchema,
+		InitialRows: workload.BatchedTuples{
+			// We'll do 1 batch per part, hence numPartPerSF and not numPartSuppPerSF.
+			NumBatches: numPartPerSF * w.scaleFactor,
+			FillBatch:  w.tpchPartSuppInitialRowBatch,
+		},
 	}
 	customer := workload.Table{
-		Name:        `customer`,
-		Schema:      tpchCustomerSchema,
-		InitialRows: workload.Tuples(numCustomerPerSF*w.scaleFactor, nil),
+		Name:   `customer`,
+		Schema: tpchCustomerSchema,
+		InitialRows: workload.BatchedTuples{
+			NumBatches: numCustomerPerSF * w.scaleFactor,
+			FillBatch:  w.tpchCustomerInitialRowBatch,
+		},
 	}
 	orders := workload.Table{
-		Name:        `orders`,
-		Schema:      tpchOrdersSchema,
-		InitialRows: workload.Tuples(numOrderPerSF*w.scaleFactor, nil),
+		Name:   `orders`,
+		Schema: tpchOrdersSchema,
+		InitialRows: workload.BatchedTuples{
+			// 1 batch per customer.
+			NumBatches: numCustomerPerSF * w.scaleFactor,
+			FillBatch:  w.tpchOrdersInitialRowBatch,
+			DataTransformers: map[int]func(interface{}) interface{}{
+				// o_orderdate
+				4: intToDate,
+			},
+		},
 	}
 	lineitem := workload.Table{
-		Name:        `lineitem`,
-		Schema:      tpchLineItemSchema,
-		InitialRows: workload.Tuples(numLineItemPerSF*w.scaleFactor, nil),
+		Name:   `lineitem`,
+		Schema: tpchLineItemSchema,
+		InitialRows: workload.BatchedTuples{
+			// 1 batch per customer.
+			NumBatches: numCustomerPerSF * w.scaleFactor,
+			FillBatch:  w.tpchLineItemInitialRowBatch,
+			DataTransformers: map[int]func(interface{}) interface{}{
+				// l_shipdate, l_commitdate, l_reciptdate
+				10: intToDate,
+				11: intToDate,
+				12: intToDate,
+			},
+		},
 	}
 
 	return []workload.Table{

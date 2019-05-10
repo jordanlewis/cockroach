@@ -24,14 +24,19 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/workload"
 	"github.com/cockroachdb/cockroach/pkg/workload/bank"
 	"github.com/cockroachdb/cockroach/pkg/workload/tpcc"
+	"github.com/cockroachdb/cockroach/pkg/workload/tpch"
 )
 
 func columnByteSize(col coldata.Vec) int64 {
 	switch col.Type() {
 	case types.Int64:
 		return int64(len(col.Int64()) * 8)
+	case types.Int16:
+		return int64(len(col.Int16()) * 2)
 	case types.Float64:
 		return int64(len(col.Float64()) * 8)
+	case types.Float32:
+		return int64(len(col.Float32()) * 4)
 	case types.Bytes:
 		var bytes int64
 		for _, b := range col.Bytes() {
@@ -73,5 +78,8 @@ func BenchmarkInitialData(b *testing.B) {
 	})
 	b.Run(`bank/rows=1000`, func(b *testing.B) {
 		benchmarkInitialData(b, bank.FromRows(1000))
+	})
+	b.Run(`tpch/scaleFactor=1`, func(b *testing.B) {
+		benchmarkInitialData(b, tpch.FromScaleFactor(1))
 	})
 }

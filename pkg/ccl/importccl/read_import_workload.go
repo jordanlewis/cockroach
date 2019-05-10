@@ -29,6 +29,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/bufalloc"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil/pgdate"
 	"github.com/cockroachdb/cockroach/pkg/workload"
 	"github.com/pkg/errors"
 )
@@ -76,6 +77,17 @@ func makeDatumFromColOffset(
 		case sqltypes.DecimalFamily:
 			d := *apd.New(col.Int64()[rowIdx], 0)
 			return alloc.NewDDecimal(tree.DDecimal{Decimal: d}), nil
+		case sqltypes.DateFamily:
+			date, err := pgdate.MakeDateFromUnixEpoch(col.Int64()[rowIdx])
+			if err != nil {
+				return nil, err
+			}
+			return alloc.NewDDate(tree.DDate{Date: date}), nil
+		}
+	case types.Int16:
+		switch hint.Family() {
+		case sqltypes.IntFamily:
+			return alloc.NewDInt(tree.DInt(col.Int16()[rowIdx])), nil
 		}
 	case types.Float64:
 		switch hint.Family() {
@@ -87,6 +99,11 @@ func makeDatumFromColOffset(
 				return nil, err
 			}
 			return alloc.NewDDecimal(tree.DDecimal{Decimal: d}), nil
+		}
+	case types.Float32:
+		switch hint.Family() {
+		case sqltypes.FloatFamily:
+			return alloc.NewDFloat(tree.DFloat(col.Float32()[rowIdx])), nil
 		}
 	case types.Bytes:
 		switch hint.Family() {

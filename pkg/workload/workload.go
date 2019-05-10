@@ -177,6 +177,8 @@ type BatchedTuples struct {
 	// calls. If a caller needs the Batch and its contents to be long lived,
 	// simply pass a new Batch to each call and don't reset the ByteAllocator.
 	FillBatch func(int, coldata.Batch, *bufalloc.ByteAllocator)
+
+	DataTransformers map[int]func(interface{}) interface{}
 }
 
 // Tuples is like TypedTuples except that it tries to guess the type of each
@@ -256,31 +258,55 @@ func (b BatchedTuples) BatchRows(batchIdx int) [][]interface{} {
 	cb := coldata.NewMemBatchWithSize(nil, 0)
 	var a bufalloc.ByteAllocator
 	b.FillBatch(batchIdx, cb, &a)
-	return ColBatchToRows(cb)
+	return ColBatchToRows(cb, b.DataTransformers)
 }
 
 // ColBatchToRows materializes the columnar data in a coldata.Batch into rows.
-func ColBatchToRows(cb coldata.Batch) [][]interface{} {
+func ColBatchToRows(
+	cb coldata.Batch, dataTransformers map[int]func(interface{}) interface{},
+) [][]interface{} {
 	numRows, numCols := int(cb.Length()), cb.Width()
 	// Allocate all the []interface{} row slices in one go.
 	datums := make([]interface{}, numRows*numCols)
 	for colIdx, col := range cb.ColVecs() {
+		var dataTransformer func(interface{}) interface{}
+		if dataTransformers != nil {
+			if t, ok := dataTransformers[colIdx]; ok {
+				dataTransformer = t
+			}
+		}
 		nulls := col.Nulls()
 		switch col.Type() {
 		case types.Bool:
-			for rowIdx, datum := range col.Bool() {
+			for rowIdx, datum := range col.Bool()[:numRows] {
 				if !nulls.NullAt64(uint64(rowIdx)) {
 					datums[rowIdx*numCols+colIdx] = datum
 				}
 			}
 		case types.Int64:
-			for rowIdx, datum := range col.Int64() {
+			for rowIdx, datum := range col.Int64()[:numRows] {
+				if !nulls.NullAt64(uint64(rowIdx)) {
+					if dataTransformer != nil {
+						datums[rowIdx*numCols+colIdx] = dataTransformer(datum)
+					} else {
+						datums[rowIdx*numCols+colIdx] = datum
+					}
+				}
+			}
+		case types.Int16:
+			for rowIdx, datum := range col.Int16()[:numRows] {
 				if !nulls.NullAt64(uint64(rowIdx)) {
 					datums[rowIdx*numCols+colIdx] = datum
 				}
 			}
 		case types.Float64:
-			for rowIdx, datum := range col.Float64() {
+			for rowIdx, datum := range col.Float64()[:numRows] {
+				if !nulls.NullAt64(uint64(rowIdx)) {
+					datums[rowIdx*numCols+colIdx] = datum
+				}
+			}
+		case types.Float32:
+			for rowIdx, datum := range col.Float32()[:numRows] {
 				if !nulls.NullAt64(uint64(rowIdx)) {
 					datums[rowIdx*numCols+colIdx] = datum
 				}
@@ -299,7 +325,7 @@ func ColBatchToRows(cb coldata.Batch) [][]interface{} {
 			// data/splits are okay with the fidelity loss. So, to avoid the
 			// complexity and the undesirable pkg/sql/parser dep, we simply treat them
 			// all as bytes and let the caller deal with the ambiguity.
-			for rowIdx, datum := range col.Bytes() {
+			for rowIdx, datum := range col.Bytes()[:numRows] {
 				if !nulls.NullAt64(uint64(rowIdx)) {
 					datums[rowIdx*numCols+colIdx] = datum
 				}
@@ -412,10 +438,14 @@ func ApproxDatumSize(x interface{}) int64 {
 		return int64(bits.Len(uint(t))+8) / 8
 	case int64:
 		return int64(bits.Len64(uint64(t))+8) / 8
+	case int16:
+		return int64(bits.Len64(uint64(t))+8) / 8
 	case uint64:
 		return int64(bits.Len64(t)+8) / 8
 	case float64:
 		return int64(bits.Len64(math.Float64bits(t))+8) / 8
+	case float32:
+		return int64(bits.Len64(math.Float64bits(float64(t)))+8) / 8
 	case string:
 		return int64(len(t))
 	case []byte:

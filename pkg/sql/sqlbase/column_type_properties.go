@@ -43,8 +43,8 @@ func LimitValueWidth(typ *types.T, inVal tree.Datum, name *string) (outVal tree.
 
 		if typ.Width() > 0 && utf8.RuneCountInString(sv) > int(typ.Width()) {
 			return nil, pgerror.Newf(pgerror.CodeStringDataRightTruncationError,
-				"value too long for type %s (column %q)",
-				typ.SQLString(), tree.ErrNameStringP(name))
+				"value %s too long for type %s (column %q)",
+				sv, typ.SQLString(), tree.ErrNameStringP(name))
 		}
 	case types.IntFamily:
 		if v, ok := tree.AsDInt(inVal); ok {
