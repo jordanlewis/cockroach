@@ -12,11 +12,14 @@ package distsqlrun
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/distsqlpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/exec"
 	"github.com/cockroachdb/cockroach/pkg/sql/exec/coldata"
+	"github.com/cockroachdb/cockroach/pkg/sql/exec/types"
+	"github.com/cockroachdb/cockroach/pkg/sql/exec/types/conv"
 	"github.com/cockroachdb/cockroach/pkg/sql/row"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlbase"
 	"github.com/cockroachdb/cockroach/pkg/util"
@@ -31,6 +34,13 @@ type colBatchScan struct {
 	rf        *row.CFetcher
 	limitHint int64
 	ctx       context.Context
+
+	lastBatch        coldata.Batch
+	shittyCacheKey   shittyCacheKey
+	shittyCacheEntry []coldata.Batch
+	batch            coldata.Batch
+	origNCtyps       int
+	ctyps            []types.T
 }
 
 var _ exec.Operator = &colBatchScan{}
@@ -45,12 +55,49 @@ func (s *colBatchScan) Init() {
 	}
 }
 
+type shittyCacheKey struct {
+	tableID  sqlbase.ID
+	indexIdx uint32
+}
+
+var shittyCache = make(map[shittyCacheKey][]coldata.Batch)
+
 func (s *colBatchScan) Next(ctx context.Context) coldata.Batch {
+	if entry := s.shittyCacheEntry; entry != nil {
+		//fmt.Println("Found cache entry", len(entry), s.shittyCacheKey)
+		if len(entry) == 0 {
+			s.lastBatch.SetLength(0)
+			return s.lastBatch
+		}
+		ret := entry[0]
+		s.shittyCacheEntry = s.shittyCacheEntry[1:]
+		/*
+			for i := range s.batch.ColVecs() {
+				s.batch.ColVec(i).Copy(s.batch.ColVec(i), 0, uint64(s.batch.Length()), s.ctyps[i])
+			}
+			s.batch.SetLength(ret.Length())
+			s.batch.SetSelection(false)
+		*/
+		return ret
+	}
 	bat, err := s.rf.NextBatch(ctx)
 	if err != nil {
 		panic(err)
 	}
+	if bat.Width() > len(s.ctyps) {
+		s.ctyps = s.ctyps[:0]
+		for i := range bat.ColVecs() {
+			s.ctyps = append(s.ctyps, bat.ColVec(i).Type())
+		}
+	}
 	bat.SetSelection(false)
+	newBat := coldata.NewMemBatch(s.ctyps)
+	for i := 0; i < s.origNCtyps; i++ {
+		newBat.ColVec(i).Copy(bat.ColVec(i), 0, uint64(bat.Length()), s.ctyps[i])
+	}
+	newBat.SetLength(bat.Length())
+	shittyCache[s.shittyCacheKey] = append(shittyCache[s.shittyCacheKey], newBat)
+	fmt.Println("Added batch to cache.", len(shittyCache[s.shittyCacheKey]), s.shittyCacheKey)
 	return bat
 }
 
@@ -107,11 +154,26 @@ func newColBatchScan(
 	for i := range spans {
 		spans[i] = spec.Spans[i].Span
 	}
+	key := shittyCacheKey{tableID: spec.Table.ID, indexIdx: spec.IndexIdx}
+	entry, _ := shittyCache[key]
+	ctyps := make([]types.T, len(spec.Table.Columns))
+	for i := range typs {
+		ctyps[i] = conv.FromColumnType(&spec.Table.Columns[i].Type)
+		if ctyps[i] == types.Unhandled {
+			panic("Fail")
+		}
+	}
 	return &colBatchScan{
 		spans:     spans,
 		flowCtx:   flowCtx,
 		rf:        &fetcher,
 		limitHint: limitHint,
+
+		origNCtyps:       len(ctyps),
+		ctyps:            ctyps,
+		shittyCacheKey:   key,
+		shittyCacheEntry: entry,
+		batch:            coldata.NewMemBatch(ctyps),
 	}, nil
 }
 
