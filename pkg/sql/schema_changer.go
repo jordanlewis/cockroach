@@ -1285,16 +1285,11 @@ func (sc *SchemaChanger) done(ctx context.Context) (*sqlbase.ImmutableTableDescr
 				mutation.Direction == sqlbase.DescriptorMutation_ADD &&
 				constraint.ForeignKey.Validity == sqlbase.ConstraintValidity_Unvalidated {
 				// Add backreference on the referenced table (which could be the same table)
-				backref := sqlbase.ForeignKeyBackreference{
-					OriginTableID:       scDesc.ID,
-					OriginColumnIDs:     constraint.ForeignKey.OriginColumnIDs,
-					ReferencedColumnIDs: constraint.ForeignKey.ReferencedColumnIDs,
-				}
 				backrefTable, ok := descs[constraint.ForeignKey.ReferencedTableID]
 				if !ok {
 					return errors.AssertionFailedf("required table with ID %d not provided to update closure", sc.tableID)
 				}
-				backrefTable.InboundFKs = append(backrefTable.InboundFKs, &backref)
+				backrefTable.InboundFKs = append(backrefTable.InboundFKs, &constraint.ForeignKey)
 			}
 			if err := scDesc.MakeMutationComplete(mutation); err != nil {
 				return err
@@ -1505,7 +1500,7 @@ func (sc *SchemaChanger) reverseMutations(ctx context.Context, causingError erro
 					if !ok {
 						return errors.AssertionFailedf("required table with ID %d not provided to update closure", sc.tableID)
 					}
-					if err := removeFKBackReferenceFromTable(backrefTable, fk, scDesc.TableDesc()); err != nil {
+					if err := removeFKBackReferenceFromTable(backrefTable, fk.Name, scDesc.TableDesc()); err != nil {
 						return err
 					}
 				}
