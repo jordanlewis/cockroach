@@ -868,8 +868,12 @@ func (desc *TableDescriptor) maybeUpgradeForeignKeyRepresentation(
 
 // TODO (lucy, jordan): do we need to increment the table version when writing an upgraded descriptor?
 func (desc *TableDescriptor) maybeDowngradeForeignKeyRepresentation(
-	ctx context.Context, txn *client.Txn,
+	ctx context.Context, txn *client.Txn, clusterSettings *cluster.Settings,
 ) (bool, *TableDescriptor, error) {
+	downgradeUnnecessary := clusterSettings.Version.IsActive(cluster.VersionTopLevelForeignKeys)
+	if downgradeUnnecessary {
+		return false, desc, nil
+	}
 	// TODO (lucy): add check that all fields are actually populated
 	descCopy := protoutil.Clone(desc).(*TableDescriptor)
 	changed := false
