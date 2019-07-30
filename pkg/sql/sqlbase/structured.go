@@ -813,17 +813,18 @@ func (desc *TableDescriptor) maybeUpgradeForeignKeyRepresentation(
 			}
 			numCols := ref.SharedPrefixLen
 			outFK := &ForeignKeyConstraint{
-				OriginTableID:       desc.ID,
-				OriginColumnIDs:     idx.ColumnIDs[:numCols],
-				ReferencedTableID:   ref.Table,
-				ReferencedColumnIDs: referencedIndex.ColumnIDs[:numCols],
-				Name:                ref.Name,
-				Validity:            ref.Validity,
-				OnDelete:            ref.OnDelete,
-				OnUpdate:            ref.OnUpdate,
-				Match:               ref.Match,
-				OriginIndex:         idx.ID,
-				ReferencedIndex:     referencedIndex.ID,
+				OriginTableID:               desc.ID,
+				OriginColumnIDs:             idx.ColumnIDs[:numCols],
+				ReferencedTableID:           ref.Table,
+				ReferencedColumnIDs:         referencedIndex.ColumnIDs[:numCols],
+				Name:                        ref.Name,
+				Validity:                    ref.Validity,
+				OnDelete:                    ref.OnDelete,
+				OnUpdate:                    ref.OnUpdate,
+				Match:                       ref.Match,
+				OriginIndex:                 idx.ID,
+				ReferencedIndex:             referencedIndex.ID,
+				UpgradedFromOriginReference: idx.ForeignKey,
 			}
 			desc.OutboundFKs = append(desc.OutboundFKs, outFK)
 			changed = true
@@ -846,17 +847,18 @@ func (desc *TableDescriptor) maybeUpgradeForeignKeyRepresentation(
 			}
 			numCols := ref.SharedPrefixLen
 			inFK := &ForeignKeyConstraint{
-				OriginTableID:       ref.Table,
-				OriginColumnIDs:     originIndex.ColumnIDs[:numCols],
-				ReferencedTableID:   desc.ID,
-				ReferencedColumnIDs: idx.ColumnIDs[:numCols],
-				Name:                originIndex.ForeignKey.Name,
-				Validity:            originIndex.ForeignKey.Validity,
-				OnDelete:            originIndex.ForeignKey.OnDelete,
-				OnUpdate:            originIndex.ForeignKey.OnUpdate,
-				Match:               originIndex.ForeignKey.Match,
-				OriginIndex:         originIndex.ID,
-				ReferencedIndex:     idx.ID,
+				OriginTableID:                   ref.Table,
+				OriginColumnIDs:                 originIndex.ColumnIDs[:numCols],
+				ReferencedTableID:               desc.ID,
+				ReferencedColumnIDs:             idx.ColumnIDs[:numCols],
+				Name:                            originIndex.ForeignKey.Name,
+				Validity:                        originIndex.ForeignKey.Validity,
+				OnDelete:                        originIndex.ForeignKey.OnDelete,
+				OnUpdate:                        originIndex.ForeignKey.OnUpdate,
+				Match:                           originIndex.ForeignKey.Match,
+				OriginIndex:                     originIndex.ID,
+				ReferencedIndex:                 idx.ID,
+				UpgradedFromReferencedReference: *ref,
 			}
 			desc.InboundFKs = append(desc.InboundFKs, inFK)
 			changed = true
@@ -899,50 +901,68 @@ func (desc *TableDescriptor) maybeDowngradeForeignKeyRepresentation(
 			OnUpdate:        fk.OnUpdate,
 			Match:           fk.Match,
 		}
-		idx, err := descCopy.FindIndexByID(fk.OriginIndex)
-		if err != nil {
+		// Validate that the resultant downgraded foreign key reference is identical
+		// to the one that we expected. All fields should be the same, except for
+		// potentially the Name and Validity.
+		if err := validateDowngradedFKReference(ref, fk.UpgradedFromOriginReference); err != nil {
 			return false, nil, err
 		}
-		idx.ForeignKey = ref
-		backref := ForeignKeyReference{
-			Table: descCopy.ID,
-			Index: fk.OriginIndex,
-		}
-		backrefIdx, err := otherTables[fk.ReferencedTableID].FindIndexByID(fk.ReferencedIndex)
-		if err != nil {
-			return false, nil, err
-		}
-		backrefIdx.ReferencedBy = append(backrefIdx.ReferencedBy, backref)
+
+		// XXX: Lucy, don't we want to *avoid* changing other table descriptors here?
+		// I feel like each table descriptor downgrade should be responsible for
+		// downgrading only itself, and not its neighbors.
+		/*
+			idx, err := descCopy.FindIndexByID(fk.OriginIndex)
+			if err != nil {
+				return false, nil, err
+			}
+			idx.ForeignKey = ref
+			backref := ForeignKeyReference{
+				Table: descCopy.ID,
+				Index: fk.OriginIndex,
+			}
+			backrefIdx, err := otherTables[fk.ReferencedTableID].FindIndexByID(fk.ReferencedIndex)
+			if err != nil {
+				return false, nil, err
+			}
+			backrefIdx.ReferencedBy = append(backrefIdx.ReferencedBy, backref)
+		*/
 		changed = true
 	}
 	descCopy.OutboundFKs = nil
 
 	for _, fk := range descCopy.InboundFKs {
-		if _, ok := otherTables[fk.OriginTableID]; !ok {
-			tbl, err := GetTableDescFromID(ctx, txn, fk.OriginTableID)
+		// XXX same question as above.
+		/*
+			if _, ok := otherTables[fk.OriginTableID]; !ok {
+				tbl, err := GetTableDescFromID(ctx, txn, fk.OriginTableID)
+				if err != nil {
+					return false, nil, err
+				}
+				otherTables[fk.OriginTableID] = tbl
+			}
+			ref := ForeignKeyReference{
+				Table:           fk.ReferencedTableID,
+				Index:           fk.ReferencedIndex,
+				Name:            fk.Name,
+				Validity:        fk.Validity,
+				SharedPrefixLen: int32(len(fk.OriginColumnIDs)),
+				OnDelete:        fk.OnDelete,
+				OnUpdate:        fk.OnUpdate,
+				Match:           fk.Match,
+			}
+			idx, err := otherTables[fk.OriginTableID].FindIndexByID(fk.OriginIndex)
 			if err != nil {
 				return false, nil, err
 			}
-			otherTables[fk.OriginTableID] = tbl
-		}
-		ref := ForeignKeyReference{
-			Table:           fk.ReferencedTableID,
-			Index:           fk.ReferencedIndex,
-			Name:            fk.Name,
-			Validity:        fk.Validity,
-			SharedPrefixLen: int32(len(fk.OriginColumnIDs)),
-			OnDelete:        fk.OnDelete,
-			OnUpdate:        fk.OnUpdate,
-			Match:           fk.Match,
-		}
-		idx, err := otherTables[fk.OriginTableID].FindIndexByID(fk.OriginIndex)
-		if err != nil {
-			return false, nil, err
-		}
-		idx.ForeignKey = ref
+			idx.ForeignKey = ref
+		*/
 		backref := ForeignKeyReference{
 			Table: descCopy.ID,
 			Index: fk.OriginIndex,
+		}
+		if err := validateDowngradedFKReference(backref, fk.UpgradedFromReferencedReference); err != nil {
+			return false, nil, err
 		}
 		backrefIdx, err := descCopy.FindIndexByID(fk.ReferencedIndex)
 		if err != nil {
@@ -953,6 +973,34 @@ func (desc *TableDescriptor) maybeDowngradeForeignKeyRepresentation(
 	}
 	descCopy.InboundFKs = nil
 	return changed, descCopy, nil
+}
+
+func validateDowngradedFKReference(downgraded, original ForeignKeyReference) error {
+	if downgraded.Index != original.Index {
+		return errors.AssertionFailedf("downgraded.Index(%d) != original.Index (%d)",
+			downgraded.Index, original.Index)
+	}
+	if downgraded.Table != original.Table {
+		return errors.AssertionFailedf("downgraded.Table(%d) != original.Table (%d)",
+			downgraded.Table, original.Table)
+	}
+	if downgraded.SharedPrefixLen != original.SharedPrefixLen {
+		return errors.AssertionFailedf("downgraded.SharedPrefixLen(%d) != original.SharedPrefixLen (%d)",
+			downgraded.SharedPrefixLen, original.SharedPrefixLen)
+	}
+	if downgraded.OnDelete != original.OnDelete {
+		return errors.AssertionFailedf("downgraded.OnDelete(%d) != original.OnDelete (%d)",
+			downgraded.OnDelete, original.OnDelete)
+	}
+	if downgraded.OnUpdate != original.OnUpdate {
+		return errors.AssertionFailedf("downgraded.OnUpdate(%d) != original.OnUpdate (%d)",
+			downgraded.OnUpdate, original.OnUpdate)
+	}
+	if downgraded.Match != original.Match {
+		return errors.AssertionFailedf("downgraded.Match(%d) != original.Match (%d)",
+			downgraded.Match, original.Match)
+	}
+	return nil
 }
 
 // maybeUpgradeFormatVersion transforms the TableDescriptor to the latest

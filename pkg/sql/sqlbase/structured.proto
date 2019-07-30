@@ -61,6 +61,11 @@ message ForeignKeyReference {
   optional Match match = 8 [(gogoproto.nullable) = false];
 }
 
+// ForeignKeyConstraint is the new (as of 19.2 and VersionTopLevelForeignKeys)
+// representation for foreign keys. It's stored on the TableDescriptor and is
+// designed to be agnostic to which indexes are available on both the origin
+// and referenced tables, so that the optimizer can have full freedom to choose
+// the best possible index to satisfy constraint checks at runtime.
 message ForeignKeyConstraint {
   optional uint32 origin_table_id = 1 [(gogoproto.nullable) = false,
                                       (gogoproto.customname) = "OriginTableID",
@@ -79,8 +84,16 @@ message ForeignKeyConstraint {
   // This is only important for composite keys. For all prior matches before
   // the addition of this value, MATCH SIMPLE will be used.
   optional ForeignKeyReference.Match match = 9 [(gogoproto.nullable) = false];
+
+  // These fields are set when upgrading an old-style FK (stored on the index)
+  // into this kind. The purpose is to permit validation that downgrading this
+  // representation to the old representation (which happens when the cluster
+  // is in a mixed-version state containing VersionTopLevelForeignKeys) was done
+  // without creating any accidental changes to the foreign key references.
   optional uint32 origin_index = 10 [(gogoproto.nullable) = false, (gogoproto.casttype) = "IndexID", deprecated = true];
   optional uint32 referenced_index = 11 [(gogoproto.nullable) = false, (gogoproto.casttype) = "IndexID", deprecated = true];
+  optional ForeignKeyReference upgraded_from_origin_reference = 12 [(gogoproto.nullable) = false, deprecated = true];
+  optional ForeignKeyReference upgraded_from_referenced_reference = 13 [(gogoproto.nullable) = false, deprecated = true];
 }
 
 message ColumnDescriptor {
