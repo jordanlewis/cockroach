@@ -12,10 +12,12 @@ package execbuilder
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
+	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/exec"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/norm"
@@ -67,7 +69,13 @@ type execPlan struct {
 // if the node outputs the same optimizer ColumnID multiple times.
 // TODO(justin): we should keep track of this instead of computing it each time.
 func (ep *execPlan) numOutputCols() int {
-	max, ok := ep.outputCols.MaxValue()
+	return numOutputColsInMap(ep.outputCols)
+}
+
+// numOutputColsInMap returns the number of slots required to fill in all of
+// the columns referred to by this ColMap.
+func numOutputColsInMap(m opt.ColMap) int {
+	max, ok := m.MaxValue()
 	if !ok {
 		return 0
 	}
@@ -512,6 +520,7 @@ func (b *Builder) buildProject(prj *memo.ProjectExpr) (execPlan, error) {
 	if err != nil {
 		return execPlan{}, err
 	}
+
 	projections := prj.Projections
 	if len(projections) == 0 {
 		// We have only pass-through columns.
@@ -633,7 +642,7 @@ func (b *Builder) buildApplyJoin(join memo.RelExpr) (execPlan, error) {
 	allCols := joinOutputMap(left.outputCols, fakeRight.outputCols)
 
 	ctx := buildScalarCtx{
-		ivh:     tree.MakeIndexedVarHelper(nil /* container */, allCols.Len()),
+		ivh:     tree.MakeIndexedVarHelper(nil /* container */, numOutputColsInMap(allCols)),
 		ivarMap: allCols,
 	}
 
@@ -771,7 +780,7 @@ func (b *Builder) initJoinBuild(
 	allCols := joinOutputMap(leftPlan.outputCols, rightPlan.outputCols)
 
 	ctx := buildScalarCtx{
-		ivh:     tree.MakeIndexedVarHelper(nil /* container */, allCols.Len()),
+		ivh:     tree.MakeIndexedVarHelper(nil /* container */, numOutputColsInMap(allCols)),
 		ivarMap: allCols,
 	}
 
@@ -792,7 +801,8 @@ func (b *Builder) initJoinBuild(
 // joinOutputMap determines the outputCols map for a (non-semi/anti) join, given
 // the outputCols maps for its inputs.
 func joinOutputMap(left, right opt.ColMap) opt.ColMap {
-	numLeftCols := left.Len()
+	numLeftCols := numOutputColsInMap(left)
+
 	res := left.Copy()
 	right.ForEach(func(colIdx, rightIdx int) {
 		res.Set(colIdx, rightIdx+numLeftCols)
@@ -1856,26 +1866,25 @@ func (b *Builder) getEnvData() exec.ExplainEnvData {
 	// Catalog objects can show up multiple times in these lists, so
 	// deduplicate them.
 	seen := make(map[tree.TableName]bool)
-	for _, t := range b.mem.Metadata().AllTables() {
-		tn := *t.Table.Name()
+	addDS := func(list []tree.TableName, ds cat.DataSource) []tree.TableName {
+		tn, err := b.catalog.FullyQualifiedName(context.TODO(), ds)
+		if err != nil {
+			panic(err)
+		}
 		if !seen[tn] {
 			seen[tn] = true
-			envOpts.Tables = append(envOpts.Tables, tn)
+			list = append(list, tn)
 		}
+		return list
+	}
+	for _, t := range b.mem.Metadata().AllTables() {
+		envOpts.Tables = addDS(envOpts.Tables, t.Table)
 	}
 	for _, s := range b.mem.Metadata().AllSequences() {
-		tn := *s.Name()
-		if !seen[tn] {
-			seen[tn] = true
-			envOpts.Sequences = append(envOpts.Sequences, tn)
-		}
+		envOpts.Sequences = addDS(envOpts.Sequences, s)
 	}
 	for _, v := range b.mem.Metadata().AllViews() {
-		tn := *v.Name()
-		if !seen[tn] {
-			seen[tn] = true
-			envOpts.Views = append(envOpts.Views, tn)
-		}
+		envOpts.Views = addDS(envOpts.Views, v)
 	}
 
 	return envOpts

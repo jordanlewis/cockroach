@@ -1265,7 +1265,7 @@ func (r *Replica) withRaftGroupLocked(
 			r.mu.state.RaftAppliedIndex,
 			r.store.cfg,
 			&raftLogger{ctx: ctx},
-		), nil)
+		))
 		if err != nil {
 			return err
 		}
@@ -1404,56 +1404,6 @@ func (m lastUpdateTimesMap) isFollowerActive(
 	return now.Sub(lastUpdateTime) <= MaxQuotaReplicaLivenessDuration
 }
 
-// tryReproposeWithNewLeaseIndex is used by processRaftCommand to
-// repropose commands that have gotten an illegal lease index error,
-// and that we know could not have applied while their lease index was
-// valid (that is, we observed all applied entries between proposal
-// and the lease index becoming invalid, as opposed to skipping some
-// of them by applying a snapshot).
-//
-// It is not intended for use elsewhere and is only a top-level
-// function so that it can avoid the below_raft_protos check. Returns
-// true if the command has been successfully reproposed (not
-// necessarily by this method! But if this method returns true, the
-// command will be in the local proposals map).
-func (r *Replica) tryReproposeWithNewLeaseIndex(proposal *ProposalData) bool {
-	// Note that we don't need to validate anything about the proposal's
-	// lease here - if we got this far, we know that everything but the
-	// index is valid at this point in the log.
-	r.mu.Lock()
-	if proposal.command.MaxLeaseIndex > r.mu.state.LeaseAppliedIndex {
-		// If the command's MaxLeaseIndex is greater than the
-		// LeaseAppliedIndex, it must have already been reproposed (this
-		// can happen if there are multiple copies of the command in the
-		// logs; see TestReplicaRefreshMultiple). We must not create
-		// multiple copies with multiple lease indexes, so don't repropose
-		// it again. This ensures that at any time, there is only up to a
-		// single lease index that has a chance of succeeding in the Raft
-		// log for a given command.
-		//
-		// Note that the caller has already removed the current version of
-		// the proposal from the pending proposals map. We must re-add it
-		// since it's still pending.
-		log.VEventf(proposal.ctx, 2, "skipping reproposal, already reproposed at index %d",
-			proposal.command.MaxLeaseIndex)
-		r.mu.proposals[proposal.idKey] = proposal
-		r.mu.Unlock()
-		return true
-	}
-	r.mu.Unlock()
-
-	// Some tests check for this log message in the trace.
-	log.VEventf(proposal.ctx, 2, "retry: proposalIllegalLeaseIndex")
-	if _, pErr := r.propose(proposal.ctx, proposal); pErr != nil {
-		// TODO(nvanbenschoten): Returning false here isn't ok. It will result
-		// in a proposal returning without a response or an error, which
-		// triggers a panic higher up in the stack. We need to fix this.
-		log.Warningf(proposal.ctx, "failed to repropose with new lease index: %s", pErr)
-		return false
-	}
-	return true
-}
-
 // maybeAcquireSnapshotMergeLock checks whether the incoming snapshot subsumes
 // any replicas and, if so, locks them for subsumption. See acquireMergeLock
 // for details about the lock itself.
@@ -1503,13 +1453,12 @@ func (r *Replica) maybeAcquireSnapshotMergeLock(
 }
 
 // maybeAcquireSplitMergeLock examines the given raftCmd (which need
-// not be evaluated yet) and acquires the split or merge lock if
+// not be applied yet) and acquires the split or merge lock if
 // necessary (in addition to other preparation). It returns a function
-// which will release any lock acquired (or nil) and use the result of
-// applying the command to perform any necessary cleanup.
+// which will release any lock acquired (or nil).
 func (r *Replica) maybeAcquireSplitMergeLock(
 	ctx context.Context, raftCmd storagepb.RaftCommand,
-) (func(*storagepb.ReplicatedEvalResult), error) {
+) (func(), error) {
 	if split := raftCmd.ReplicatedEvalResult.Split; split != nil {
 		return r.acquireSplitLock(ctx, &split.SplitTrigger)
 	} else if merge := raftCmd.ReplicatedEvalResult.Merge; merge != nil {
@@ -1520,50 +1469,21 @@ func (r *Replica) maybeAcquireSplitMergeLock(
 
 func (r *Replica) acquireSplitLock(
 	ctx context.Context, split *roachpb.SplitTrigger,
-) (func(*storagepb.ReplicatedEvalResult), error) {
-	rightRng, created, err := r.store.getOrCreateReplica(ctx, split.RightDesc.RangeID, 0, nil)
+) (func(), error) {
+	rightRng, _, err := r.store.getOrCreateReplica(ctx, split.RightDesc.RangeID, 0, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	// It would be nice to assert that rightRng is not initialized
-	// here. Unfortunately, due to reproposals and retries we might be executing
-	// a reproposal for a split trigger that was already executed via a
-	// retry. The reproposed command will not succeed (the transaction has
-	// already committed).
-	//
-	// TODO(peter): It might be okay to return an error here, but it is more
-	// conservative to hit the exact same error paths that we would hit for other
-	// commands that have reproposals interacting with retries (i.e. we don't
-	// treat splits differently).
-
-	return func(rResult *storagepb.ReplicatedEvalResult) {
-		if rResult.Split == nil && created && !rightRng.IsInitialized() {
-			// An error occurred during processing of the split and the RHS is still
-			// uninitialized. Mark the RHS destroyed and remove it from the replica's
-			// map as it is likely detritus. One reason this can occur is when
-			// concurrent splits on the same key are executed. Only one of the splits
-			// will succeed while the other will allocate a range ID, but fail to
-			// commit.
-			//
-			// We condition this removal on whether the RHS was newly created in
-			// order to be conservative. If a Raft message had created the Replica
-			// then presumably it was alive for some reason other than a concurrent
-			// split and shouldn't be destroyed.
-			rightRng.mu.Lock()
-			rightRng.mu.destroyStatus.Set(errors.Errorf("%s: failed to initialize", rightRng), destroyReasonRemoved)
-			rightRng.mu.Unlock()
-			r.store.mu.Lock()
-			r.store.unlinkReplicaByRangeIDLocked(rightRng.RangeID)
-			r.store.mu.Unlock()
-		}
-		rightRng.raftMu.Unlock()
-	}, nil
+	if rightRng.IsInitialized() {
+		return nil, errors.Errorf("RHS of split %s / %s already initialized before split application",
+			&split.LeftDesc, &split.RightDesc)
+	}
+	return rightRng.raftMu.Unlock, nil
 }
 
 func (r *Replica) acquireMergeLock(
 	ctx context.Context, merge *roachpb.MergeTrigger,
-) (func(*storagepb.ReplicatedEvalResult), error) {
+) (func(), error) {
 	// The merge lock is the right-hand replica's raftMu. The right-hand replica
 	// is required to exist on this store. Otherwise, an incoming snapshot could
 	// create the right-hand replica before the merge trigger has a chance to
@@ -1578,12 +1498,10 @@ func (r *Replica) acquireMergeLock(
 	}
 	rightDesc := rightRepl.Desc()
 	if !rightDesc.StartKey.Equal(merge.RightDesc.StartKey) || !rightDesc.EndKey.Equal(merge.RightDesc.EndKey) {
-		log.Fatalf(ctx, "RHS of merge %s <- %s not present on store; found %s in place of the RHS",
+		return nil, errors.Errorf("RHS of merge %s <- %s not present on store; found %s in place of the RHS",
 			&merge.LeftDesc, &merge.RightDesc, rightDesc)
 	}
-	return func(*storagepb.ReplicatedEvalResult) {
-		rightRepl.raftMu.Unlock()
-	}, nil
+	return rightRepl.raftMu.Unlock, nil
 }
 
 // handleTruncatedStateBelowRaft is called when a Raft command updates the truncated

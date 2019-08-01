@@ -78,7 +78,7 @@ type Table interface {
 	// Public indexes are not currently being added or dropped from the table.
 	// This method should be used when mutation columns can be ignored (the common
 	// case). The returned indexes include the primary index, so the count is
-	// always >= 1.
+	// always >= 1 (except for virtual tables, which have no indexes).
 	IndexCount() int
 
 	// WritableIndexCount returns the number of public and write-only indexes
@@ -92,12 +92,13 @@ type Table interface {
 	// >= WritableIndexCount.
 	DeletableIndexCount() int
 
-	// Index returns the ith index, where i < IndexCount. The table's primary
-	// index is always the 0th index, and is always present (use cat.PrimaryIndex
-	// to select it). The primary index corresponds to the table's primary key.
-	// If a primary key was not explicitly specified, then the system implicitly
-	// creates one based on a hidden rowid column.
-	Index(i int) Index
+	// Index returns the ith index, where i < DeletableIndexCount. Except for
+	// virtual tables, the table's primary index is always the 0th index, and is
+	// always present (use cat.PrimaryIndex to select it). The primary index
+	// corresponds to the table's primary key. If a primary key was not
+	// explicitly specified, then the system implicitly creates one based on a
+	// hidden rowid column.
+	Index(i IndexOrdinal) Index
 
 	// StatisticCount returns the number of statistics available for the table.
 	StatisticCount() int
@@ -237,4 +238,8 @@ type ForeignKeyConstraint interface {
 
 	// MatchMethod returns the method used for comparing composite foreign keys.
 	MatchMethod() tree.CompositeKeyMatchMethod
+
+	// DeleteReferenceAction returns the action to be performed if the foreign key
+	// constraint would be violated.
+	DeleteReferenceAction() tree.ReferenceAction
 }

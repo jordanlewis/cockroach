@@ -154,6 +154,31 @@ func (d *Datums) Format(ctx *FmtCtx) {
 	ctx.WriteByte(')')
 }
 
+// Compare does a lexicographical comparison and returns -1 if the receiver
+// is less than other, 0 if receiver is equal to other and +1 if receiver is
+// greater than other.
+func (d Datums) Compare(evalCtx *EvalContext, other Datums) int {
+	if len(d) == 0 {
+		panic(errors.AssertionFailedf("empty Datums being compared to other"))
+	}
+
+	for i := range d {
+		if i >= len(other) {
+			return 1
+		}
+
+		compareDatum := d[i].Compare(evalCtx, other[i])
+		if compareDatum != 0 {
+			return compareDatum
+		}
+	}
+
+	if len(d) < len(other) {
+		return -1
+	}
+	return 0
+}
+
 // IsDistinctFrom checks to see if two datums are distinct from each other. Any
 // change in value is considered distinct, however, a NULL value is NOT
 // considered disctinct from another NULL value.
@@ -2470,12 +2495,19 @@ func AsJSON(d Datum) (json.JSON, error) {
 		return builder.Build(), nil
 	case *DTuple:
 		builder := json.NewObjectBuilder(len(t.D))
+		labels := t.typ.TupleLabels()
 		for i, e := range t.D {
 			j, err := AsJSON(e)
 			if err != nil {
 				return nil, err
 			}
-			builder.Add(fmt.Sprintf("f%d", i+1), j)
+			var key string
+			if i >= len(labels) {
+				key = fmt.Sprintf("f%d", i+1)
+			} else {
+				key = labels[i]
+			}
+			builder.Add(key, j)
 		}
 		return builder.Build(), nil
 	case *DTimestampTZ:

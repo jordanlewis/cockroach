@@ -11,8 +11,6 @@
 package optbuilder
 
 import (
-	"fmt"
-
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
@@ -90,10 +88,11 @@ func (b *Builder) buildDataSource(
 			}
 
 			outScope.expr = b.factory.ConstructWithScan(&memo.WithScanPrivate{
-				ID:      cte.id,
-				Name:    string(cte.name.Alias),
-				InCols:  inCols,
-				OutCols: outCols,
+				ID:           cte.id,
+				Name:         string(cte.name.Alias),
+				InCols:       inCols,
+				OutCols:      outCols,
+				BindingProps: cte.expr.Relational(),
 			})
 			return outScope
 		}
@@ -104,9 +103,9 @@ func (b *Builder) buildDataSource(
 			tabMeta := b.addTable(t, &resName)
 			return b.buildScan(tabMeta, nil /* ordinals */, indexFlags, excludeMutations, inScope)
 		case cat.View:
-			return b.buildView(t, inScope)
+			return b.buildView(t, &resName, inScope)
 		case cat.Sequence:
-			return b.buildSequenceSelect(t, inScope)
+			return b.buildSequenceSelect(t, &resName, inScope)
 		default:
 			panic(errors.AssertionFailedf("unknown DataSource type %T", ds))
 		}
@@ -141,8 +140,20 @@ func (b *Builder) buildDataSource(
 		switch t := ds.(type) {
 		case cat.Table:
 			outScope = b.buildScanFromTableRef(t, source, indexFlags, inScope)
+		case cat.View:
+			if source.Columns != nil {
+				panic(pgerror.Newf(pgcode.FeatureNotSupported,
+					"cannot specify an explicit column list when accessing a view by reference"))
+			}
+			tn := tree.MakeUnqualifiedTableName(t.Name())
+
+			outScope = b.buildView(t, &tn, inScope)
+		case cat.Sequence:
+			tn := tree.MakeUnqualifiedTableName(t.Name())
+			// Any explicitly listed columns are ignored.
+			outScope = b.buildSequenceSelect(t, &tn, inScope)
 		default:
-			panic(unimplementedWithIssueDetailf(35708, fmt.Sprintf("%T", t), "view and sequence numeric refs are not supported"))
+			panic(errors.AssertionFailedf("unsupported catalog object"))
 		}
 		b.renameSource(source.As, outScope)
 		return outScope
@@ -153,7 +164,9 @@ func (b *Builder) buildDataSource(
 }
 
 // buildView parses the view query text and builds it as a Select expression.
-func (b *Builder) buildView(view cat.View, inScope *scope) (outScope *scope) {
+func (b *Builder) buildView(
+	view cat.View, viewName *tree.TableName, inScope *scope,
+) (outScope *scope) {
 	// Cache the AST so that multiple references won't need to reparse.
 	if b.views == nil {
 		b.views = make(map[cat.View]*tree.Select)
@@ -196,7 +209,7 @@ func (b *Builder) buildView(view cat.View, inScope *scope) (outScope *scope) {
 	// are specified, then update names of output columns.
 	hasCols := view.ColumnNameCount() > 0
 	for i := range outScope.cols {
-		outScope.cols[i].table = *view.Name()
+		outScope.cols[i].table = *viewName
 		if hasCols {
 			outScope.cols[i].name = view.ColumnName(i)
 		}
@@ -299,7 +312,8 @@ func (b *Builder) buildScanFromTableRef(
 		}
 	}
 
-	tabMeta := b.addTable(tab, tab.Name())
+	tn := tree.MakeUnqualifiedTableName(tab.Name())
+	tabMeta := b.addTable(tab, &tn)
 	return b.buildScan(tabMeta, ordinals, indexFlags, excludeMutations, inScope)
 }
 
@@ -308,7 +322,7 @@ func (b *Builder) buildScanFromTableRef(
 // catalog and schema names were explicitly specified.
 func (b *Builder) addTable(tab cat.Table, alias *tree.TableName) *opt.TableMeta {
 	md := b.factory.Metadata()
-	tabID := md.AddTableWithAlias(tab, alias)
+	tabID := md.AddTable(tab, alias)
 	return md.TableMeta(tabID)
 }
 
@@ -436,8 +450,9 @@ func (b *Builder) addCheckConstraintsToScan(scope *scope, tabMeta *opt.TableMeta
 	}
 }
 
-func (b *Builder) buildSequenceSelect(seq cat.Sequence, inScope *scope) (outScope *scope) {
-	tn := seq.SequenceName()
+func (b *Builder) buildSequenceSelect(
+	seq cat.Sequence, seqName *tree.TableName, inScope *scope,
+) (outScope *scope) {
 	md := b.factory.Metadata()
 	outScope = inScope.push()
 
@@ -453,7 +468,7 @@ func (b *Builder) buildSequenceSelect(seq cat.Sequence, inScope *scope) (outScop
 		outScope.cols[i] = scopeColumn{
 			id:    c,
 			name:  tree.Name(col.Alias),
-			table: *tn,
+			table: *seqName,
 			typ:   col.Type,
 		}
 	}
@@ -542,7 +557,7 @@ func (b *Builder) buildCTE(
 
 		cteScope = projectionsScope
 
-		id := b.factory.Memo().AddWithBinding(cteScope.expr)
+		id := b.factory.Memo().NextWithID()
 
 		// No good way to show non-select expressions, like INSERT, here.
 		var stmt tree.SelectStatement
@@ -773,7 +788,7 @@ func (b *Builder) buildSelectClause(
 //
 // See Builder.buildStmt for a description of the remaining input and return
 // values.
-func (b *Builder) buildFrom(from *tree.From, inScope *scope) (outScope *scope) {
+func (b *Builder) buildFrom(from tree.From, inScope *scope) (outScope *scope) {
 	// The root AS OF clause is recognized and handled by the executor. The only
 	// thing that must be done at this point is to ensure that if any timestamps
 	// are specified, the root SELECT was an AS OF SYSTEM TIME and that the time
