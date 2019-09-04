@@ -88,6 +88,9 @@ type joinReader struct {
 	indexTypes []types.T
 	// indexDirs is an array of the directions for the index's key columns.
 	indexDirs []sqlbase.IndexDescriptor_Direction
+	// lookupColsAreKey is true if the right hand side of the join is guaranteed
+	// to have just one row per input row on the left.
+	lookupColsAreKey bool
 
 	// Batch size for fetches. Not a constant so we can lower for testing.
 	batchSize int
@@ -444,13 +447,15 @@ func (jr *joinReader) readInput() (joinReaderState, *distsqlpb.ProducerMetadata)
 		// All of the input rows were filtered out. Skip the index lookup.
 		return jrEmittingRows, nil
 	}
-	// Sort the spans so that we can rely upon the fetcher to limit the number of
-	// results per batch. It's safe to reorder the spans here because we already
-	// restore the original order of the output during the output collection
-	// phase.
-	sort.Sort(spans)
+	if !jr.lookupColsAreKey {
+		// Sort the spans so that we can rely upon the fetcher to limit the number of
+		// results per batch. It's safe to reorder the spans here because we already
+		// restore the original order of the output during the output collection
+		// phase.
+		sort.Sort(spans)
+	}
 	err := jr.fetcher.StartScan(
-		jr.Ctx, jr.flowCtx.txn, spans, true /* limitBatches */, 0, /* limitHint */
+		jr.Ctx, jr.flowCtx.txn, spans, !jr.lookupColsAreKey, 0, /* limitHint */
 		jr.flowCtx.traceKV)
 	if err != nil {
 		jr.MoveToDraining(err)
