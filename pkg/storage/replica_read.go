@@ -72,6 +72,7 @@ func (r *Replica) executeReadOnlyBatch(
 		rw = spanset.NewReadWriterAt(rw, spans, ba.Timestamp)
 	}
 	defer rw.Close()
+	log.Event(ctx, "beginning read")
 	br, result, pErr = evaluateBatch(ctx, storagebase.CmdIDKey(""), rw, rec, nil, ba, true /* readOnly */)
 	if err := r.handleReadOnlyLocalEvalResult(ctx, ba, result.Local); err != nil {
 		pErr = roachpb.NewError(err)

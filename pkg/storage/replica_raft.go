@@ -659,10 +659,12 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	// were not persisted to disk, it wouldn't be a problem because raft does not
 	// infer the that entries are persisted on the node that sends a snapshot.
 	commitStart := timeutil.Now()
+	log.Event(ctx, "committing batch")
 	if err := batch.Commit(rd.MustSync && !disableSyncRaftLog.Get(&r.store.cfg.Settings.SV)); err != nil {
 		const expl = "while committing batch"
 		return stats, expl, errors.Wrap(err, expl)
 	}
+	log.Event(ctx, "committed batch")
 	if rd.MustSync {
 		elapsed := timeutil.Since(commitStart)
 		r.store.metrics.RaftLogCommitLatency.RecordValue(elapsed.Nanoseconds())
