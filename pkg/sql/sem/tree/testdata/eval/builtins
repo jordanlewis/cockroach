@@ -37,3 +37,23 @@ eval
 sign(-0)
 ----
 0
+
+eval
+leetspeak('')
+----
+''
+
+eval
+leetspeak(NULL)
+----
+NULL
+
+eval
+leetspeak('bbbbbbb ccc vvv bcv')
+----
+'bbbbbbb ccc vvv bcv'
+
+eval
+leetspeak('leetspeak')
+----
+'1337sp34k'

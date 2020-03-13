@@ -290,6 +290,26 @@ var builtins = map[string]builtinDefinition{
 				"Supports encodings 'UTF8' and 'LATIN1'.",
 		}),
 
+	// leetspeak turns the input string into a more leet version of itself.
+	// It replaces e's with 3s, t's with 7s, and l's with 1s. Really useful stuff here!
+	"leetspeak": makeBuiltin(tree.FunctionProperties{Category: categoryString},
+		tree.Overload{
+			Types:      tree.ArgTypes{{"str", types.String}},
+			ReturnType: tree.FixedReturnType(types.String),
+			Fn: func(evalCtx *tree.EvalContext, args tree.Datums) (tree.Datum, error) {
+				firstArg := string(tree.MustBeDString(args[0]))
+				newString := strings.ReplaceAll(firstArg, "l", "1")
+				newString = strings.ReplaceAll(newString, "e", "3")
+				newString = strings.ReplaceAll(newString, "t", "7")
+				newString = strings.ReplaceAll(newString, "a", "4")
+
+				return tree.NewDString(newString), nil
+
+			},
+			Info: "Turns the input string into a more leet version of itself.",
+		},
+	),
+
 	// https://www.postgresql.org/docs/10/static/functions-string.html#FUNCTIONS-STRING-OTHER
 	"convert_to": makeBuiltin(tree.FunctionProperties{Category: categoryString},
 		tree.Overload{
