@@ -497,21 +497,7 @@ func (b *argWidthOverloadBase) Slice(target, start, end string) string {
 func (b *argWidthOverloadBase) CopySlice(
 	target, src, destIdx, srcStartIdx, srcEndIdx string,
 ) string {
-	var tmpl string
-	switch b.CanonicalTypeFamily {
-	case types.BytesFamily, typeconv.DatumVecCanonicalTypeFamily:
-		tmpl = `{{.Tgt}}.CopySlice({{.Src}}, {{.TgtIdx}}, {{.SrcStart}}, {{.SrcEnd}})`
-	case types.DecimalFamily:
-		tmpl = `{
-  __tgt_slice := {{.Tgt}}[{{.TgtIdx}}:]
-  __src_slice := {{.Src}}[{{.SrcStart}}:{{.SrcEnd}}]
-  for __i := range __src_slice {
-    __tgt_slice[__i].Set(&__src_slice[__i])
-  }
-}`
-	default:
-		tmpl = `copy({{.Tgt}}[{{.TgtIdx}}:], {{.Src}}[{{.SrcStart}}:{{.SrcEnd}}])`
-	}
+	tmpl := `{{.Tgt}}.CopySlice({{.Src}}, {{.TgtIdx}}, {{.SrcStart}}, {{.SrcEnd}})`
 	args := map[string]string{
 		"Tgt":      target,
 		"Src":      src,
