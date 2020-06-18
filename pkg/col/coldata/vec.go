@@ -62,26 +62,24 @@ type Vec interface {
 	// this Vec.
 	CanonicalTypeFamily() types.Family
 
-	// TODO(jordan): is a bitmap or slice of bools better?
 	// Bool returns a bool list.
-	Bool() []bool
+	Bool() Bools
 	// Int16 returns an int16 slice.
-	Int16() []int16
+	Int16() Int16s
 	// Int32 returns an int32 slice.
-	Int32() []int32
+	Int32() Int32s
 	// Int64 returns an int64 slice.
-	Int64() []int64
+	Int64() Int64s
 	// Float64 returns a float64 slice.
-	Float64() []float64
+	Float64() Float64s
 	// Bytes returns a flat Bytes representation.
 	Bytes() *Bytes
-	// TODO(jordan): should this be [][]byte?
 	// Decimal returns an apd.Decimal slice.
-	Decimal() []apd.Decimal
+	Decimal() Decimals
 	// Timestamp returns a time.Time slice.
-	Timestamp() []time.Time
+	Timestamp() Times
 	// Interval returns a duration.Duration slice.
-	Interval() []duration.Duration
+	Interval() Durations
 	// Datum returns a vector of Datums.
 	Datum() DatumVec
 
@@ -216,23 +214,23 @@ func (m *memColumn) SetCol(col interface{}) {
 	m.col = col
 }
 
-func (m *memColumn) Bool() []bool {
-	return m.col.([]bool)
+func (m *memColumn) Bool() Bools {
+	return m.col.(Bools)
 }
 
-func (m *memColumn) Int16() []int16 {
+func (m *memColumn) Int16() Int16s {
 	return m.col.([]int16)
 }
 
-func (m *memColumn) Int32() []int32 {
+func (m *memColumn) Int32() Int32s {
 	return m.col.([]int32)
 }
 
-func (m *memColumn) Int64() []int64 {
+func (m *memColumn) Int64() Int64s {
 	return m.col.([]int64)
 }
 
-func (m *memColumn) Float64() []float64 {
+func (m *memColumn) Float64() Float64s {
 	return m.col.([]float64)
 }
 
@@ -240,15 +238,15 @@ func (m *memColumn) Bytes() *Bytes {
 	return m.col.(*Bytes)
 }
 
-func (m *memColumn) Decimal() []apd.Decimal {
+func (m *memColumn) Decimal() Decimals {
 	return m.col.([]apd.Decimal)
 }
 
-func (m *memColumn) Timestamp() []time.Time {
+func (m *memColumn) Timestamp() Times {
 	return m.col.([]time.Time)
 }
 
-func (m *memColumn) Interval() []duration.Duration {
+func (m *memColumn) Interval() Durations {
 	return m.col.([]duration.Duration)
 }
 

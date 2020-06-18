@@ -46,4 +46,6 @@ type DatumVec interface {
 	// UnmarshalTo unmarshals the byte representation of a datum and sets it at
 	// index i.
 	UnmarshalTo(i int, b []byte) error
+	// CopyVal copies the Datum at src to the Datum at dst.
+	CopyVal(dst, src *Datum)
 }

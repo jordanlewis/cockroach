@@ -161,6 +161,11 @@ func (dv *datumVec) UnmarshalTo(i int, b []byte) error {
 	return err
 }
 
+func (dv *datumVec) CopyVal(dst, src *coldata.Datum) {
+	// TODO(yuzefovich): is this problematic that it doesn't deep copy?
+	dst = src
+}
+
 // assertValidDatum asserts that the given datum is valid to be stored in this
 // datumVec.
 func (dv *datumVec) assertValidDatum(datum tree.Datum) {

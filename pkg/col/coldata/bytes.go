@@ -340,6 +340,10 @@ func (b *Bytes) AppendSlice(src *Bytes, destIdx, srcStartIdx, srcEndIdx int) {
 	}
 }
 
+func (b *Bytes) Slice(start, end int) *Bytes {
+	return b
+}
+
 // AppendVal appends the given []byte value to the end of the receiver. A nil
 // value will be "converted" into an empty byte slice.
 func (b *Bytes) AppendVal(v []byte) {
@@ -432,4 +436,8 @@ func (b *Bytes) ToArrowSerializationFormat(n int) ([]byte, []int32) {
 	data := b.data[:serializeLength]
 	offsets := b.offsets[:n+1]
 	return data, offsets
+}
+
+func (b *Bytes) CopyVal(dst, src *[]byte) {
+	*dst = append((*dst)[0:], *src...)
 }
