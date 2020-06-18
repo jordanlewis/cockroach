@@ -516,34 +516,7 @@ func (b *argWidthOverloadBase) CopySlice(
 func (b *argWidthOverloadBase) AppendSlice(
 	target, src, destIdx, srcStartIdx, srcEndIdx string,
 ) string {
-	var tmpl string
-	switch b.CanonicalTypeFamily {
-	case types.BytesFamily, typeconv.DatumVecCanonicalTypeFamily:
-		tmpl = `{{.Tgt}}.AppendSlice({{.Src}}, {{.TgtIdx}}, {{.SrcStart}}, {{.SrcEnd}})`
-	case types.DecimalFamily:
-		tmpl = `{
-  __desiredCap := {{.TgtIdx}} + {{.SrcEnd}} - {{.SrcStart}}
-  if cap({{.Tgt}}) >= __desiredCap {
-  	{{.Tgt}} = {{.Tgt}}[:__desiredCap]
-  } else {
-    __prevCap := cap({{.Tgt}})
-    __capToAllocate := __desiredCap
-    if __capToAllocate < 2 * __prevCap {
-      __capToAllocate = 2 * __prevCap
-    }
-    __new_slice := make([]apd.Decimal, __desiredCap, __capToAllocate)
-    copy(__new_slice, {{.Tgt}}[:{{.TgtIdx}}])
-    {{.Tgt}} = __new_slice
-  }
-  __src_slice := {{.Src}}[{{.SrcStart}}:{{.SrcEnd}}]
-  __dst_slice := {{.Tgt}}[{{.TgtIdx}}:]
-  for __i := range __src_slice {
-    __dst_slice[__i].Set(&__src_slice[__i])
-  }
-}`
-	default:
-		tmpl = `{{.Tgt}} = append({{.Tgt}}[:{{.TgtIdx}}], {{.Src}}[{{.SrcStart}}:{{.SrcEnd}}]...)`
-	}
+	tmpl := `{{.Tgt}}.AppendSlice({{.Src}}, {{.TgtIdx}}, {{.SrcStart}}, {{.SrcEnd}})`
 	args := map[string]string{
 		"Tgt":      target,
 		"Src":      src,
