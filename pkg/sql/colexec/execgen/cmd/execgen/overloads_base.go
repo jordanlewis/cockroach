@@ -540,11 +540,7 @@ func (b *argWidthOverloadBase) AppendVal(target, v string) string {
 // WARNING: combination of Slice and Len might not work correctly for Bytes
 // type.
 func (b *argWidthOverloadBase) Len(target string) string {
-	switch b.CanonicalTypeFamily {
-	case types.BytesFamily, typeconv.DatumVecCanonicalTypeFamily:
-		return fmt.Sprintf("%s.Len()", target)
-	}
-	return fmt.Sprintf("len(%s)", target)
+	return fmt.Sprintf("%s.Len()", target)
 }
 
 // Window is a function that should only be used in templates.
