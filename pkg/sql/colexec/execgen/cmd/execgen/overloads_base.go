@@ -533,14 +533,7 @@ func (b *argWidthOverloadBase) AppendSlice(
 
 // AppendVal is a function that should only be used in templates.
 func (b *argWidthOverloadBase) AppendVal(target, v string) string {
-	switch b.CanonicalTypeFamily {
-	case types.BytesFamily, typeconv.DatumVecCanonicalTypeFamily:
-		return fmt.Sprintf("%s.AppendVal(%s)", target, v)
-	case types.DecimalFamily:
-		return fmt.Sprintf(`%[1]s = append(%[1]s, apd.Decimal{})
-%[1]s[len(%[1]s)-1].Set(&%[2]s)`, target, v)
-	}
-	return fmt.Sprintf("%[1]s = append(%[1]s, %[2]s)", target, v)
+	return fmt.Sprintf("%s.AppendVal(%s)", target, v)
 }
 
 // Len is a function that should only be used in templates.
