@@ -112,7 +112,7 @@ func setBool(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, out
 	srcCol := vec.Bool()
 	outCol := o.outBoolCols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setBytes(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
@@ -126,49 +126,49 @@ func setDecimal(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, 
 	srcCol := vec.Decimal()
 	outCol := o.outDecimalCols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx].Set(&v)
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setInt16(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Int16()
 	outCol := o.outInt16Cols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setInt32(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Int32()
 	outCol := o.outInt32Cols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setInt64(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Int64()
 	outCol := o.outInt64Cols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setFloat64(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Float64()
 	outCol := o.outFloat64Cols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setTimestamp(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Timestamp()
 	outCol := o.outTimestampCols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setInterval(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec.Interval()
 	outCol := o.outIntervalCols[o.outColsMap[colIdx]]
 	v := srcCol.Get(srcRowIdx) //gcassert:inline
-	outCol[outputIdx] = v
+	outCol.Set(outputIdx, v)   //gcassert:inline
 }
 
 func setDatum(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
