@@ -74,6 +74,8 @@ type OrderedSynchronizer struct {
 	comparators []vecComparator
 	output      coldata.Batch
 	outNulls    []*coldata.Nulls
+
+	setters []orderedSyncSetter
 	// In order to reduce the number of interface conversions, we will get access
 	// to the underlying slice for the output vectors and will use them directly.
 	// {{range .}}
@@ -124,6 +126,20 @@ func NewOrderedSynchronizer(
 	}, nil
 }
 
+type orderedSyncSetter func(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int)
+
+// {{range .}}
+// {{range .WidthOverloads}}
+func set_TYPE(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec._TYPE()
+	outCol := o.out_TYPECols[o.outColsMap[colIdx]]
+	v := execgen.UNSAFEGET(srcCol, srcRowIdx)
+	execgen.SET(outCol, outputIdx, v)
+}
+
+// {{end}}
+// {{end}}
+
 // Next is part of the Operator interface.
 func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 	if o.inputBatches == nil {
@@ -159,22 +175,7 @@ func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 				if vec.Nulls().MaybeHasNulls() && vec.Nulls().NullAt(srcRowIdx) {
 					o.outNulls[i].SetNull(outputIdx)
 				} else {
-					switch o.canonicalTypeFamilies[i] {
-					// {{range .}}
-					case _CANONICAL_TYPE_FAMILY:
-						switch o.typs[i].Width() {
-						// {{range .WidthOverloads}}
-						case _TYPE_WIDTH:
-							srcCol := vec._TYPE()
-							outCol := o.out_TYPECols[o.outColsMap[i]]
-							v := execgen.UNSAFEGET(srcCol, srcRowIdx)
-							execgen.SET(outCol, outputIdx, v)
-							// {{end}}
-						}
-						// {{end}}
-					default:
-						colexecerror.InternalError(fmt.Sprintf("unhandled type %s", o.typs[i].String()))
-					}
+					o.setters[i](o, vec, i, srcRowIdx, outputIdx)
 				}
 			}
 
@@ -206,6 +207,7 @@ func (o *OrderedSynchronizer) Init() {
 	o.output = o.allocator.NewMemBatch(o.typs)
 	o.outNulls = make([]*coldata.Nulls, len(o.typs))
 	o.outColsMap = make([]int, len(o.typs))
+	o.setters = make([]orderedSyncSetter, len(o.typs))
 	for i, outVec := range o.output.ColVecs() {
 		o.outNulls[i] = outVec.Nulls()
 		switch typeconv.TypeFamilyToCanonicalTypeFamily(o.typs[i].Family()) {
@@ -216,6 +218,7 @@ func (o *OrderedSynchronizer) Init() {
 			case _TYPE_WIDTH:
 				o.outColsMap[i] = len(o.out_TYPECols)
 				o.out_TYPECols = append(o.out_TYPECols, outVec._TYPE())
+				o.setters[i] = set_TYPE
 				// {{end}}
 			}
 		// {{end}}

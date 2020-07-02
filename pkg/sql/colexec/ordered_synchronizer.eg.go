@@ -49,6 +49,8 @@ type OrderedSynchronizer struct {
 	comparators []vecComparator
 	output      coldata.Batch
 	outNulls    []*coldata.Nulls
+
+	setters []orderedSyncSetter
 	// In order to reduce the number of interface conversions, we will get access
 	// to the underlying slice for the output vectors and will use them directly.
 	outBoolCols      []coldata.Bools
@@ -104,6 +106,78 @@ func NewOrderedSynchronizer(
 	}, nil
 }
 
+type orderedSyncSetter func(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int)
+
+func setBool(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Bool()
+	outCol := o.outBoolCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setBytes(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Bytes()
+	outCol := o.outBytesCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol.Set(outputIdx, v)
+}
+
+func setDecimal(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Decimal()
+	outCol := o.outDecimalCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx].Set(&v)
+}
+
+func setInt16(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Int16()
+	outCol := o.outInt16Cols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setInt32(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Int32()
+	outCol := o.outInt32Cols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setInt64(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Int64()
+	outCol := o.outInt64Cols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setFloat64(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Float64()
+	outCol := o.outFloat64Cols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setTimestamp(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Timestamp()
+	outCol := o.outTimestampCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setInterval(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Interval()
+	outCol := o.outIntervalCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx) //gcassert:inline
+	outCol[outputIdx] = v
+}
+
+func setDatum(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
+	srcCol := vec.Datum()
+	outCol := o.outDatumCols[o.outColsMap[colIdx]]
+	v := srcCol.Get(srcRowIdx)
+	outCol.Set(outputIdx, v)
+}
+
 // Next is part of the Operator interface.
 func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 	if o.inputBatches == nil {
@@ -139,92 +213,7 @@ func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 				if vec.Nulls().MaybeHasNulls() && vec.Nulls().NullAt(srcRowIdx) {
 					o.outNulls[i].SetNull(outputIdx)
 				} else {
-					switch o.canonicalTypeFamilies[i] {
-					case types.BoolFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Bool()
-							outCol := o.outBoolCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						}
-					case types.BytesFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Bytes()
-							outCol := o.outBytesCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol.Set(outputIdx, v)
-						}
-					case types.DecimalFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Decimal()
-							outCol := o.outDecimalCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx].Set(&v)
-						}
-					case types.IntFamily:
-						switch o.typs[i].Width() {
-						case 16:
-							srcCol := vec.Int16()
-							outCol := o.outInt16Cols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						case 32:
-							srcCol := vec.Int32()
-							outCol := o.outInt32Cols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						case -1:
-						default:
-							srcCol := vec.Int64()
-							outCol := o.outInt64Cols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						}
-					case types.FloatFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Float64()
-							outCol := o.outFloat64Cols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						}
-					case types.TimestampTZFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Timestamp()
-							outCol := o.outTimestampCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						}
-					case types.IntervalFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Interval()
-							outCol := o.outIntervalCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx) //gcassert:inline
-							outCol[outputIdx] = v
-						}
-					case typeconv.DatumVecCanonicalTypeFamily:
-						switch o.typs[i].Width() {
-						case -1:
-						default:
-							srcCol := vec.Datum()
-							outCol := o.outDatumCols[o.outColsMap[i]]
-							v := srcCol.Get(srcRowIdx)
-							outCol.Set(outputIdx, v)
-						}
-					default:
-						colexecerror.InternalError(fmt.Sprintf("unhandled type %s", o.typs[i].String()))
-					}
+					o.setters[i](o, vec, i, srcRowIdx, outputIdx)
 				}
 			}
 
@@ -256,6 +245,7 @@ func (o *OrderedSynchronizer) Init() {
 	o.output = o.allocator.NewMemBatch(o.typs)
 	o.outNulls = make([]*coldata.Nulls, len(o.typs))
 	o.outColsMap = make([]int, len(o.typs))
+	o.setters = make([]orderedSyncSetter, len(o.typs))
 	for i, outVec := range o.output.ColVecs() {
 		o.outNulls[i] = outVec.Nulls()
 		switch typeconv.TypeFamilyToCanonicalTypeFamily(o.typs[i].Family()) {
@@ -265,6 +255,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outBoolCols)
 				o.outBoolCols = append(o.outBoolCols, outVec.Bool())
+				o.setters[i] = setBool
 			}
 		case types.BytesFamily:
 			switch o.typs[i].Width() {
@@ -272,6 +263,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outBytesCols)
 				o.outBytesCols = append(o.outBytesCols, outVec.Bytes())
+				o.setters[i] = setBytes
 			}
 		case types.DecimalFamily:
 			switch o.typs[i].Width() {
@@ -279,19 +271,23 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outDecimalCols)
 				o.outDecimalCols = append(o.outDecimalCols, outVec.Decimal())
+				o.setters[i] = setDecimal
 			}
 		case types.IntFamily:
 			switch o.typs[i].Width() {
 			case 16:
 				o.outColsMap[i] = len(o.outInt16Cols)
 				o.outInt16Cols = append(o.outInt16Cols, outVec.Int16())
+				o.setters[i] = setInt16
 			case 32:
 				o.outColsMap[i] = len(o.outInt32Cols)
 				o.outInt32Cols = append(o.outInt32Cols, outVec.Int32())
+				o.setters[i] = setInt32
 			case -1:
 			default:
 				o.outColsMap[i] = len(o.outInt64Cols)
 				o.outInt64Cols = append(o.outInt64Cols, outVec.Int64())
+				o.setters[i] = setInt64
 			}
 		case types.FloatFamily:
 			switch o.typs[i].Width() {
@@ -299,6 +295,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outFloat64Cols)
 				o.outFloat64Cols = append(o.outFloat64Cols, outVec.Float64())
+				o.setters[i] = setFloat64
 			}
 		case types.TimestampTZFamily:
 			switch o.typs[i].Width() {
@@ -306,6 +303,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outTimestampCols)
 				o.outTimestampCols = append(o.outTimestampCols, outVec.Timestamp())
+				o.setters[i] = setTimestamp
 			}
 		case types.IntervalFamily:
 			switch o.typs[i].Width() {
@@ -313,6 +311,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outIntervalCols)
 				o.outIntervalCols = append(o.outIntervalCols, outVec.Interval())
+				o.setters[i] = setInterval
 			}
 		case typeconv.DatumVecCanonicalTypeFamily:
 			switch o.typs[i].Width() {
@@ -320,6 +319,7 @@ func (o *OrderedSynchronizer) Init() {
 			default:
 				o.outColsMap[i] = len(o.outDatumCols)
 				o.outDatumCols = append(o.outDatumCols, outVec.Datum())
+				o.setters[i] = setDatum
 			}
 		default:
 			colexecerror.InternalError(fmt.Sprintf("unhandled type %s", o.typs[i]))
