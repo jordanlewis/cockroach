@@ -41,7 +41,7 @@ func newSorter(
 	input spooler,
 	inputTypes []*types.T,
 	orderingCols []execinfrapb.Ordering_Column,
-) (ResettableOperator, error) {
+) (*sortOp, error) {
 	partitioners := make([]partitioner, len(orderingCols)-1)
 
 	var err error

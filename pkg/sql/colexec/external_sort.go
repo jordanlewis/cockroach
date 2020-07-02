@@ -422,11 +422,11 @@ func (s *externalSorter) createMergerForPartitions(
 			s.unlimitedAllocator, s.inputTypes, s.partitioner, firstIdx+i,
 		)
 	}
-	return NewOrderedSynchronizer(
+	return NewOrdSync(
 		s.unlimitedAllocator,
 		syncInputs,
 		s.inputTypes,
-		execinfrapb.ConvertToColumnOrdering(s.ordering),
+		s.ordering.Columns,
 	)
 }
 

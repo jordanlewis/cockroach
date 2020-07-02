@@ -384,7 +384,8 @@ type sortBoolAscWithNullsOp struct {
 }
 
 func (s *sortBoolAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bool()
+	c := col.Bool()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -462,7 +463,10 @@ type sortBytesAscWithNullsOp struct {
 }
 
 func (s *sortBytesAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bytes()
+	c := col.Bytes()
+	s.sortCol = c
+	_ = 0
+	_ = len(order)
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -532,7 +536,8 @@ type sortDecimalAscWithNullsOp struct {
 }
 
 func (s *sortDecimalAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Decimal()
+	c := col.Decimal()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -602,7 +607,8 @@ type sortInt16AscWithNullsOp struct {
 }
 
 func (s *sortInt16AscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int16()
+	c := col.Int16()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -683,7 +689,8 @@ type sortInt32AscWithNullsOp struct {
 }
 
 func (s *sortInt32AscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int32()
+	c := col.Int32()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -764,7 +771,8 @@ type sortInt64AscWithNullsOp struct {
 }
 
 func (s *sortInt64AscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int64()
+	c := col.Int64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -845,7 +853,8 @@ type sortFloat64AscWithNullsOp struct {
 }
 
 func (s *sortFloat64AscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Float64()
+	c := col.Float64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -934,7 +943,8 @@ type sortTimestampAscWithNullsOp struct {
 }
 
 func (s *sortTimestampAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Timestamp()
+	c := col.Timestamp()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1011,7 +1021,8 @@ type sortIntervalAscWithNullsOp struct {
 }
 
 func (s *sortIntervalAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Interval()
+	c := col.Interval()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1081,7 +1092,8 @@ type sortDatumAscWithNullsOp struct {
 }
 
 func (s *sortDatumAscWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Datum()
+	c := col.Datum()
+	s.sortCol = c.Slice(0, len(order))
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1153,7 +1165,8 @@ type sortBoolDescWithNullsOp struct {
 }
 
 func (s *sortBoolDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bool()
+	c := col.Bool()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1231,7 +1244,10 @@ type sortBytesDescWithNullsOp struct {
 }
 
 func (s *sortBytesDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bytes()
+	c := col.Bytes()
+	s.sortCol = c
+	_ = 0
+	_ = len(order)
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1301,7 +1317,8 @@ type sortDecimalDescWithNullsOp struct {
 }
 
 func (s *sortDecimalDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Decimal()
+	c := col.Decimal()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1371,7 +1388,8 @@ type sortInt16DescWithNullsOp struct {
 }
 
 func (s *sortInt16DescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int16()
+	c := col.Int16()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1452,7 +1470,8 @@ type sortInt32DescWithNullsOp struct {
 }
 
 func (s *sortInt32DescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int32()
+	c := col.Int32()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1533,7 +1552,8 @@ type sortInt64DescWithNullsOp struct {
 }
 
 func (s *sortInt64DescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int64()
+	c := col.Int64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1614,7 +1634,8 @@ type sortFloat64DescWithNullsOp struct {
 }
 
 func (s *sortFloat64DescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Float64()
+	c := col.Float64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1703,7 +1724,8 @@ type sortTimestampDescWithNullsOp struct {
 }
 
 func (s *sortTimestampDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Timestamp()
+	c := col.Timestamp()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1780,7 +1802,8 @@ type sortIntervalDescWithNullsOp struct {
 }
 
 func (s *sortIntervalDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Interval()
+	c := col.Interval()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1850,7 +1873,8 @@ type sortDatumDescWithNullsOp struct {
 }
 
 func (s *sortDatumDescWithNullsOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Datum()
+	c := col.Datum()
+	s.sortCol = c.Slice(0, len(order))
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1922,7 +1946,8 @@ type sortBoolAscOp struct {
 }
 
 func (s *sortBoolAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bool()
+	c := col.Bool()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -1990,7 +2015,10 @@ type sortBytesAscOp struct {
 }
 
 func (s *sortBytesAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bytes()
+	c := col.Bytes()
+	s.sortCol = c
+	_ = 0
+	_ = len(order)
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2050,7 +2078,8 @@ type sortDecimalAscOp struct {
 }
 
 func (s *sortDecimalAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Decimal()
+	c := col.Decimal()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2110,7 +2139,8 @@ type sortInt16AscOp struct {
 }
 
 func (s *sortInt16AscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int16()
+	c := col.Int16()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2181,7 +2211,8 @@ type sortInt32AscOp struct {
 }
 
 func (s *sortInt32AscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int32()
+	c := col.Int32()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2252,7 +2283,8 @@ type sortInt64AscOp struct {
 }
 
 func (s *sortInt64AscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int64()
+	c := col.Int64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2323,7 +2355,8 @@ type sortFloat64AscOp struct {
 }
 
 func (s *sortFloat64AscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Float64()
+	c := col.Float64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2402,7 +2435,8 @@ type sortTimestampAscOp struct {
 }
 
 func (s *sortTimestampAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Timestamp()
+	c := col.Timestamp()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2469,7 +2503,8 @@ type sortIntervalAscOp struct {
 }
 
 func (s *sortIntervalAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Interval()
+	c := col.Interval()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2529,7 +2564,8 @@ type sortDatumAscOp struct {
 }
 
 func (s *sortDatumAscOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Datum()
+	c := col.Datum()
+	s.sortCol = c.Slice(0, len(order))
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2591,7 +2627,8 @@ type sortBoolDescOp struct {
 }
 
 func (s *sortBoolDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bool()
+	c := col.Bool()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2659,7 +2696,10 @@ type sortBytesDescOp struct {
 }
 
 func (s *sortBytesDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Bytes()
+	c := col.Bytes()
+	s.sortCol = c
+	_ = 0
+	_ = len(order)
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2719,7 +2759,8 @@ type sortDecimalDescOp struct {
 }
 
 func (s *sortDecimalDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Decimal()
+	c := col.Decimal()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2779,7 +2820,8 @@ type sortInt16DescOp struct {
 }
 
 func (s *sortInt16DescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int16()
+	c := col.Int16()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2850,7 +2892,8 @@ type sortInt32DescOp struct {
 }
 
 func (s *sortInt32DescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int32()
+	c := col.Int32()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2921,7 +2964,8 @@ type sortInt64DescOp struct {
 }
 
 func (s *sortInt64DescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Int64()
+	c := col.Int64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -2992,7 +3036,8 @@ type sortFloat64DescOp struct {
 }
 
 func (s *sortFloat64DescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Float64()
+	c := col.Float64()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -3071,7 +3116,8 @@ type sortTimestampDescOp struct {
 }
 
 func (s *sortTimestampDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Timestamp()
+	c := col.Timestamp()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -3138,7 +3184,8 @@ type sortIntervalDescOp struct {
 }
 
 func (s *sortIntervalDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Interval()
+	c := col.Interval()
+	s.sortCol = c[0:len(order)]
 	s.nulls = col.Nulls()
 	s.order = order
 }
@@ -3198,7 +3245,8 @@ type sortDatumDescOp struct {
 }
 
 func (s *sortDatumDescOp) init(col coldata.Vec, order []int) {
-	s.sortCol = col.Datum()
+	c := col.Datum()
+	s.sortCol = c.Slice(0, len(order))
 	s.nulls = col.Nulls()
 	s.order = order
 }

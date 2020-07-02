@@ -731,9 +731,9 @@ func (s *vectorizedFlowCreator) setupInput(
 	if len(inputStreamOps) > 1 {
 		statsInputs := inputStreamOps
 		if input.Type == execinfrapb.InputSyncSpec_ORDERED {
-			os, err := colexec.NewOrderedSynchronizer(
+			os, err := colexec.NewOrdSync(
 				colmem.NewAllocator(ctx, s.newStreamingMemAccount(flowCtx), factory),
-				inputStreamOps, input.ColumnTypes, execinfrapb.ConvertToColumnOrdering(input.Ordering),
+				inputStreamOps, input.ColumnTypes, input.Ordering.Columns,
 			)
 			if err != nil {
 				return nil, nil, err
