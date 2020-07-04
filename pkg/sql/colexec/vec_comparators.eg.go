@@ -47,8 +47,8 @@ type BoolVecComparator struct {
 }
 
 func (c *BoolVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -56,8 +56,10 @@ func (c *BoolVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) 
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	if !left && right {
@@ -92,8 +94,8 @@ type BytesVecComparator struct {
 }
 
 func (c *BytesVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -101,8 +103,10 @@ func (c *BytesVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 	cmp = bytes.Compare(left, right)
 	return cmp
@@ -134,8 +138,8 @@ type DecimalVecComparator struct {
 }
 
 func (c *DecimalVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -143,8 +147,10 @@ func (c *DecimalVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 in
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 	cmp = tree.CompareDecimals(&left, &right)
 	return cmp
@@ -171,8 +177,8 @@ type Int16VecComparator struct {
 }
 
 func (c *Int16VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -180,8 +186,10 @@ func (c *Int16VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	{
@@ -219,8 +227,8 @@ type Int32VecComparator struct {
 }
 
 func (c *Int32VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -228,8 +236,10 @@ func (c *Int32VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	{
@@ -267,8 +277,8 @@ type Int64VecComparator struct {
 }
 
 func (c *Int64VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -276,8 +286,10 @@ func (c *Int64VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	{
@@ -315,8 +327,8 @@ type Float64VecComparator struct {
 }
 
 func (c *Float64VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -324,8 +336,10 @@ func (c *Float64VecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 in
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	{
@@ -371,8 +385,8 @@ type TimestampVecComparator struct {
 }
 
 func (c *TimestampVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -380,8 +394,10 @@ func (c *TimestampVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 
 	if left.Before(right) {
@@ -415,8 +431,8 @@ type IntervalVecComparator struct {
 }
 
 func (c *IntervalVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -424,8 +440,10 @@ func (c *IntervalVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 i
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)  //gcassert:inline
-	right := c.vecs[vecIdx2].Get(valIdx2) //gcassert:inline
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)  //gcassert:inline
+	right := vec2.Get(valIdx2) //gcassert:inline
 	var cmp int
 	cmp = left.Compare(right)
 	return cmp
@@ -452,8 +470,8 @@ type DatumVecComparator struct {
 }
 
 func (c *DatumVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -461,11 +479,13 @@ func (c *DatumVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := c.vecs[vecIdx1].Get(valIdx1)
-	right := c.vecs[vecIdx2].Get(valIdx2)
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := vec1.Get(valIdx1)
+	right := vec2.Get(valIdx2)
 	var cmp int
 
-	cmp = left.(*coldataext.Datum).CompareDatum(c.vecs[vecIdx1], right)
+	cmp = left.(*coldataext.Datum).CompareDatum(vec1, right)
 
 	return cmp
 }

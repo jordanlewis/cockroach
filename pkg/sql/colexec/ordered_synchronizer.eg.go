@@ -235,7 +235,7 @@ func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 			}
 			for i, info := range o.outputInfo {
 				vec := batch.ColVec(i)
-				if vec.Nulls().MaybeHasNulls() && vec.Nulls().NullAt(srcRowIdx) {
+				if vec.Nulls().NullAt(srcRowIdx) {
 					info.nulls.SetNull(outputIdx)
 				} else {
 					info.setter(o, vec, i, srcRowIdx, outputIdx)

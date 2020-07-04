@@ -77,8 +77,8 @@ type _TYPEVecComparator struct {
 }
 
 func (c *_TYPEVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int) int {
-	n1 := c.nulls[vecIdx1].MaybeHasNulls() && c.nulls[vecIdx1].NullAt(valIdx1)
-	n2 := c.nulls[vecIdx2].MaybeHasNulls() && c.nulls[vecIdx2].NullAt(valIdx2)
+	n1 := c.nulls[vecIdx1].NullAt(valIdx1)
+	n2 := c.nulls[vecIdx2].NullAt(valIdx2)
 	if n1 && n2 {
 		return 0
 	} else if n1 {
@@ -86,10 +86,12 @@ func (c *_TYPEVecComparator) compare(vecIdx1, vecIdx2 int, valIdx1, valIdx2 int)
 	} else if n2 {
 		return 1
 	}
-	left := execgen.UNSAFEGET(c.vecs[vecIdx1], valIdx1)
-	right := execgen.UNSAFEGET(c.vecs[vecIdx2], valIdx2)
+	vec1 := c.vecs[vecIdx1]
+	vec2 := c.vecs[vecIdx2]
+	left := execgen.UNSAFEGET(vec1, valIdx1)
+	right := execgen.UNSAFEGET(vec2, valIdx2)
 	var cmp int
-	_COMPARE(cmp, left, right, c.vecs[vecIdx1], c.vecs[vecIdx2])
+	_COMPARE(cmp, left, right, vec1, vec2)
 	return cmp
 }
 
