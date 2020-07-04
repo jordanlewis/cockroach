@@ -51,41 +51,22 @@ const _TYPE_WIDTH = 0
 
 // */}}
 
-// OrderedSynchronizer receives rows from multiple inputs and produces a single
-// stream of rows, ordered according to a set of columns. The rows in each input
-// stream are assumed to be ordered according to the same set of columns.
-type OrderedSynchronizer struct {
-	allocator             *colmem.Allocator
-	inputs                []SynchronizerInput
-	ordering              sqlbase.ColumnOrdering
-	typs                  []*types.T
-	canonicalTypeFamilies []types.Family
+type syncInputInfo struct {
+	input        SynchronizerInput
+	batch        coldata.Batch
+	currentIndex int
+}
 
-	// inputBatches stores the current batch for each input.
-	inputBatches []coldata.Batch
-	// inputIndices stores the current index into each input batch.
-	inputIndices []int
-	// heap is a min heap which stores indices into inputBatches. The "current
-	// value" of ith input batch is the tuple at inputIndices[i] position of
-	// inputBatches[i] batch. If an input is fully exhausted, it will be removed
-	// from heap.
-	heap []int
-	// comparators stores one comparator per ordering column.
-	comparators []vecComparator
-	output      coldata.Batch
-	outNulls    []*coldata.Nulls
+type syncOrderingColInfo struct {
+	col        sqlbase.ColumnOrderInfo
+	comparator vecComparator
+}
 
-	setters []orderedSyncSetter
-	// In order to reduce the number of interface conversions, we will get access
-	// to the underlying slice for the output vectors and will use them directly.
-	// {{range .}}
-	// {{range .WidthOverloads}}
-	out_TYPECols []_GOTYPESLICE
-	// {{end}}
-	// {{end}}
-	// outColsMap contains the positions of the corresponding vectors in the
-	// slice for the same types. For example, if we have an output batch with
-	// types = [Int64, Int64, Bool, Bytes, Bool, Int64], then outColsMap will be
+type syncOutputInfo struct {
+	// outColIdx contains the position of the corresponding vector in the
+	// slice for the same type. For example, if we have an output batch with
+	// types = [Int64, Int64, Bool, Bytes, Bool, Int64], then the outColIdx for
+	// each outputInfo will be:
 	//                      [0, 1, 0, 0, 1, 2]
 	//                       ^  ^  ^  ^  ^  ^
 	//                       |  |  |  |  |  |
@@ -95,19 +76,54 @@ type OrderedSynchronizer struct {
 	//                       |  |  1st among all Bool's
 	//                       |  2nd among all Int64's
 	//                       1st among all Int64's
-	outColsMap []int
+	outColIdx int
+	nulls     *coldata.Nulls
+	setter    orderedSyncSetter
+}
+
+// OrderedSynchronizer receives rows from multiple inputs and produces a single
+// stream of rows, ordered according to a set of columns. The rows in each input
+// stream are assumed to be ordered according to the same set of columns.
+type OrderedSynchronizer struct {
+	allocator             *colmem.Allocator
+	typs                  []*types.T
+	canonicalTypeFamilies []types.Family
+
+	// inputInfo stores information for each input.
+	inputInfo []syncInputInfo
+
+	// orderingInfo stores information for each ordering column.
+	orderingInfo []syncOrderingColInfo
+
+	// heap is a min heap which stores indices into inputInfos. The "current
+	// value" of ith input batch is the tuple at inputInfos.currentIndex[i] position of
+	// inputInfos[i].batch. If an input is fully exhausted, it will be removed
+	// from heap.
+	heap   []int
+	output coldata.Batch
+
+	// In order to reduce the number of interface conversions, we will get access
+	// to the underlying slice for the output vectors and will use them directly.
+	// {{range .}}
+	// {{range .WidthOverloads}}
+	out_TYPECols []_GOTYPESLICE
+	// {{end}}
+	// {{end}}
+
+	// inputInfo stores information for each outputColumn.
+	outputInfo []syncOutputInfo
 }
 
 var _ colexecbase.Operator = &OrderedSynchronizer{}
 
 // ChildCount implements the execinfrapb.OpNode interface.
 func (o *OrderedSynchronizer) ChildCount(verbose bool) int {
-	return len(o.inputs)
+	return len(o.inputInfo)
 }
 
 // Child implements the execinfrapb.OpNode interface.
 func (o *OrderedSynchronizer) Child(nth int, verbose bool) execinfra.OpNode {
-	return o.inputs[nth].Op
+	return o.inputInfo[nth].input.Op
 }
 
 // NewOrderedSynchronizer creates a new OrderedSynchronizer.
@@ -117,10 +133,18 @@ func NewOrderedSynchronizer(
 	typs []*types.T,
 	ordering sqlbase.ColumnOrdering,
 ) (*OrderedSynchronizer, error) {
+	orderingInfo := make([]syncOrderingColInfo, len(ordering))
+	for i, col := range ordering {
+		orderingInfo[i].col = col
+	}
+	inputInfo := make([]syncInputInfo, len(inputs))
+	for i, input := range inputs {
+		inputInfo[i].input = input
+	}
 	return &OrderedSynchronizer{
 		allocator:             allocator,
-		inputs:                inputs,
-		ordering:              ordering,
+		inputInfo:             inputInfo,
+		orderingInfo:          orderingInfo,
 		typs:                  typs,
 		canonicalTypeFamilies: typeconv.ToCanonicalTypeFamilies(typs),
 	}, nil
@@ -132,7 +156,7 @@ type orderedSyncSetter func(o *OrderedSynchronizer, vec coldata.Vec, colIdx int,
 // {{range .WidthOverloads}}
 func set_TYPE(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, outputIdx int) {
 	srcCol := vec._TYPE()
-	outCol := o.out_TYPECols[o.outColsMap[colIdx]]
+	outCol := o.out_TYPECols[o.outputInfo[colIdx].outColIdx]
 	v := execgen.UNSAFEGET(srcCol, srcRowIdx)
 	execgen.SET(outCol, outputIdx, v)
 }
@@ -142,13 +166,13 @@ func set_TYPE(o *OrderedSynchronizer, vec coldata.Vec, colIdx int, srcRowIdx, ou
 
 // Next is part of the Operator interface.
 func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
-	if o.inputBatches == nil {
-		o.inputBatches = make([]coldata.Batch, len(o.inputs))
-		o.heap = make([]int, 0, len(o.inputs))
-		for i := range o.inputs {
-			o.inputBatches[i] = o.inputs[i].Op.Next(ctx)
+	if o.heap == nil {
+		o.heap = make([]int, 0, len(o.inputInfo))
+		for i := range o.inputInfo {
+			batch := o.inputInfo[i].input.Op.Next(ctx)
+			o.inputInfo[i].batch = batch
 			o.updateComparators(i)
-			if o.inputBatches[i].Length() > 0 {
+			if batch.Length() > 0 {
 				o.heap = append(o.heap, i)
 			}
 		}
@@ -165,29 +189,30 @@ func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 
 			minBatch := o.heap[0]
 			// Copy the min row into the output.
-			batch := o.inputBatches[minBatch]
-			srcRowIdx := o.inputIndices[minBatch]
+			info := &o.inputInfo[minBatch]
+			batch := info.batch
+			srcRowIdx := info.currentIndex
 			if sel := batch.Selection(); sel != nil {
 				srcRowIdx = sel[srcRowIdx]
 			}
-			for i := range o.typs {
+			for i, info := range o.outputInfo {
 				vec := batch.ColVec(i)
 				if vec.Nulls().MaybeHasNulls() && vec.Nulls().NullAt(srcRowIdx) {
-					o.outNulls[i].SetNull(outputIdx)
+					info.nulls.SetNull(outputIdx)
 				} else {
-					o.setters[i](o, vec, i, srcRowIdx, outputIdx)
+					info.setter(o, vec, i, srcRowIdx, outputIdx)
 				}
 			}
 
 			// Advance the input batch, fetching a new batch if necessary.
-			if o.inputIndices[minBatch]+1 < o.inputBatches[minBatch].Length() {
-				o.inputIndices[minBatch]++
+			if info.currentIndex+1 < o.inputInfo[minBatch].batch.Length() {
+				info.currentIndex++
 			} else {
-				o.inputBatches[minBatch] = o.inputs[minBatch].Op.Next(ctx)
-				o.inputIndices[minBatch] = 0
+				info.batch = o.inputInfo[minBatch].input.Op.Next(ctx)
+				info.currentIndex = 0
 				o.updateComparators(minBatch)
 			}
-			if o.inputBatches[minBatch].Length() == 0 {
+			if info.batch.Length() == 0 {
 				heap.Remove(o, 0)
 			} else {
 				heap.Fix(o, 0)
@@ -203,22 +228,19 @@ func (o *OrderedSynchronizer) Next(ctx context.Context) coldata.Batch {
 
 // Init is part of the Operator interface.
 func (o *OrderedSynchronizer) Init() {
-	o.inputIndices = make([]int, len(o.inputs))
 	o.output = o.allocator.NewMemBatch(o.typs)
-	o.outNulls = make([]*coldata.Nulls, len(o.typs))
-	o.outColsMap = make([]int, len(o.typs))
-	o.setters = make([]orderedSyncSetter, len(o.typs))
+	o.outputInfo = make([]syncOutputInfo, len(o.typs))
 	for i, outVec := range o.output.ColVecs() {
-		o.outNulls[i] = outVec.Nulls()
+		o.outputInfo[i].nulls = outVec.Nulls()
 		switch typeconv.TypeFamilyToCanonicalTypeFamily(o.typs[i].Family()) {
 		// {{range .}}
 		case _CANONICAL_TYPE_FAMILY:
 			switch o.typs[i].Width() {
 			// {{range .WidthOverloads}}
 			case _TYPE_WIDTH:
-				o.outColsMap[i] = len(o.out_TYPECols)
+				o.outputInfo[i].outColIdx = len(o.out_TYPECols)
 				o.out_TYPECols = append(o.out_TYPECols, outVec._TYPE())
-				o.setters[i] = set_TYPE
+				o.outputInfo[i].setter = set_TYPE
 				// {{end}}
 			}
 		// {{end}}
@@ -226,40 +248,39 @@ func (o *OrderedSynchronizer) Init() {
 			colexecerror.InternalError(fmt.Sprintf("unhandled type %s", o.typs[i]))
 		}
 	}
-	for i := range o.inputs {
-		o.inputs[i].Op.Init()
+	for i := range o.inputInfo {
+		o.inputInfo[i].input.Op.Init()
 	}
-	o.comparators = make([]vecComparator, len(o.ordering))
-	for i := range o.ordering {
-		typ := o.typs[o.ordering[i].ColIdx]
-		o.comparators[i] = GetVecComparator(typ, len(o.inputs))
+	for i := range o.orderingInfo {
+		typ := o.typs[o.orderingInfo[i].col.ColIdx]
+		o.orderingInfo[i].comparator = GetVecComparator(typ, len(o.inputInfo))
 	}
 }
 
 func (o *OrderedSynchronizer) DrainMeta(ctx context.Context) []execinfrapb.ProducerMetadata {
 	var bufferedMeta []execinfrapb.ProducerMetadata
-	for _, input := range o.inputs {
-		bufferedMeta = append(bufferedMeta, input.MetadataSources.DrainMeta(ctx)...)
+	for i := range o.inputInfo {
+		bufferedMeta = append(bufferedMeta, o.inputInfo[i].input.MetadataSources.DrainMeta(ctx)...)
 	}
 	return bufferedMeta
 }
 
 func (o *OrderedSynchronizer) compareRow(batchIdx1 int, batchIdx2 int) int {
-	batch1 := o.inputBatches[batchIdx1]
-	batch2 := o.inputBatches[batchIdx2]
-	valIdx1 := o.inputIndices[batchIdx1]
-	valIdx2 := o.inputIndices[batchIdx2]
-	if sel := batch1.Selection(); sel != nil {
+	inputInfo1 := o.inputInfo[batchIdx1]
+	inputInfo2 := o.inputInfo[batchIdx2]
+	valIdx1 := inputInfo1.currentIndex
+	valIdx2 := inputInfo2.currentIndex
+	if sel := inputInfo1.batch.Selection(); sel != nil {
 		valIdx1 = sel[valIdx1]
 	}
-	if sel := batch2.Selection(); sel != nil {
+	if sel := inputInfo2.batch.Selection(); sel != nil {
 		valIdx2 = sel[valIdx2]
 	}
-	for i := range o.ordering {
-		info := o.ordering[i]
-		res := o.comparators[i].compare(batchIdx1, batchIdx2, valIdx1, valIdx2)
+	for i := range o.orderingInfo {
+		info := &o.orderingInfo[i]
+		res := info.comparator.compare(batchIdx1, batchIdx2, valIdx1, valIdx2)
 		if res != 0 {
-			switch d := info.Direction; d {
+			switch d := info.col.Direction; d {
 			case encoding.Ascending:
 				return res
 			case encoding.Descending:
@@ -275,13 +296,13 @@ func (o *OrderedSynchronizer) compareRow(batchIdx1 int, batchIdx2 int) int {
 // updateComparators should be run whenever a new batch is fetched. It updates
 // all the relevant vectors in o.comparators.
 func (o *OrderedSynchronizer) updateComparators(batchIdx int) {
-	batch := o.inputBatches[batchIdx]
+	batch := o.inputInfo[batchIdx].batch
 	if batch.Length() == 0 {
 		return
 	}
-	for i := range o.ordering {
-		vec := batch.ColVec(o.ordering[i].ColIdx)
-		o.comparators[i].setVec(batchIdx, vec)
+	for _, info := range o.orderingInfo {
+		vec := batch.ColVec(info.col.ColIdx)
+		info.comparator.setVec(batchIdx, vec)
 	}
 }
 
