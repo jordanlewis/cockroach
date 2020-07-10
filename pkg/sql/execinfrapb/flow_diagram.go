@@ -29,10 +29,12 @@ import (
 	"github.com/gogo/protobuf/types"
 )
 
-type diagramCellType interface {
-	// summary produces a title and an arbitrary number of lines that describe a
+// DiagramCellType is an interface for an object that has a summary usable in
+// an explain output.
+type DiagramCellType interface {
+	// Summary produces a title and an arbitrary number of lines that describe a
 	// "cell" in a diagram node (input sync, processor core, or output router).
-	summary() (title string, details []string)
+	Summary() (title string, details []string)
 }
 
 func (ord *Ordering) diagramString() string {
@@ -62,22 +64,22 @@ func colListStr(cols []uint32) string {
 	return buf.String()
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (*NoopCoreSpec) summary() (string, []string) {
 	return "No-op", []string{}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (mts *MetadataTestSenderSpec) summary() (string, []string) {
 	return "MetadataTestSender", []string{mts.ID}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (*MetadataTestReceiverSpec) summary() (string, []string) {
 	return "MetadataTestReceiver", []string{}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (v *ValuesCoreSpec) summary() (string, []string) {
 	var bytes uint64
 	for _, b := range v.RawBytes {
@@ -87,7 +89,7 @@ func (v *ValuesCoreSpec) summary() (string, []string) {
 	return "Values", []string{detail}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (a *AggregatorSpec) summary() (string, []string) {
 	details := make([]string, 0, len(a.Aggregations)+1)
 	if len(a.GroupCols) > 0 {
@@ -124,7 +126,7 @@ func indexDetails(indexIdx uint32, desc *sqlbase.TableDescriptor) []string {
 	return []string{fmt.Sprintf("%s@%s", index, desc.Name)}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (tr *TableReaderSpec) summary() (string, []string) {
 	details := indexDetails(tr.IndexIdx, &tr.Table)
 
@@ -151,7 +153,7 @@ func (tr *TableReaderSpec) summary() (string, []string) {
 	return "TableReader", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (jr *JoinReaderSpec) summary() (string, []string) {
 	index := "primary"
 	if jr.IndexIdx > 0 {
@@ -180,7 +182,7 @@ func joinTypeDetail(joinType sqlbase.JoinType) string {
 	return fmt.Sprintf("Type: %s JOIN", typeStr)
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (hj *HashJoinerSpec) summary() (string, []string) {
 	name := "HashJoiner"
 	if hj.Type.IsSetOpJoin() {
@@ -208,7 +210,7 @@ func (hj *HashJoinerSpec) summary() (string, []string) {
 	return name, details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (ifs *InvertedFiltererSpec) summary() (string, []string) {
 	name := "InvertedFilterer"
 	var b strings.Builder
@@ -244,7 +246,7 @@ func orderedJoinDetails(
 	return details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (mj *MergeJoinerSpec) summary() (string, []string) {
 	name := "MergeJoiner"
 	if mj.Type.IsSetOpJoin() {
@@ -253,7 +255,7 @@ func (mj *MergeJoinerSpec) summary() (string, []string) {
 	return name, orderedJoinDetails(mj.Type, mj.LeftOrdering, mj.RightOrdering, mj.OnExpr)
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (irj *InterleavedReaderJoinerSpec) summary() (string, []string) {
 	// As of right now, we only plan InterleaveReaderJoiner with two
 	// tables.
@@ -280,7 +282,7 @@ func (irj *InterleavedReaderJoinerSpec) summary() (string, []string) {
 	return "InterleaveReaderJoiner", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (zj *ZigzagJoinerSpec) summary() (string, []string) {
 	name := "ZigzagJoiner"
 	tables := zj.Tables
@@ -296,7 +298,7 @@ func (zj *ZigzagJoinerSpec) summary() (string, []string) {
 	return name, details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (ij *InvertedJoinerSpec) summary() (string, []string) {
 	index := ij.Table.Indexes[ij.IndexIdx-1].Name
 	details := make([]string, 0, 4)
@@ -313,7 +315,7 @@ func (ij *InvertedJoinerSpec) summary() (string, []string) {
 	return "InvertedJoiner", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *SorterSpec) summary() (string, []string) {
 	details := []string{s.OutputOrdering.diagramString()}
 	if s.OrderingMatchLen != 0 {
@@ -322,7 +324,7 @@ func (s *SorterSpec) summary() (string, []string) {
 	return "Sorter", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (bf *BackfillerSpec) summary() (string, []string) {
 	details := []string{
 		bf.Table.Name,
@@ -331,7 +333,7 @@ func (bf *BackfillerSpec) summary() (string, []string) {
 	return "Backfiller", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (d *DistinctSpec) summary() (string, []string) {
 	details := []string{
 		colListStr(d.DistinctColumns),
@@ -342,12 +344,12 @@ func (d *DistinctSpec) summary() (string, []string) {
 	return "Distinct", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (o *OrdinalitySpec) summary() (string, []string) {
 	return "Ordinality", []string{}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (d *ProjectSetSpec) summary() (string, []string) {
 	var details []string
 	for _, expr := range d.Exprs {
@@ -356,7 +358,7 @@ func (d *ProjectSetSpec) summary() (string, []string) {
 	return "ProjectSet", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *SamplerSpec) summary() (string, []string) {
 	details := []string{fmt.Sprintf("SampleSize: %d", s.SampleSize)}
 	for _, sk := range s.Sketches {
@@ -366,7 +368,7 @@ func (s *SamplerSpec) summary() (string, []string) {
 	return "Sampler", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *SampleAggregatorSpec) summary() (string, []string) {
 	details := []string{
 		fmt.Sprintf("SampleSize: %d", s.SampleSize),
@@ -399,12 +401,12 @@ func (is *InputSyncSpec) summary(showTypes bool) (string, []string) {
 	}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (r *LocalPlanNodeSpec) summary() (string, []string) {
 	return fmt.Sprintf("local %s %d", *r.Name, *r.RowSourceIdx), []string{}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (r *OutputRouterSpec) summary() (string, []string) {
 	switch r.Type {
 	case OutputRouterSpec_PASS_THROUGH:
@@ -420,7 +422,7 @@ func (r *OutputRouterSpec) summary() (string, []string) {
 	}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (post *PostProcessSpec) summary() []string {
 	return post.summaryWithPrefix("")
 }
@@ -468,7 +470,7 @@ func (post *PostProcessSpec) summaryWithPrefix(prefix string) []string {
 	return res
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (c *ReadImportDataSpec) summary() (string, []string) {
 	ss := make([]string, 0, len(c.Uri))
 	for _, s := range c.Uri {
@@ -477,17 +479,17 @@ func (c *ReadImportDataSpec) summary() (string, []string) {
 	return "ReadImportData", ss
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *CSVWriterSpec) summary() (string, []string) {
 	return "CSVWriter", []string{s.Destination}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *BulkRowWriterSpec) summary() (string, []string) {
 	return "BulkRowWriterSpec", []string{}
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (w *WindowerSpec) summary() (string, []string) {
 	details := make([]string, 0, len(w.WindowFns))
 	if len(w.PartitionBy) > 0 {
@@ -514,7 +516,7 @@ func (w *WindowerSpec) summary() (string, []string) {
 	return "Windower", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *ChangeAggregatorSpec) summary() (string, []string) {
 	var details []string
 	for _, watch := range s.Watches {
@@ -523,7 +525,7 @@ func (s *ChangeAggregatorSpec) summary() (string, []string) {
 	return "ChangeAggregator", details
 }
 
-// summary implements the diagramCellType interface.
+// Summary implements the DiagramCellType interface.
 func (s *ChangeFrontierSpec) summary() (string, []string) {
 	return "ChangeFrontier", []string{}
 }
@@ -621,7 +623,7 @@ func generateDiagramData(
 	for n := range flows {
 		for _, p := range flows[n].Processors {
 			proc := diagramProcessor{NodeIdx: n}
-			proc.Core.Title, proc.Core.Details = p.Core.GetValue().(diagramCellType).summary()
+			proc.Core.Title, proc.Core.Details = p.Core.GetValue().(DiagramCellType).Summary()
 			proc.Core.Title += fmt.Sprintf("/%d", p.ProcessorID)
 			proc.processorID = p.ProcessorID
 			proc.Core.Details = append(proc.Core.Details, p.Post.summary()...)

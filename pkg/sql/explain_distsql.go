@@ -12,9 +12,11 @@ package sql
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/sql/execinfrapb"
+	"github.com/cockroachdb/cockroach/pkg/sql/explain"
 	"github.com/cockroachdb/cockroach/pkg/sql/physicalplan"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
@@ -44,8 +46,9 @@ type explainDistSQLNode struct {
 
 // explainDistSQLRun contains the run-time state of explainDistSQLNode during local execution.
 type explainDistSQLRun struct {
-	// The single row returned by the node.
-	values tree.Datums
+	values []tree.Datums
+
+	curIdx int
 
 	// done is set if Next() was called.
 	done bool
@@ -173,6 +176,7 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 	distSQLPlanner.FinalizePlan(planCtx, physPlan)
 
 	var diagram execinfrapb.FlowDiagram
+	var textOutput string
 	if n.analyze {
 		// TODO(andrei): We don't create a child span if the parent is already
 		// recording because we don't currently have a good way to ask for a
@@ -241,6 +245,10 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 		diagram.AddSpans(spans)
 	} else {
 		flows := physPlan.GenerateFlowSpecs()
+		textOutput, err = explain.WriteDistributedExplain(flows)
+		if err != nil {
+			return err
+		}
 		showInputTypes := n.options.Flags[tree.ExplainFlagTypes]
 		diagram, err = execinfrapb.GeneratePlanDiagram(params.p.stmt.String(), flows, showInputTypes)
 		if err != nil {
@@ -290,12 +298,23 @@ func (n *explainDistSQLNode) startExec(params runParams) error {
 	if err != nil {
 		return err
 	}
+	n.run.values = []tree.Datums{}
+	if textOutput != "" {
+		lines := strings.Split(textOutput, "\n")
+		for _, line := range lines {
+			n.run.values = append(n.run.values, tree.Datums{
+				tree.DBoolFalse,
+				tree.NewDString(line),
+				tree.NewDString(""),
+			})
+		}
+	}
 
-	n.run.values = tree.Datums{
+	n.run.values = append(n.run.values, tree.Datums{
 		tree.MakeDBool(tree.DBool(willDistribute)),
 		tree.NewDString(planURL.String()),
 		tree.NewDString(planJSON),
-	}
+	})
 	return nil
 }
 
@@ -303,11 +322,14 @@ func (n *explainDistSQLNode) Next(runParams) (bool, error) {
 	if n.run.done {
 		return false, nil
 	}
-	n.run.done = true
+	n.run.curIdx++
+	if n.run.curIdx >= len(n.run.values) {
+		return false, nil
+	}
 	return true, nil
 }
 
-func (n *explainDistSQLNode) Values() tree.Datums { return n.run.values }
+func (n *explainDistSQLNode) Values() tree.Datums { return n.run.values[n.run.curIdx] }
 func (n *explainDistSQLNode) Close(ctx context.Context) {
 	n.plan.close(ctx)
 }
