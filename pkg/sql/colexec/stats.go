@@ -40,10 +40,12 @@ type VectorizedStatsCollector struct {
 	// it is not shared with anyone. It is used by the wrapped Operator to
 	// measure its stall or execution time.
 	inputWatch *timeutil.StopWatch
-	// outputWatch is a stop watch that is shared with the Operator that the
-	// wrapped Operator is feeding into. It must be started right before
-	// returning a batch when Nexted. It is used by the "output" Operator.
-	outputWatch *timeutil.StopWatch
+
+	// parentStatsCollector is a pointer to the stats collector of the parent
+	// operator of this one.
+	parentStatsCollector *VectorizedStatsCollector
+
+	childStatsCollectors []*VectorizedStatsCollector
 
 	memMonitors  []*mon.BytesMonitor
 	diskMonitors []*mon.BytesMonitor
@@ -78,20 +80,39 @@ func NewVectorizedStatsCollector(
 	}
 }
 
-// SetOutputWatch sets vsc.outputWatch to outputWatch. It is used to "connect"
-// this VectorizedStatsCollector to the next one in the chain.
-func (vsc *VectorizedStatsCollector) SetOutputWatch(outputWatch *timeutil.StopWatch) {
-	vsc.outputWatch = outputWatch
+// SetParentStatsCollector sets the stats collectors of the parents of this
+// operator.
+// For example, consider the following tree:
+//
+// TableReader        TableReader
+// StatsCollector1    StatsCollector2
+//       \                /
+//          JoinOperator
+//          StatsCollector3
+//
+// The intended use of this method is to call
+// SetParentStatsCollector on StatsCollector1 and StatsCollector2 with
+// StatsCollector3.
+func (vsc *VectorizedStatsCollector) SetParentStatsCollector(
+	parentStatCollector *VectorizedStatsCollector,
+) {
+	vsc.parentStatsCollector = parentStatCollector
+}
+
+func (vsc *VectorizedStatsCollector) SetChildStatsCollectors(
+	collectors []*VectorizedStatsCollector,
+) {
+	vsc.childStatsCollectors = collectors
 }
 
 // Next is part of Operator interface.
 func (vsc *VectorizedStatsCollector) Next(ctx context.Context) coldata.Batch {
-	if vsc.outputWatch != nil {
+	if vsc.parentStatsCollector != nil {
 		// vsc.outputWatch is non-nil which means that this Operator is outputting
 		// the batches into another one. In order to avoid double counting the time
 		// actually spent in the current "input" Operator, we're stopping the stop
 		// watch of the other "output" Operator before doing any computations here.
-		vsc.outputWatch.Stop()
+		vsc.parentStatsCollector.inputWatch.Stop()
 	}
 
 	var batch coldata.Batch
@@ -100,18 +121,26 @@ func (vsc *VectorizedStatsCollector) Next(ctx context.Context) coldata.Batch {
 		// Operator, and we need to start the stop watch ourselves.
 		vsc.inputWatch.Start()
 	}
+	// Do the work of our wrapped operator.
 	batch = vsc.Operator.Next(ctx)
 	if batch.Length() > 0 {
 		vsc.NumBatches++
 		vsc.NumTuples += int64(batch.Length())
 	}
+
+	numOutputTuplesFromParents := int64(0)
+	for i := range vsc.childStatsCollectors {
+		numOutputTuplesFromParents += vsc.childStatsCollectors[i].NumTuples
+	}
+	vsc.NumInputTuples = numOutputTuplesFromParents
+
 	vsc.inputWatch.Stop()
-	if vsc.outputWatch != nil {
+	if vsc.parentStatsCollector != nil {
 		// vsc.outputWatch is non-nil which means that this Operator is outputting
 		// the batches into another one. To allow for measuring the execution time
 		// of that other Operator, we're starting the stop watch right before
 		// returning batch.
-		vsc.outputWatch.Start()
+		vsc.parentStatsCollector.inputWatch.Start()
 	}
 	return batch
 }

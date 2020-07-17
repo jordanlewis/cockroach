@@ -81,7 +81,6 @@ func TestVectorizedStatsCollector(t *testing.T) {
 	for nBatches := 1; nBatches < 5; nBatches++ {
 		timeSource := timeutil.NewTestTimeSource()
 		mjInputWatch := timeutil.NewTestStopWatch(timeSource.Now)
-
 		leftSource := &timeAdvancingOperator{
 			OneInputNode: NewOneInputNode(makeFiniteChunksSourceWithBatchSize(nBatches, coldata.BatchSize())),
 			timeSource:   timeSource,
@@ -90,8 +89,6 @@ func TestVectorizedStatsCollector(t *testing.T) {
 			leftSource, 0 /* id */, execinfrapb.ProcessorIDTagKey, true, /* isStall */
 			timeutil.NewTestStopWatch(timeSource.Now), nil /* memMonitors */, nil, /* diskMonitors */
 		)
-		leftInput.SetOutputWatch(mjInputWatch)
-
 		rightSource := &timeAdvancingOperator{
 			OneInputNode: NewOneInputNode(makeFiniteChunksSourceWithBatchSize(nBatches, coldata.BatchSize())),
 			timeSource:   timeSource,
@@ -100,8 +97,6 @@ func TestVectorizedStatsCollector(t *testing.T) {
 			rightSource, 1 /* id */, execinfrapb.ProcessorIDTagKey, true, /* isStall */
 			timeutil.NewTestStopWatch(timeSource.Now), nil /* memMonitors */, nil, /* diskMonitors */
 		)
-		rightInput.SetOutputWatch(mjInputWatch)
-
 		mergeJoiner, err := NewMergeJoinOp(
 			testAllocator, defaultMemoryLimit, queueCfg,
 			colexecbase.NewTestingSemaphore(4), sqlbase.InnerJoin, leftInput, rightInput,
@@ -117,10 +112,14 @@ func TestVectorizedStatsCollector(t *testing.T) {
 			OneInputNode: NewOneInputNode(mergeJoiner),
 			timeSource:   timeSource,
 		}
+
 		mjStatsCollector := NewVectorizedStatsCollector(
 			timeAdvancingMergeJoiner, 2 /* id */, execinfrapb.ProcessorIDTagKey, false, /* isStall */
 			mjInputWatch, nil /* memMonitors */, nil, /* diskMonitors */
 		)
+
+		leftInput.SetParentStatsCollector(mjStatsCollector)
+		rightInput.SetParentStatsCollector(mjStatsCollector)
 
 		// The inputs are identical, so the merge joiner should output nBatches
 		// batches with each having coldata.BatchSize() tuples.

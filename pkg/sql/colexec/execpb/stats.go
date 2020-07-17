@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/col/coldata"
 	"github.com/cockroachdb/cockroach/pkg/sql/execinfrapb"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
@@ -26,7 +25,7 @@ var _ execinfrapb.DistSQLSpanStats = &VectorizedStats{}
 const (
 	batchesOutputTagSuffix     = "output.batches"
 	tuplesOutputTagSuffix      = "output.tuples"
-	selectivityTagSuffix       = "selectivity"
+	ampFactorTagSuffix         = "amplification"
 	stallTimeTagSuffix         = "time.stall"
 	executionTimeTagSuffix     = "time.execution"
 	maxVecMemoryBytesTagSuffix = "mem.vectorized.max"
@@ -41,14 +40,14 @@ func (vs *VectorizedStats) Stats() map[string]string {
 	} else {
 		timeSuffix = executionTimeTagSuffix
 	}
-	selectivity := float64(0)
-	if vs.NumBatches > 0 {
-		selectivity = float64(vs.NumTuples) / float64(int64(coldata.BatchSize())*vs.NumBatches)
+	ampFactor := float64(0)
+	if vs.NumInputTuples > 0 && vs.NumBatches > 0 {
+		ampFactor = float64(vs.NumTuples) / float64(vs.NumInputTuples)
 	}
 	return map[string]string{
 		batchesOutputTagSuffix:     fmt.Sprintf("%d", vs.NumBatches),
 		tuplesOutputTagSuffix:      fmt.Sprintf("%d", vs.NumTuples),
-		selectivityTagSuffix:       fmt.Sprintf("%.2f", selectivity),
+		ampFactorTagSuffix:         fmt.Sprintf("%.4f", ampFactor),
 		timeSuffix:                 fmt.Sprintf("%v", vs.Time.Round(time.Microsecond)),
 		maxVecMemoryBytesTagSuffix: fmt.Sprintf("%d", vs.MaxAllocatedMem),
 		maxVecDiskBytesTagSuffix:   fmt.Sprintf("%d", vs.MaxAllocatedDisk),
@@ -58,7 +57,7 @@ func (vs *VectorizedStats) Stats() map[string]string {
 const (
 	batchesOutputQueryPlanSuffix     = "batches output"
 	tuplesOutputQueryPlanSuffix      = "tuples output"
-	selectivityQueryPlanSuffix       = "selectivity"
+	amplificationQueryPlanSuffix     = "amplification"
 	stallTimeQueryPlanSuffix         = "stall time"
 	executionTimeQueryPlanSuffix     = "execution time"
 	maxVecMemoryBytesQueryPlanSuffix = "max vectorized memory allocated"
@@ -73,14 +72,14 @@ func (vs *VectorizedStats) StatsForQueryPlan() []string {
 	} else {
 		timeSuffix = executionTimeQueryPlanSuffix
 	}
-	selectivity := float64(0)
-	if vs.NumBatches > 0 {
-		selectivity = float64(vs.NumTuples) / float64(int64(coldata.BatchSize())*vs.NumBatches)
+	ampFactor := float64(0)
+	if vs.NumBatches > 0 && vs.NumInputTuples > 0 {
+		ampFactor = float64(vs.NumTuples) / float64(vs.NumInputTuples)
 	}
 	stats := []string{
 		fmt.Sprintf("%s: %d", batchesOutputQueryPlanSuffix, vs.NumBatches),
 		fmt.Sprintf("%s: %d", tuplesOutputQueryPlanSuffix, vs.NumTuples),
-		fmt.Sprintf("%s: %.2f", selectivityQueryPlanSuffix, selectivity),
+		fmt.Sprintf("%s: %.4f", amplificationQueryPlanSuffix, ampFactor),
 		fmt.Sprintf("%s: %v", timeSuffix, vs.Time.Round(time.Microsecond)),
 	}
 
