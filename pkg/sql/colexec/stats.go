@@ -116,11 +116,7 @@ func (vsc *VectorizedStatsCollector) Next(ctx context.Context) coldata.Batch {
 	}
 
 	var batch coldata.Batch
-	if vsc.VectorizedStats.Stall {
-		// We're measuring stall time, so there are no inputs into the wrapped
-		// Operator, and we need to start the stop watch ourselves.
-		vsc.inputWatch.Start()
-	}
+	vsc.inputWatch.Start()
 	// Do the work of our wrapped operator.
 	batch = vsc.Operator.Next(ctx)
 	if batch.Length() > 0 {
