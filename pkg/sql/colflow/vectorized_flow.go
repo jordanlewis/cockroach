@@ -50,7 +50,6 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/logtags"
 	"github.com/marusama/semaphore"
-	opentracing "github.com/opentracing/opentracing-go"
 )
 
 // countingSemaphore is a semaphore that keeps track of the semaphore count from
@@ -177,10 +176,13 @@ func (f *vectorizedFlow) Setup(
 		return ctx, err
 	}
 	log.VEventf(ctx, 1, "setting up vectorize flow %s", f.ID.Short())
-	recordingStats := false
-	if sp := opentracing.SpanFromContext(ctx); sp != nil && tracing.IsRecording(sp) {
-		recordingStats = true
-	}
+
+	recordingStats := true
+	/*
+		if sp := opentracing.SpanFromContext(ctx); sp != nil && tracing.IsRecording(sp) {
+			recordingStats = true
+		}
+	*/
 	helper := &vectorizedFlowCreatorHelper{f: f.FlowBase}
 
 	testingBatchSize := int64(0)
