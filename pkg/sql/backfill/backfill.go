@@ -378,7 +378,7 @@ type IndexBackfiller struct {
 
 	added []*descpb.IndexDescriptor
 	// colIdxMap maps ColumnIDs to indices into desc.Columns and desc.Mutations.
-	colIdxMap map[descpb.ColumnID]int
+	colIdxMap util.FastIntMap
 
 	types   []*types.T
 	rowVals tree.Datums
@@ -442,7 +442,11 @@ func (ib *IndexBackfiller) InitForLocalUse(
 	// Add the columns referenced in the predicate to valNeededForCol so that
 	// columns necessary to evaluate the predicate expression are fetched.
 	predicateRefColIDs.ForEach(func(col descpb.ColumnID) {
-		valNeededForCol.Add(ib.colIdxMap[col])
+		get, err := ib.colIdxMap.GetOrError(int(col))
+		if err != nil {
+			panic(err)
+		}
+		valNeededForCol.Add(get)
 	})
 
 	return ib.init(evalCtx, predicates, valNeededForCol, desc, mon)
@@ -498,7 +502,11 @@ func (ib *IndexBackfiller) InitForDistributedUse(
 	// Add the columns referenced in the predicate to valNeededForCol so that
 	// columns necessary to evaluate the predicate expression are fetched.
 	predicateRefColIDs.ForEach(func(col descpb.ColumnID) {
-		valNeededForCol.Add(ib.colIdxMap[col])
+		idx, err := ib.colIdxMap.GetOrError(int(col))
+		if err != nil {
+			panic(err)
+		}
+		valNeededForCol.Add(idx)
 	})
 
 	return ib.init(evalCtx, predicates, valNeededForCol, desc, mon)
@@ -539,9 +547,8 @@ func (ib *IndexBackfiller) initCols(desc *tabledesc.Immutable) {
 	}
 
 	// Create a map of each column's ID to its ordinal.
-	ib.colIdxMap = make(map[descpb.ColumnID]int, len(ib.cols))
 	for i := range ib.cols {
-		ib.colIdxMap[ib.cols[i].ID] = i
+		ib.colIdxMap.Set(int(ib.cols[i].ID), i)
 	}
 }
 

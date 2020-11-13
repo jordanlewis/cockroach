@@ -88,7 +88,7 @@ type tableInfo struct {
 	neededValueCols int
 
 	// Map used to get the index for columns in cols.
-	colIdxMap map[descpb.ColumnID]int
+	colIdxMap util.FastIntMap
 
 	// One value per column that is part of the key; each value is a column
 	// index (into cols); -1 if we don't need the value for that column.
@@ -151,7 +151,7 @@ type FetcherTableArgs struct {
 	Spans            roachpb.Spans
 	Desc             catalog.TableDescriptor
 	Index            *descpb.IndexDescriptor
-	ColIdxMap        map[descpb.ColumnID]int
+	ColIdxMap        util.FastIntMap
 	IsSecondaryIndex bool
 	Cols             []descpb.ColumnDescriptor
 	// The indexes (0 to # of columns - 1) of the columns to return.
@@ -376,13 +376,17 @@ func (rf *Fetcher) Init(
 
 		// Scan through the entire columns map to see which columns are
 		// required.
-		for col, idx := range table.colIdxMap {
+		for _, col := range table.cols {
+			idx, err := table.colIdxMap.GetOrError(int(col.ID))
+			if err != nil {
+				return err
+			}
 			if tableArgs.ValNeededForCol.Contains(idx) {
 				// The idx-th column is required.
-				table.neededCols.Add(int(col))
+				table.neededCols.Add(int(col.ID))
 
 				// Set up any system column metadata, if this column is a system column.
-				switch colinfo.GetSystemColumnKindFromColumnID(col) {
+				switch colinfo.GetSystemColumnKindFromColumnID(col.ID) {
 				case descpb.SystemColumnKind_MVCCTIMESTAMP:
 					table.timestampOutputIdx = idx
 					rf.mvccDecodeStrategy = MVCCDecodingRequired
@@ -409,7 +413,7 @@ func (rf *Fetcher) Init(
 			table.indexColIdx = make([]int, nIndexCols)
 		}
 		for i, id := range indexColumnIDs {
-			colIdx, ok := table.colIdxMap[id]
+			colIdx, ok := table.colIdxMap.Get(int(id))
 			if ok {
 				table.indexColIdx[i] = colIdx
 				if table.neededCols.Contains(int(id)) {
@@ -1042,7 +1046,11 @@ func (rf *Fetcher) processKV(
 				}
 				for i, id := range table.index.ExtraColumnIDs {
 					if table.neededCols.Contains(int(id)) {
-						table.row[table.colIdxMap[id]] = table.extraVals[i]
+						idx, ok := table.colIdxMap.Get(int(id))
+						if !ok {
+							return "", "", errors.AssertionFailedf("missing needed col %s from map %s", id, table.colIdxMap)
+						}
+						table.row[idx] = table.extraVals[i]
 					}
 				}
 				if rf.traceKV {
@@ -1105,7 +1113,7 @@ func (rf *Fetcher) processValueSingle(
 	}
 
 	if rf.traceKV || table.neededCols.Contains(int(colID)) {
-		if idx, ok := table.colIdxMap[colID]; ok {
+		if idx, ok := table.colIdxMap.Get(int(colID)); ok {
 			if rf.traceKV {
 				prettyKey = fmt.Sprintf("%s/%s", prettyKey, table.desc.DeletableColumns()[idx].Name)
 			}
@@ -1179,7 +1187,10 @@ func (rf *Fetcher) processValueBytes(
 			}
 			continue
 		}
-		idx := table.colIdxMap[colID]
+		idx, ok := table.colIdxMap.Get(int(colID))
+		if !ok {
+			return "", "", errors.AssertionFailedf("programming error: missing col %d from map %s", table.colIdxMap)
+		}
 
 		if rf.traceKV {
 			prettyKey = fmt.Sprintf("%s/%s", prettyKey, table.desc.DeletableColumns()[idx].Name)
@@ -1390,7 +1401,11 @@ func (rf *Fetcher) checkPrimaryIndexDatumEncodings(ctx context.Context) error {
 		}
 
 		for _, colID := range familySortedColumnIDs {
-			rowVal := table.row[table.colIdxMap[colID]]
+			idx, err := table.colIdxMap.GetOrError(int(colID))
+			if err != nil {
+				return err
+			}
+			rowVal := table.row[idx]
 			if rowVal.IsNull() {
 				// Column is not present.
 				continue
@@ -1480,7 +1495,10 @@ func (rf *Fetcher) checkKeyOrdering(ctx context.Context) error {
 	// is found, compare the values to ensure the ordering matches the column
 	// ordering.
 	for i, id := range rf.rowReadyTable.index.ColumnIDs {
-		idx := rf.rowReadyTable.colIdxMap[id]
+		idx, err := rf.rowReadyTable.colIdxMap.GetOrError(int(id))
+		if err != nil {
+			return err
+		}
 		result := rf.rowReadyTable.decodedRow[idx].Compare(&evalCtx, rf.rowReadyTable.lastDatums[idx])
 		expectedDirection := rf.rowReadyTable.index.ColumnDirections[i]
 		if rf.reverse && expectedDirection == descpb.IndexDescriptor_ASC {

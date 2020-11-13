@@ -16,6 +16,7 @@ import (
 	"math/bits"
 	"sort"
 
+	"github.com/cockroachdb/errors"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -80,6 +81,16 @@ func (m FastIntMap) Get(key int) (value int, ok bool) {
 	}
 	value, ok = m.large[key]
 	return value, ok
+}
+
+// GetOrError is like Get, but it returns an error instead of false if the key
+// is missing.
+func (m FastIntMap) GetOrError(key int) (value int, err error) {
+	value, ok := m.Get(key)
+	if !ok {
+		return 0, errors.Newf("no such key %s in map %s", key, m)
+	}
+	return value, nil
 }
 
 // Len returns the number of keys in the map.

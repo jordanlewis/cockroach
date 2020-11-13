@@ -128,7 +128,10 @@ func GenerateInsertRow(
 			// columns, all the columns which could possibly be referenced *are*
 			// available.
 			col := computedColsLookup[i]
-			computeIdx := rowContainerForComputedVals.Mapping[col.ID]
+			computeIdx, err := rowContainerForComputedVals.Mapping.GetOrError(int(col.ID))
+			if err != nil {
+				return nil, err
+			}
 			if !col.IsComputed() {
 				continue
 			}
@@ -161,7 +164,7 @@ func GenerateInsertRow(
 	// Check to see if NULL is being inserted into any non-nullable column.
 	for _, col := range tableDesc.WritableColumns() {
 		if !col.Nullable {
-			if i, ok := rowContainerForComputedVals.Mapping[col.ID]; !ok || rowVals[i] == tree.DNull {
+			if i, ok := rowContainerForComputedVals.Mapping.Get(int(col.ID)); !ok || rowVals[i] == tree.DNull {
 				return nil, sqlerrors.NewNonNullViolationError(col.Name)
 			}
 		}
@@ -372,7 +375,11 @@ func NewDatumRowConverter(
 	for _, col := range c.tableDesc.Columns {
 		// We prefer to have the order of columns that will be sent into
 		// MakeComputedExprs to map that of Datums.
-		colsOrdered[ri.InsertColIDtoRowIndex[col.ID]] = col
+		idx, err := ri.InsertColIDtoRowIndex.GetOrError(int(col.ID))
+		if err != nil {
+			return nil, err
+		}
+		colsOrdered[idx] = col
 	}
 	// Here, computeExprs will be nil if there's no computed column, or
 	// the list of computed expressions (including nil, for those columns

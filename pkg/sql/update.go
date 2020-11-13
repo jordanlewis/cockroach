@@ -255,7 +255,12 @@ func (u *updateNode) processSourceRow(params runParams, sourceVals tree.Datums) 
 		copy(u.run.iVarContainerForComputedCols.CurSourceRow, oldValues)
 		for i := range u.run.tu.ru.UpdateCols {
 			id := u.run.tu.ru.UpdateCols[i].ID
-			u.run.iVarContainerForComputedCols.CurSourceRow[u.run.tu.ru.FetchColIDtoRowIndex[id]] = u.run.updateValues[i]
+			idx, err := u.run.tu.ru.FetchColIDtoRowIndex.GetOrError(int(id))
+			if err != nil {
+				return err
+			}
+			u.run.iVarContainerForComputedCols.CurSourceRow[idx] = u.run.
+				updateValues[i]
 		}
 
 		// Now (re-)compute the computed columns.

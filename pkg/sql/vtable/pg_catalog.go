@@ -327,6 +327,7 @@ CREATE TABLE pg_catalog.pg_enum (
 // https://www.postgresql.org/docs/9.6/catalog-pg-event-trigger.html,
 const PGCatalogEventTrigger = `
 CREATE TABLE pg_catalog.pg_event_trigger (
+  oid OID,
 	evtname NAME,
 	evtevent NAME,
 	evtowner OID,

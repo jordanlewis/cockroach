@@ -351,13 +351,19 @@ func (rf *cFetcher) Init(
 
 	tableArgs := tables[0]
 	table := newCTableInfo()
-	if cap(table.colIdxMap.vals) < len(tableArgs.ColIdxMap) {
-		table.colIdxMap.vals = make(descpb.ColumnIDs, 0, len(tableArgs.ColIdxMap))
-		table.colIdxMap.ords = make([]int, 0, len(tableArgs.ColIdxMap))
+	nCols := tableArgs.ColIdxMap.Len()
+	if cap(table.colIdxMap.vals) < nCols {
+		table.colIdxMap.vals = make(descpb.ColumnIDs, 0, nCols)
+		table.colIdxMap.ords = make([]int, 0, nCols)
 	}
-	for k, v := range tableArgs.ColIdxMap {
-		table.colIdxMap.vals = append(table.colIdxMap.vals, k)
-		table.colIdxMap.ords = append(table.colIdxMap.ords, v)
+	for i := range tableArgs.Cols {
+		id := tableArgs.Cols[i].ID
+		table.colIdxMap.vals = append(table.colIdxMap.vals, id)
+		idx, err := tableArgs.ColIdxMap.GetOrError(int(id))
+		if err != nil {
+			return err
+		}
+		table.colIdxMap.ords = append(table.colIdxMap.ords, idx)
 	}
 	sort.Sort(table.colIdxMap)
 	colDescriptors := tableArgs.Cols
@@ -394,7 +400,12 @@ func (rf *cFetcher) Init(
 	if numNeededCols := tableArgs.ValNeededForCol.Len(); cap(table.neededColsList) < numNeededCols {
 		table.neededColsList = make([]int, 0, numNeededCols)
 	}
-	for col, idx := range tableArgs.ColIdxMap {
+	for i := range tableArgs.Cols {
+		col := tableArgs.Cols[i].ID
+		idx, err := tableArgs.ColIdxMap.GetOrError(int(col))
+		if err != nil {
+			return err
+		}
 		if tableArgs.ValNeededForCol.Contains(idx) {
 			// The idx-th column is required.
 			neededCols.Add(int(col))
@@ -448,7 +459,7 @@ func (rf *cFetcher) Init(
 		table.allIndexColOrdinals = make([]int, nIndexCols)
 	}
 	for i, id := range indexColumnIDs {
-		colIdx, ok := tableArgs.ColIdxMap[id]
+		colIdx, ok := tableArgs.ColIdxMap.Get(int(id))
 		table.allIndexColOrdinals[i] = colIdx
 		if ok && neededCols.Contains(int(id)) {
 			table.indexColOrdinals[i] = colIdx
@@ -472,7 +483,7 @@ func (rf *cFetcher) Init(
 	// what extra columns are composite or not.
 	if table.isSecondaryIndex && table.index.Unique {
 		for _, id := range table.index.ExtraColumnIDs {
-			colIdx, ok := tableArgs.ColIdxMap[id]
+			colIdx, ok := tableArgs.ColIdxMap.Get(int(id))
 			if ok && neededCols.Contains(int(id)) {
 				if compositeColumnIDs.Contains(int(id)) {
 					table.compositeIndexColOrdinals.Add(colIdx)
@@ -526,9 +537,13 @@ func (rf *cFetcher) Init(
 		}
 
 		for i, id := range table.index.ExtraColumnIDs {
-			table.allExtraValColOrdinals[i] = tableArgs.ColIdxMap[id]
+			idx, err := tableArgs.ColIdxMap.GetOrError(int(id))
+			if err != nil {
+				return err
+			}
+			table.allExtraValColOrdinals[i] = idx
 			if neededCols.Contains(int(id)) {
-				table.extraValColOrdinals[i] = tableArgs.ColIdxMap[id]
+				table.extraValColOrdinals[i] = idx
 			} else {
 				table.extraValColOrdinals[i] = -1
 			}
