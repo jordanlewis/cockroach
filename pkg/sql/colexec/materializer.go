@@ -203,10 +203,7 @@ func NewMaterializer(
 		execinfra.ProcStateOpts{
 			// We append drainHelper to inputs to drain below in order to reuse
 			// the same underlying slice from the pooled materializer.
-			TrailingMetaCallback: func(ctx context.Context) []execinfrapb.ProducerMetadata {
-				m.close()
-				return nil
-			},
+			TrailingMetaCallback: m.trailingMetaCallback,
 		},
 	); err != nil {
 		return nil, err
@@ -224,6 +221,11 @@ var _ execinfra.Releasable = &Materializer{}
 // ChildCount is part of the exec.OpNode interface.
 func (m *Materializer) ChildCount(verbose bool) int {
 	return 1
+}
+
+func (m *Materializer) trailingMetaCallback(_ context.Context) []execinfrapb.ProducerMetadata {
+	m.close()
+	return nil
 }
 
 // Child is part of the exec.OpNode interface.

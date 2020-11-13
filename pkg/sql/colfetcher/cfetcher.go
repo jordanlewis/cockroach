@@ -71,7 +71,9 @@ type cTableInfo struct {
 	neededValueColsByIdx util.FastIntSet
 
 	// Map used to get the index for columns in cols.
-	colIdxMap colIdxMap
+	// It's kept as a pointer so we don't have to re-allocate to sort it each
+	// time.
+	colIdxMap *colIdxMap
 
 	// One value per column that is part of the key; each value is a column
 	// index (into cols); -1 if we don't need the value for that column.
@@ -122,7 +124,9 @@ var _ execinfra.Releasable = &cTableInfo{}
 
 var cTableInfoPool = sync.Pool{
 	New: func() interface{} {
-		return &cTableInfo{}
+		return &cTableInfo{
+			colIdxMap: &colIdxMap{},
+		}
 	},
 }
 
@@ -132,11 +136,13 @@ func newCTableInfo() *cTableInfo {
 
 // Release implements the execinfra.Releasable interface.
 func (c *cTableInfo) Release() {
+	c.colIdxMap.ords = c.colIdxMap.ords[:0]
+	c.colIdxMap.vals = c.colIdxMap.vals[:0]
 	*c = cTableInfo{
-		colIdxMap: colIdxMap{
-			vals: c.colIdxMap.vals[:0],
-			ords: c.colIdxMap.ords[:0],
-		},
+		colIdxMap:              c.colIdxMap,
+		keyValTypes:            c.keyValTypes[:0],
+		extraTypes:             c.extraTypes[:0],
+		neededColsList:         c.neededColsList[:0],
 		indexColOrdinals:       c.indexColOrdinals[:0],
 		allIndexColOrdinals:    c.allIndexColOrdinals[:0],
 		extraValColOrdinals:    c.extraValColOrdinals[:0],
@@ -371,7 +377,11 @@ func (rf *cFetcher) Init(
 		oidOutputIdx:           noOutputColumn,
 	}
 
-	rf.typs = make([]*types.T, len(colDescriptors))
+	if cap(rf.typs) < len(colDescriptors) {
+		rf.typs = make([]*types.T, len(colDescriptors))
+	} else {
+		rf.typs = rf.typs[:len(colDescriptors)]
+	}
 	for i := range rf.typs {
 		rf.typs[i] = colDescriptors[i].Type
 	}
@@ -491,7 +501,7 @@ func (rf *cFetcher) Init(
 	}
 
 	// Prepare our index key vals slice.
-	table.keyValTypes, err = colinfo.GetColumnTypes(table.desc, indexColumnIDs)
+	table.keyValTypes, err = colinfo.GetColumnTypes(table.desc, indexColumnIDs, table.keyValTypes)
 	if err != nil {
 		return err
 	}
@@ -501,7 +511,7 @@ func (rf *cFetcher) Init(
 		// Primary indexes only contain ascendingly-encoded
 		// values. If this ever changes, we'll probably have to
 		// figure out the directions here too.
-		table.extraTypes, err = colinfo.GetColumnTypes(table.desc, table.index.ExtraColumnIDs)
+		table.extraTypes, err = colinfo.GetColumnTypes(table.desc, table.index.ExtraColumnIDs, table.extraTypes)
 		nExtraColumns := len(table.index.ExtraColumnIDs)
 		if cap(table.extraValColOrdinals) >= nExtraColumns {
 			table.extraValColOrdinals = table.extraValColOrdinals[:nExtraColumns]
@@ -538,19 +548,22 @@ func (rf *cFetcher) Init(
 		rf.maxKeysPerRow = keysPerRow
 	}
 
-	_ = table.desc.ForeachFamily(func(family *descpb.ColumnFamilyDescriptor) error {
-		id := family.ID
-		if id > table.maxColumnFamilyID {
-			table.maxColumnFamilyID = id
-		}
-		return nil
-	})
+	_ = table.desc.ForeachFamily(table.maybeSetMaxColumnFamilyID)
 
 	rf.table = table
 	// Change the allocation size to be the same as the capacity of the batch
 	// we allocated above.
 	rf.table.da.AllocSize = coldata.BatchSize()
 
+	return nil
+}
+
+// This method is extracted to save on closure allocations.
+func (c *cTableInfo) maybeSetMaxColumnFamilyID(family *descpb.ColumnFamilyDescriptor) error {
+	id := family.ID
+	if id > c.maxColumnFamilyID {
+		c.maxColumnFamilyID = id
+	}
 	return nil
 }
 
@@ -1422,4 +1435,18 @@ func (rf *cFetcher) KeyToDesc(key roachpb.Key) (catalog.TableDescriptor, bool) {
 		return nil, false
 	}
 	return rf.table.desc, true
+}
+
+var cFetcherPool = sync.Pool{
+	New: func() interface{} {
+		return &cFetcher{}
+	},
+}
+
+func (rf *cFetcher) Release() {
+	rf.table.Release()
+	*rf = cFetcher{
+		typs: rf.typs[:0],
+	}
+	cFetcherPool.Put(rf)
 }
