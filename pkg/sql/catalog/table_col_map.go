@@ -27,18 +27,18 @@ func (s *TableColMap) Set(col descpb.ColumnID, val int) { s.m.Set(int(col), val)
 
 // Get returns the current value mapped to key, or ok=false if the
 // key is unmapped.
-func (s *TableColMap) Get(col descpb.ColumnID) (val int, ok bool) { return s.m.Get(int(col)) }
+func (s TableColMap) Get(col descpb.ColumnID) (val int, ok bool) { return s.m.Get(int(col)) }
 
 // GetDefault returns the current value mapped to key, or 0 if the key is
 // unmapped.
-func (s *TableColMap) GetDefault(col descpb.ColumnID) (val int) { return s.m.GetDefault(int(col)) }
+func (s TableColMap) GetDefault(col descpb.ColumnID) (val int) { return s.m.GetDefault(int(col)) }
 
 // Len returns the number of keys in the map.
-func (s *TableColMap) Len() (val int) { return s.m.Len() }
+func (s TableColMap) Len() (val int) { return s.m.Len() }
 
 // ForEach calls the given function for each key/value pair in the map (in
 // arbitrary order).
-func (s *TableColMap) ForEach(f func(colID descpb.ColumnID, returnIndex int)) {
+func (s TableColMap) ForEach(f func(colID descpb.ColumnID, returnIndex int)) {
 	s.m.ForEach(func(k, v int) {
 		f(descpb.ColumnID(k), v)
 	})
@@ -47,6 +47,6 @@ func (s *TableColMap) ForEach(f func(colID descpb.ColumnID, returnIndex int)) {
 // String prints out the contents of the map in the following format:
 //   map[key1:val1 key2:val2 ...]
 // The keys are in ascending order.
-func (s *TableColMap) String() string {
+func (s TableColMap) String() string {
 	return s.m.String()
 }
