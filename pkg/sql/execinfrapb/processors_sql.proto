@@ -97,6 +97,10 @@ message TableReaderSpec {
   // limit hint.
   optional bool parallelize = 12 [(gogoproto.nullable) = false];
 
+  // estimated_row_count contains the number of rows that the optimizer expects
+  // will be emitted from this processor, or 0 if the estimate wasn't populated.
+  optional uint64 estimated_row_count = 17 [(gogoproto.nullable) = false];
+
   // If non-zero, this enables inconsistent historical scanning where different
   // batches can be read with different timestamps. This is used for
   // long-running table statistics which may outlive the TTL. Using this setting

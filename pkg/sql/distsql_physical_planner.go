@@ -1324,8 +1324,8 @@ func (dsp *DistSQLPlanner) planTableReaders(
 		tr.Parallelize = info.parallelize
 		p.TotalEstimatedScannedRows += info.estimatedRowCount
 
+		tr.EstimatedRowCount = info.estimatedRowCount
 		corePlacement[i].NodeID = sp.Node
-		corePlacement[i].EstimatedRowCount = info.estimatedRowCount
 		corePlacement[i].Core.TableReader = tr
 	}
 

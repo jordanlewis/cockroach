@@ -225,9 +225,6 @@ func (p *PhysicalPlan) SetMergeOrdering(o execinfrapb.Ordering) {
 type ProcessorCorePlacement struct {
 	NodeID roachpb.NodeID
 	Core   execinfrapb.ProcessorCoreUnion
-	// EstimatedRowCount, if set to non-zero, is the optimizer's guess of how
-	// many rows will be emitted from this processor.
-	EstimatedRowCount uint64
 }
 
 // AddNoInputStage creates a stage of processors that don't have any input from
@@ -251,9 +248,8 @@ func (p *PhysicalPlan) AddNoInputStage(
 				Output: []execinfrapb.OutputRouterSpec{{
 					Type: execinfrapb.OutputRouterSpec_PASS_THROUGH,
 				}},
-				StageID:           stageID,
-				ResultTypes:       outputTypes,
-				EstimatedRowCount: corePlacements[i].EstimatedRowCount,
+				StageID:     stageID,
+				ResultTypes: outputTypes,
 			},
 		}
 
