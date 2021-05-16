@@ -1004,7 +1004,7 @@ SETTINGS_DOC_PAGES := docs/generated/settings/settings.html docs/generated/setti
 # normal and race test builds.
 .PHONY: go-install
 $(COCKROACH) $(COCKROACHOSS) $(COCKROACHSHORT) go-install:
-	 $(xgo) $(build-mode) -v $(GOFLAGS) $(GOMODVENDORFLAGS) -tags '$(TAGS)' -ldflags '$(LINKFLAGS)' $(BUILDTARGET)
+	 $(xgo) $(build-mode) -v -gcflags=all='-N -l' $(GOFLAGS) $(GOMODVENDORFLAGS) -tags '$(TAGS)' -ldflags '$(LINKFLAGS)' $(BUILDTARGET)
 
 # The build targets, in addition to producing a Cockroach binary, silently
 # regenerate SQL diagram BNFs and some other doc pages. Generating these docs

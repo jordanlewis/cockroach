@@ -13,6 +13,7 @@ package row
 import (
 	"bytes"
 	"context"
+	"os"
 
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency/lock"
@@ -105,6 +106,14 @@ type txnKVFetcher struct {
 	// For request and response admission control.
 	requestAdmissionHeader roachpb.AdmissionHeader
 	responseAdmissionQ     *admission.WorkQueue
+}
+
+var copyBatchMemory bool
+
+func init() {
+	if os.Getenv("COCKROACH_COPY_BATCH_MEMORY") == "true" {
+		copyBatchMemory = true
+	}
 }
 
 var _ kvBatchFetcher = &txnKVFetcher{}
@@ -460,6 +469,21 @@ func (f *txnKVFetcher) fetch(ctx context.Context) error {
 	} else {
 		f.responses = nil
 	}
+	if copyBatchMemory {
+		for i := range f.responses {
+			reply := f.responses[i].GetInner()
+			switch t := reply.(type) {
+			case *roachpb.ScanResponse:
+				for j := range t.BatchResponses {
+					t.BatchResponses[j] = append([]byte{}, t.BatchResponses[j]...)
+				}
+			case *roachpb.ReverseScanResponse:
+				for j := range t.BatchResponses {
+					t.BatchResponses[j] = append([]byte{}, t.BatchResponses[j]...)
+				}
+			}
+		}
+	}
 	returnedBytes := int64(br.Size())
 	if monitoring && (returnedBytes > maxScanResponseBytes || returnedBytes > f.acc.Used()) {
 		// Resize up to the actual amount of bytes we got back from the fetch,
@@ -524,7 +548,7 @@ func (f *txnKVFetcher) nextBatch(
 	ctx context.Context,
 ) (ok bool, kvs []roachpb.KeyValue, batchResponse []byte, origSpan roachpb.Span, err error) {
 	if len(f.remainingBatches) > 0 {
-		batch := append([]byte{}, f.remainingBatches[0]...)
+		batch := f.remainingBatches[0]
 		f.remainingBatches[0] = nil
 		f.remainingBatches = f.remainingBatches[1:]
 		return true, nil, batch, f.origSpan, nil
@@ -540,16 +564,18 @@ func (f *txnKVFetcher) nextBatch(
 		switch t := reply.(type) {
 		case *roachpb.ScanResponse:
 			if len(t.BatchResponses) > 0 {
-				batchResp = append([]byte{}, t.BatchResponses[0]...)
+				batchResp = t.BatchResponses[0]
 				t.BatchResponses[0] = nil
 				f.remainingBatches = t.BatchResponses[1:]
+				t.BatchResponses = nil
 			}
 			return true, t.Rows, batchResp, origSpan, nil
 		case *roachpb.ReverseScanResponse:
 			if len(t.BatchResponses) > 0 {
-				batchResp = append([]byte{}, t.BatchResponses[0]...)
+				batchResp = t.BatchResponses[0]
 				t.BatchResponses[0] = nil
 				f.remainingBatches = t.BatchResponses[1:]
+				t.BatchResponses = nil
 			}
 			return true, t.Rows, batchResp, origSpan, nil
 		case *roachpb.GetResponse:
