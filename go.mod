@@ -23,6 +23,7 @@ require (
 	github.com/andybalholm/cascadia v1.2.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20200610220642-670890229854
 	github.com/apache/thrift v0.0.0-20181211084444-2b7365c54f82 // indirect
+	github.com/arl/statsviz v0.4.0
 	github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e
 	github.com/aws/aws-sdk-go v1.36.33
 	github.com/axiomhq/hyperloglog v0.0.0-20181223111420-4b99d0c2c99e

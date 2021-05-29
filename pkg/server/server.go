@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arl/statsviz"
 	"github.com/cockroachdb/cmux"
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/blobs"
@@ -134,6 +135,7 @@ type Server struct {
 	cfg             Config
 	st              *cluster.Settings
 	mux             http.ServeMux
+	funMux          http.ServeMux
 	clock           *hlc.Clock
 	rpcContext      *rpc.Context
 	engines         Engines
@@ -1115,6 +1117,9 @@ func (s *Server) startPersistingHLCUpperBound(
 			)
 		},
 	)
+	go func() {
+		http.ListenAndServe("localhost:9090", &s.funMux)
+	}()
 	return nil
 }
 
@@ -1785,6 +1790,8 @@ func (s *Server) PreStart(ctx context.Context) error {
 	if s.cfg.RequireWebSession() {
 		authHandler = newAuthenticationMux(s.authentication, authHandler)
 	}
+
+	statsviz.Register(&s.funMux)
 
 	s.mux.Handle(adminPrefix, authHandler)
 	// Exempt the health check endpoint from authentication.
