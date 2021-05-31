@@ -73,6 +73,9 @@ type joinReader struct {
 
 	diskMonitor *mon.BytesMonitor
 
+	// acc is used to account for buffered input rows and lookup spans.
+	acc mon.BoundAccount
+
 	desc             catalog.TableDescriptor
 	index            catalog.Index
 	colIdxMap        catalog.TableColMap
@@ -384,10 +387,14 @@ func (jr *joinReader) initJoinReaderStrategy(
 		}
 		generator = multiSpanGen
 	}
+	ctx := flowCtx.EvalCtx.Ctx()
+	jr.MemMonitor = execinfra.NewLimitedMonitor(ctx, flowCtx.EvalCtx.Mon, flowCtx, "joinreader-limited")
+	jr.acc = jr.MemMonitor.MakeBoundAccount()
 
 	if readerType == indexJoinReaderType {
 		jr.strategy = &joinReaderIndexJoinStrategy{
 			joinerBase:              &jr.joinerBase,
+			acc:                     &jr.acc,
 			joinReaderSpanGenerator: generator,
 		}
 		return nil
@@ -396,6 +403,7 @@ func (jr *joinReader) initJoinReaderStrategy(
 	if !jr.maintainOrdering {
 		jr.strategy = &joinReaderNoOrderingStrategy{
 			joinerBase:              &jr.joinerBase,
+			acc:                     &jr.acc,
 			joinReaderSpanGenerator: generator,
 			isPartialJoin:           jr.joinType == descpb.LeftSemiJoin || jr.joinType == descpb.LeftAntiJoin,
 			groupingState:           jr.groupingState,
@@ -403,12 +411,10 @@ func (jr *joinReader) initJoinReaderStrategy(
 		return nil
 	}
 
-	ctx := flowCtx.EvalCtx.Ctx()
 	// Limit the memory use by creating a child monitor with a hard limit.
 	// joinReader will overflow to disk if this limit is not enough.
 	limit := execinfra.GetWorkMemLimit(flowCtx)
 	// Initialize memory monitors and row container for looked up rows.
-	jr.MemMonitor = execinfra.NewLimitedMonitor(ctx, flowCtx.EvalCtx.Mon, flowCtx, "joinreader-limited")
 	jr.diskMonitor = execinfra.NewMonitor(ctx, flowCtx.DiskMonitor, "joinreader-disk")
 	drc := rowcontainer.NewDiskBackedNumberedRowContainer(
 		false, /* deDup */
@@ -425,6 +431,7 @@ func (jr *joinReader) initJoinReaderStrategy(
 	}
 	jr.strategy = &joinReaderOrderingStrategy{
 		joinerBase:                        &jr.joinerBase,
+		acc:                               &jr.acc,
 		joinReaderSpanGenerator:           generator,
 		isPartialJoin:                     jr.joinType == descpb.LeftSemiJoin || jr.joinType == descpb.LeftAntiJoin,
 		lookedUpRows:                      drc,
@@ -543,6 +550,7 @@ func (jr *joinReader) readInput() (
 	rowenc.EncDatumRow,
 	*execinfrapb.ProducerMetadata,
 ) {
+	jr.acc.Clear(jr.Ctx)
 	if jr.groupingState != nil {
 		// Lookup join.
 		if jr.groupingState.initialized {
@@ -555,7 +563,8 @@ func (jr *joinReader) readInput() (
 		// did the reset for this batch.
 	}
 	// Read the next batch of input rows.
-	for jr.curBatchSizeBytes < jr.batchSizeBytes {
+	var outOfMemory bool
+	for jr.curBatchSizeBytes < jr.batchSizeBytes && !outOfMemory {
 		row, meta := jr.input.Next()
 		if meta != nil {
 			if meta.Err != nil {
@@ -567,7 +576,12 @@ func (jr *joinReader) readInput() (
 		if row == nil {
 			break
 		}
-		jr.curBatchSizeBytes += int64(row.Size())
+		rowSize := int64(row.Size())
+		jr.curBatchSizeBytes += rowSize
+		if err := jr.acc.Grow(jr.Ctx, rowSize); err != nil {
+			// If we have no more budget, we'll stop accumulating rows early.
+			outOfMemory = true
+		}
 		if jr.groupingState != nil {
 			// Lookup Join.
 			if err := jr.processContinuationValForRow(row); err != nil {
@@ -604,7 +618,7 @@ func (jr *joinReader) readInput() (
 		jr.MoveToDraining(err)
 		return jrStateUnknown, nil, jr.DrainHelper()
 	}
-	jr.scratchInputRows = jr.scratchInputRows[:0]
+	jr.scratchInputRows = nil
 	jr.curBatchSizeBytes = 0
 	if len(spans) == 0 {
 		// All of the input rows were filtered out. Skip the index lookup.
@@ -715,6 +729,7 @@ func (jr *joinReader) close() {
 			jr.fetcher.Close(jr.Ctx)
 		}
 		jr.strategy.close(jr.Ctx)
+		jr.acc.Close(jr.Ctx)
 		if jr.MemMonitor != nil {
 			jr.MemMonitor.Stop(jr.Ctx)
 		}

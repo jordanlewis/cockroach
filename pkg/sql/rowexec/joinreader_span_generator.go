@@ -27,6 +27,8 @@ import (
 // looking up into the index.
 type joinReaderSpanGenerator interface {
 	// generateSpans generates spans for the given batch of input rows.
+	// the rows may be held onto, but the spans are safe to mutate after they're
+	// returned.
 	generateSpans(rows []rowenc.EncDatumRow) (roachpb.Spans, error)
 
 	// getMatchingRowIndices returns the indices of the input rows that desire

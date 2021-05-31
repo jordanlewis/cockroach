@@ -439,6 +439,9 @@ func (f *txnKVFetcher) fetch(ctx context.Context) error {
 	}
 
 	// Reset spans in preparation for adding resume-spans below.
+	for i := range f.spans {
+		f.spans[i] = roachpb.Span{}
+	}
 	f.spans = f.spans[:0]
 
 	br, err := f.sendFn(ctx, ba)
@@ -578,6 +581,8 @@ func (f *txnKVFetcher) nextBatch(
 
 // close releases the resources of this txnKVFetcher.
 func (f *txnKVFetcher) close(ctx context.Context) {
+	f.spans = nil
+	f.requestSpans = nil
 	f.responses = nil
 	f.remainingBatches = nil
 	f.acc.Close(ctx)

@@ -12,6 +12,7 @@ package rowexec
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
@@ -19,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/rowenc"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/mon"
 )
 
 type joinReaderStrategy interface {
@@ -59,6 +61,8 @@ type joinReaderNoOrderingStrategy struct {
 	joinReaderSpanGenerator
 	isPartialJoin bool
 	inputRows     []rowenc.EncDatumRow
+
+	acc *mon.BoundAccount
 
 	scratchMatchingInputRowIndices []int
 
@@ -213,14 +217,16 @@ func (s *joinReaderNoOrderingStrategy) nextRowToEmit(
 
 func (s *joinReaderNoOrderingStrategy) spilled() bool { return false }
 
-func (s *joinReaderNoOrderingStrategy) close(_ context.Context) {}
+func (s *joinReaderNoOrderingStrategy) close(_ context.Context) {
+	*s = joinReaderNoOrderingStrategy{}
+}
 
 // joinReaderIndexJoinStrategy is a joinReaderStrategy that executes an index
 // join. It does not maintain the ordering.
 type joinReaderIndexJoinStrategy struct {
 	*joinerBase
 	joinReaderSpanGenerator
-	inputRows []rowenc.EncDatumRow
+	acc *mon.BoundAccount
 
 	emitState struct {
 		// processingLookupRow is an explicit boolean that specifies whether the
@@ -250,8 +256,13 @@ func (s *joinReaderIndexJoinStrategy) getMaxLookupKeyCols() int {
 func (s *joinReaderIndexJoinStrategy) processLookupRows(
 	rows []rowenc.EncDatumRow,
 ) (roachpb.Spans, error) {
-	s.inputRows = rows
-	return s.generateSpans(s.inputRows)
+	sp, err := s.generateSpans(rows)
+	// We can throw away our row memory now.
+	rows = nil
+	if err != nil {
+		return sp, err
+	}
+	return sp, err
 }
 
 func (s *joinReaderIndexJoinStrategy) processLookedUpRow(
@@ -271,7 +282,9 @@ func (s *joinReaderIndexJoinStrategy) nextRowToEmit(
 		return nil, jrReadingInput, nil
 	}
 	s.emitState.processingLookupRow = false
-	return s.emitState.lookedUpRow, jrPerformingLookup, nil
+	r := s.emitState.lookedUpRow
+	s.emitState.lookedUpRow = nil
+	return r, jrPerformingLookup, nil
 }
 
 func (s *joinReaderIndexJoinStrategy) spilled() bool {
@@ -291,6 +304,7 @@ type joinReaderOrderingStrategy struct {
 	*joinerBase
 	joinReaderSpanGenerator
 	isPartialJoin bool
+	acc           *mon.BoundAccount
 
 	inputRows []rowenc.EncDatumRow
 
@@ -351,6 +365,9 @@ func (s *joinReaderOrderingStrategy) processLookupRows(
 		}
 	} else {
 		s.inputRowIdxToLookedUpRowIndices = make([][]int, len(rows))
+	}
+	if err := s.acc.Grow(s.Ctx, int64(len(rows)*int(unsafe.Sizeof([]int{})))); err != nil {
+		return nil, err
 	}
 
 	s.inputRows = rows
@@ -498,4 +515,5 @@ func (s *joinReaderOrderingStrategy) close(ctx context.Context) {
 	if s.lookedUpRows != nil {
 		s.lookedUpRows.Close(ctx)
 	}
+	*s = joinReaderOrderingStrategy{}
 }
