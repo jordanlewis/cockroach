@@ -28,7 +28,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/geo/geopb"
 	"github.com/cockroachdb/cockroach/pkg/util/bitarray"
 	"github.com/cockroachdb/cockroach/pkg/util/duration"
-	"github.com/cockroachdb/cockroach/pkg/util/encoding/encodingtype"
 	"github.com/cockroachdb/cockroach/pkg/util/ipaddr"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeofday"
@@ -223,8 +222,10 @@ func DecodeUint64Ascending(b []byte) ([]byte, uint64, error) {
 	if len(b) < 8 {
 		return nil, 0, errors.Errorf("insufficient bytes to decode uint64 int value")
 	}
-	v := binary.BigEndian.Uint64(b)
-	return b[8:], v, nil
+	// Inline the call to binary.BigEndian.Uint64(b) to skip double bounds check.
+	_ = b[7] // bounds check hint to compiler; see golang.org/issue/14808
+	return b[8:], uint64(b[7]) | uint64(b[6])<<8 | uint64(b[5])<<16 | uint64(b[4])<<24 |
+		uint64(b[3])<<32 | uint64(b[2])<<40 | uint64(b[1])<<48 | uint64(b[0])<<56, nil
 }
 
 // DecodeUint64Descending decodes a uint64 value which was encoded
@@ -1559,121 +1560,6 @@ func DecodeBitArrayDescending(b []byte) ([]byte, bitarray.BitArray, error) {
 	return b, ba, err
 }
 
-// Type represents the type of a value encoded by
-// Encode{Null,NotNull,Varint,Uvarint,Float,Bytes}.
-//go:generate stringer -type=Type
-type Type encodingtype.T
-
-// Type values.
-// TODO(dan, arjun): Make this into a proto enum.
-// The 'Type' annotations are necessary for producing stringer-generated values.
-const (
-	Unknown   Type = 0
-	Null      Type = 1
-	NotNull   Type = 2
-	Int       Type = 3
-	Float     Type = 4
-	Decimal   Type = 5
-	Bytes     Type = 6
-	BytesDesc Type = 7 // Bytes encoded descendingly
-	Time      Type = 8
-	Duration  Type = 9
-	True      Type = 10
-	False     Type = 11
-	UUID      Type = 12
-	Array     Type = 13
-	IPAddr    Type = 14
-	// SentinelType is used for bit manipulation to check if the encoded type
-	// value requires more than 4 bits, and thus will be encoded in two bytes. It
-	// is not used as a type value, and thus intentionally overlaps with the
-	// subsequent type value. The 'Type' annotation is intentionally omitted here.
-	SentinelType      = 15
-	JSON         Type = 15
-	Tuple        Type = 16
-	BitArray     Type = 17
-	BitArrayDesc Type = 18 // BitArray encoded descendingly
-	TimeTZ       Type = 19
-	Geo          Type = 20
-	GeoDesc      Type = 21
-	ArrayKeyAsc  Type = 22 // Array key encoding
-	ArrayKeyDesc Type = 23 // Array key encoded descendingly
-	Box2D        Type = 24
-	Void         Type = 25
-)
-
-// typMap maps an encoded type byte to a decoded Type. It's got 256 slots, one
-// for every possible byte value.
-var typMap [256]Type
-
-func init() {
-	buf := []byte{0}
-	for i := range typMap {
-		buf[0] = byte(i)
-		typMap[i] = slowPeekType(buf)
-	}
-}
-
-// PeekType peeks at the type of the value encoded at the start of b.
-func PeekType(b []byte) Type {
-	if len(b) >= 1 {
-		return typMap[b[0]]
-	}
-	return Unknown
-}
-
-// slowPeekType is the old implementation of PeekType. It's used to generate
-// the lookup table for PeekType.
-func slowPeekType(b []byte) Type {
-	if len(b) >= 1 {
-		m := b[0]
-		switch {
-		case m == encodedNull, m == encodedNullDesc:
-			return Null
-		case m == encodedNotNull, m == encodedNotNullDesc:
-			return NotNull
-		case m == arrayKeyMarker:
-			return ArrayKeyAsc
-		case m == arrayKeyDescendingMarker:
-			return ArrayKeyDesc
-		case m == bytesMarker:
-			return Bytes
-		case m == bytesDescMarker:
-			return BytesDesc
-		case m == bitArrayMarker:
-			return BitArray
-		case m == bitArrayDescMarker:
-			return BitArrayDesc
-		case m == timeMarker:
-			return Time
-		case m == timeTZMarker:
-			return TimeTZ
-		case m == geoMarker:
-			return Geo
-		case m == box2DMarker:
-			return Box2D
-		case m == geoDescMarker:
-			return GeoDesc
-		case m == byte(Array):
-			return Array
-		case m == byte(True):
-			return True
-		case m == byte(False):
-			return False
-		case m == durationBigNegMarker, m == durationMarker, m == durationBigPosMarker:
-			return Duration
-		case m >= IntMin && m <= IntMax:
-			return Int
-		case m >= floatNaN && m <= floatNaNDesc:
-			return Float
-		case m >= decimalNaN && m <= decimalNaNDesc:
-			return Decimal
-		case m == voidMarker:
-			return Void
-		}
-	}
-	return Unknown
-}
-
 // GetMultiVarintLen find the length of <num> encoded varints that follow a
 // 1-byte tag.
 func GetMultiVarintLen(b []byte, num int) (int, error) {
@@ -1692,11 +1578,7 @@ func GetMultiVarintLen(b []byte, num int) (int, error) {
 func getMultiNonsortingVarintLen(b []byte, num int) (int, error) {
 	p := 0
 	for i := 0; i < num && p < len(b); i++ {
-		_, len, _, err := DecodeNonsortingStdlibVarint(b[p:])
-		if err != nil {
-			return 0, err
-		}
-		p += len
+		p += PeekLengthNonsortingStdlibVarint(b[p:])
 	}
 	return p, nil
 }
@@ -2152,6 +2034,17 @@ func DecodeNonsortingStdlibVarint(b []byte) (remaining []byte, length int, value
 	return b[length:], length, value, nil
 }
 
+// PeekLengthNonsortingStdlibVarint returns the length of a value encoded by
+// EncodeNonsortingVarint without decoding it.
+func PeekLengthNonsortingStdlibVarint(b []byte) int {
+	for i, b := range b {
+		if b&0x80 == 0 {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // MaxNonsortingUvarintLen is the maximum length of an EncodeNonsortingUvarint
 // encoded value.
 const MaxNonsortingUvarintLen = 10
@@ -2490,6 +2383,30 @@ func EncodeJSONValue(appendTo []byte, colID uint32, data []byte) []byte {
 	return EncodeUntaggedBytesValue(appendTo, data)
 }
 
+type valueTagDecodes struct {
+	typeOffset int
+	dataOffset int
+	colID      uint32
+	typ        Type
+}
+
+var oneByteValueTags [1 << 8]valueTagDecodes
+
+func init() {
+	for i := 0; i < 1<<7; i++ {
+		typeOffset, dataOffset, colID, typ, err := DecodeValueTag([]byte{byte(i)})
+		if err != nil {
+			panic(err)
+		}
+		oneByteValueTags[i] = valueTagDecodes{
+			typeOffset: typeOffset,
+			dataOffset: dataOffset,
+			colID:      colID,
+			typ:        typ,
+		}
+	}
+}
+
 // DecodeValueTag decodes a value encoded by EncodeValueTag, used as a prefix in
 // each of the other EncodeFooValue methods.
 //
@@ -2514,6 +2431,10 @@ func DecodeValueTag(b []byte) (typeOffset int, dataOffset int, colID uint32, typ
 	// version and skipping the column id extraction when it's not needed.
 	if len(b) == 0 {
 		return 0, 0, 0, Unknown, fmt.Errorf("empty array")
+	}
+	ret := oneByteValueTags[b[0]]
+	if ret.typ != Unknown {
+		return ret.typeOffset, ret.dataOffset, ret.colID, ret.typ, nil
 	}
 	var n int
 	var tag uint64
@@ -2870,8 +2791,8 @@ func PeekValueLengthWithOffsetsAndType(b []byte, dataOffset int, typ Type) (leng
 	case True, False:
 		return dataOffset, nil
 	case Int:
-		_, n, _, err := DecodeNonsortingStdlibVarint(b)
-		return dataOffset + n, err
+		n := PeekLengthNonsortingStdlibVarint(b)
+		return dataOffset + n, nil
 	case Float:
 		return dataOffset + floatValueEncodedLength, nil
 	case Bytes, Array, JSON, Geo:

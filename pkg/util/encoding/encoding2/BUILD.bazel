@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "encoding2",
+    srcs = ["encoding.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/util/encoding/encoding2",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pkg_errors//:errors"],
+)
+
+go_test(
+    name = "encoding2_test",
+    srcs = ["encoding_test.go"],
+    embed = [":encoding2"],
+    deps = ["//pkg/util/randutil"],
+)

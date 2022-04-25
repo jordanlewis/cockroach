@@ -58,9 +58,7 @@ type cTableInfo struct {
 	neededValueColsByIdx util.FastIntSet
 
 	// Map used to get the column index based on the descpb.ColumnID.
-	// It's kept as a pointer so we don't have to re-allocate to sort it each
-	// time.
-	orderedColIdxMap *colIdxMap
+	orderedColIdxMap colIdxMap
 
 	// One value per column that is part of the key; each value is a column
 	// ordinal among only needed columns; -1 if we don't need the value for
@@ -104,7 +102,7 @@ var _ execreleasable.Releasable = &cTableInfo{}
 var cTableInfoPool = sync.Pool{
 	New: func() interface{} {
 		return &cTableInfo{
-			orderedColIdxMap: &colIdxMap{},
+			orderedColIdxMap: colIdxMap{},
 		}
 	},
 }
@@ -118,14 +116,19 @@ func (c *cTableInfo) Release() {
 	c.cFetcherTableArgs.Release()
 	// Note that all slices are being reused, but there is no need to deeply
 	// reset them since all of the slices are of Go native types.
-	c.orderedColIdxMap.ords = c.orderedColIdxMap.ords[:0]
-	c.orderedColIdxMap.vals = c.orderedColIdxMap.vals[:0]
+	c.orderedColIdxMap = c.orderedColIdxMap[:0]
 	*c = cTableInfo{
 		orderedColIdxMap:    c.orderedColIdxMap,
 		indexColOrdinals:    c.indexColOrdinals[:0],
 		extraValColOrdinals: c.extraValColOrdinals[:0],
 	}
 	cTableInfoPool.Put(c)
+}
+
+type colIdxMapEntry struct {
+	val descpb.ColumnID
+	// ords is the ordinals into all columns of the table for the column in val.
+	ord int
 }
 
 // colIdxMap is a "map" that contains the ordinals for each ColumnID among the
@@ -138,29 +141,21 @@ func (c *cTableInfo) Release() {
 //
 // It implements sort.Interface to be sortable on vals, while keeping ords
 // matched up to the order of vals.
-type colIdxMap struct {
-	// vals is the sorted list of descpb.ColumnIDs in the table to fetch.
-	vals descpb.ColumnIDs
-	// ords is the list of ordinals into all columns of the table for each
-	// column in vals. The ith entry in ords is the ordinal among all columns of
-	// the table for the ith column in vals.
-	ords []int
-}
+type colIdxMap []colIdxMapEntry
 
 // Len implements sort.Interface.
 func (m colIdxMap) Len() int {
-	return len(m.vals)
+	return len(m)
 }
 
 // Less implements sort.Interface.
 func (m colIdxMap) Less(i, j int) bool {
-	return m.vals[i] < m.vals[j]
+	return m[i].val < m[j].val
 }
 
 // Swap implements sort.Interface.
 func (m colIdxMap) Swap(i, j int) {
-	m.vals[i], m.vals[j] = m.vals[j], m.vals[i]
-	m.ords[i], m.ords[j] = m.ords[j], m.ords[i]
+	m[i], m[j] = m[j], m[i]
 }
 
 type cFetcherArgs struct {
@@ -362,16 +357,18 @@ func (cf *cFetcher) Init(
 	cf.kvFetcherMemAcc = kvFetcherMemAcc
 	table := newCTableInfo()
 	nCols := tableArgs.ColIdxMap.Len()
-	if cap(table.orderedColIdxMap.vals) < nCols {
-		table.orderedColIdxMap.vals = make(descpb.ColumnIDs, 0, nCols)
-		table.orderedColIdxMap.ords = make([]int, 0, nCols)
+	if cap(table.orderedColIdxMap) < nCols {
+		table.orderedColIdxMap = make(colIdxMap, 0, nCols)
 	}
 	for i := range tableArgs.spec.FetchedColumns {
 		id := tableArgs.spec.FetchedColumns[i].ColumnID
-		table.orderedColIdxMap.vals = append(table.orderedColIdxMap.vals, id)
-		table.orderedColIdxMap.ords = append(table.orderedColIdxMap.ords, tableArgs.ColIdxMap.GetDefault(id))
+		table.orderedColIdxMap = append(table.orderedColIdxMap, colIdxMapEntry{
+			val: id,
+			ord: tableArgs.ColIdxMap.GetDefault(id)})
 	}
-	sort.Sort(table.orderedColIdxMap)
+	sort.Slice(table.orderedColIdxMap, func(i, j int) bool {
+		return table.orderedColIdxMap[i].val < table.orderedColIdxMap[j].val
+	})
 	*table = cTableInfo{
 		cFetcherTableArgs:   tableArgs,
 		orderedColIdxMap:    table.orderedColIdxMap,
@@ -1200,14 +1197,6 @@ func (cf *cFetcher) processValueSingle(
 func (cf *cFetcher) processValueBytes(
 	ctx context.Context, table *cTableInfo, valueBytes []byte, prettyKeyPrefix string,
 ) (prettyKey string, prettyValue string, err error) {
-	prettyKey = prettyKeyPrefix
-	if cf.traceKV {
-		if cf.machine.prettyValueBuf == nil {
-			cf.machine.prettyValueBuf = &bytes.Buffer{}
-		}
-		cf.machine.prettyValueBuf.Reset()
-	}
-
 	// Composite columns that are key encoded in the value (like the pk columns
 	// in a unique secondary index) have gotten removed from the set of
 	// remaining value columns. So, we need to add them back in here in case
@@ -1223,7 +1212,8 @@ func (cf *cFetcher) processValueBytes(
 	)
 	// Continue reading data until there's none left or we've finished
 	// populating the data for all of the requested columns.
-	for len(valueBytes) > 0 && cf.machine.remainingValueColsByIdx.Len() > 0 {
+	remainingValueCols := cf.machine.remainingValueColsByIdx.Len()
+	for len(valueBytes) > 0 && remainingValueCols > 0 {
 		_, dataOffset, colIDDiff, typ, err = encoding.DecodeValueTag(valueBytes)
 		if err != nil {
 			return "", "", err
@@ -1234,15 +1224,16 @@ func (cf *cFetcher) processValueBytes(
 		// Find the ordinal into table.cols for the column ID we just decoded,
 		// by advancing through the sorted list of needed value columns until
 		// there's a match, or we passed the column ID we're looking for.
-		for ; lastColIDIndex < len(table.orderedColIdxMap.vals); lastColIDIndex++ {
-			nextID := table.orderedColIdxMap.vals[lastColIDIndex]
-			if nextID == colID {
-				vecIdx = table.orderedColIdxMap.ords[lastColIDIndex]
+		idxMap := table.orderedColIdxMap
+		for ; lastColIDIndex < len(idxMap); lastColIDIndex++ {
+			entry := idxMap[lastColIDIndex]
+			if entry.val == colID {
+				vecIdx = entry.ord
 				// Since the next value part (if it exists) will belong to the
 				// column after the current one, we can advance the index.
 				lastColIDIndex++
 				break
-			} else if nextID > colID {
+			} else if entry.val > colID {
 				break
 			}
 		}
@@ -1259,10 +1250,6 @@ func (cf *cFetcher) processValueBytes(
 			continue
 		}
 
-		if cf.traceKV {
-			prettyKey = fmt.Sprintf("%s/%s", prettyKey, table.spec.FetchedColumns[vecIdx].Name)
-		}
-
 		valueBytes, err = colencoding.DecodeTableValueToCol(
 			&table.da, &cf.machine.colvecs, vecIdx, cf.machine.rowIdx, typ,
 			dataOffset, cf.table.typs[vecIdx], valueBytes,
@@ -1271,15 +1258,7 @@ func (cf *cFetcher) processValueBytes(
 			return "", "", err
 		}
 		cf.machine.remainingValueColsByIdx.Remove(vecIdx)
-		if cf.traceKV {
-			dVal := cf.getDatumAt(vecIdx, cf.machine.rowIdx)
-			if _, err := fmt.Fprintf(cf.machine.prettyValueBuf, "/%v", dVal.String()); err != nil {
-				return "", "", err
-			}
-		}
-	}
-	if cf.traceKV {
-		prettyValue = cf.machine.prettyValueBuf.String()
+		remainingValueCols--
 	}
 	return prettyKey, prettyValue, nil
 }

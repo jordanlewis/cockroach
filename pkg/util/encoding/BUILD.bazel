@@ -8,6 +8,7 @@ go_library(
         "decimal.go",
         "encoding.go",
         "float.go",
+        "type.go",
         ":gen-type-stringer",  # keep
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/util/encoding",
@@ -63,7 +64,7 @@ go_test(
 genrule(
     name = "gen-type-stringer",
     srcs = [
-        "encoding.go",
+        "type.go",
     ],
     outs = ["type_string.go"],
     # golang.org/x/tools executes commands via
@@ -84,9 +85,9 @@ genrule(
        GO_REL_PATH=`dirname $(location @go_sdk//:bin/go)`
        GO_ABS_PATH=`cd $$GO_REL_PATH && pwd`
        # Set GOPATH to something to workaround https://github.com/golang/go/issues/43938
-       sed -e 's/type Type encodingtype.T/type Type int/' $(location encoding.go) > encoding_tmp.go && \
+       sed -e 's/type Type encodingtype.T/type Type int/' $(location type.go) > type_tmp.go && \
        env PATH=$$GO_ABS_PATH HOME=$(GENDIR) GOPATH=/nonexist-gopath \
-         $(location @com_github_cockroachdb_tools//cmd/stringer:stringer) -output=$@ -type=Type encoding_tmp.go
+         $(location @com_github_cockroachdb_tools//cmd/stringer:stringer) -output=$@ -type=Type type_tmp.go
     """,
     exec_tools = [
         "@go_sdk//:bin/go",

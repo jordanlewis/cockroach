@@ -2174,6 +2174,38 @@ func TestPeekLengthNonsortingUVarint(t *testing.T) {
 	}
 }
 
+func testNonsortingStdlibVarint(t *testing.T, i uint64) {
+	buf := EncodeNonsortingStdlibVarint(nil, int64(i))
+	rem, n, x, err := DecodeNonsortingStdlibVarint(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x != int64(i) {
+		t.Fatalf("expected %d got %d", i, x)
+	}
+	if n != len(buf) {
+		t.Fatalf("expected length %d got %d", len(buf), n)
+	}
+	if len(rem) != 0 {
+		t.Fatalf("expected no remaining bytes got %d", len(rem))
+	}
+	l := PeekLengthNonsortingStdlibVarint(buf)
+	if l != n {
+		t.Fatalf("expected length %d got %d", n, l)
+	}
+}
+
+func TestNonsortingStdlibVarint(t *testing.T) {
+	rng, _ := randutil.NewTestRand()
+
+	for _, test := range edgeCaseUint64s() {
+		testNonsortingStdlibVarint(t, test)
+	}
+	for _, test := range randPowDistributedInt63s(rng, 1000) {
+		testNonsortingStdlibVarint(t, uint64(test))
+	}
+}
+
 func BenchmarkEncodeNonsortingUvarint(b *testing.B) {
 	buf := make([]byte, 0, b.N*MaxNonsortingUvarintLen)
 	rng, _ := randutil.NewTestRand()
@@ -2225,6 +2257,22 @@ func BenchmarkPeekLengthNonsortingUvarint(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		l := PeekLengthNonsortingUvarint(buf)
 		buf = buf[l:]
+	}
+}
+
+func BenchmarkDecodeValueTag(b *testing.B) {
+	buf := make([]byte, 0, b.N*MaxNonsortingUvarintLen)
+	rng, _ := randutil.NewTestRand()
+	for i := 0; i < b.N; i++ {
+		buf = EncodeNonsortingUvarint(buf, uint64(rng.Int63()))
+	}
+	var err error
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf, _, _, err = DecodeNonsortingUvarint(buf)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

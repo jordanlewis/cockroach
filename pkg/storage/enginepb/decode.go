@@ -42,6 +42,19 @@ func SplitMVCCKey(mvccKey []byte) (key []byte, ts []byte, ok bool) {
 	return key, ts, true
 }
 
+func GetMVCCKey(mvccKey []byte) (key []byte, ok bool) {
+	if len(mvccKey) == 0 {
+		return nil, false
+	}
+	tsLen := int(mvccKey[len(mvccKey)-1])
+	keyPartEnd := len(mvccKey) - 1 - tsLen
+	if keyPartEnd < 0 {
+		return nil, false
+	}
+
+	return mvccKey[:keyPartEnd], true
+}
+
 // DecodeKey decodes an key/timestamp from its serialized representation.
 func DecodeKey(encodedKey []byte) ([]byte, hlc.Timestamp, error) {
 	key, encodedTS, ok := SplitMVCCKey(encodedKey)
@@ -116,7 +129,7 @@ func ScanDecodeKeyValueNoTS(repr []byte) (key []byte, value []byte, orepr []byte
 	value = repr[keyEnd : keyEnd+valSize]
 	var ok bool
 	rawKey := repr[kvLenSize:keyEnd]
-	key, _, ok = SplitMVCCKey(rawKey)
+	key, ok = GetMVCCKey(rawKey)
 	if !ok {
 		return nil, nil, nil, errors.Errorf("invalid encoded mvcc key: %x", rawKey)
 	}
