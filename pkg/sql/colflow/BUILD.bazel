@@ -110,6 +110,7 @@ go_test(
         "//pkg/sql/randgen",
         "//pkg/sql/rowenc",
         "//pkg/sql/sem/tree",
+        "//pkg/sql/stats",
         "//pkg/sql/types",
         "//pkg/storage",
         "//pkg/testutils",

@@ -431,6 +431,7 @@ ALL_TESTS = [
     "//pkg/util/ctxgroup:ctxgroup_test",
     "//pkg/util/duration:duration_test",
     "//pkg/util/encoding/csv:csv_test",
+    "//pkg/util/encoding/encoding2:encoding2_test",
     "//pkg/util/encoding:encoding_test",
     "//pkg/util/envutil:envutil_test",
     "//pkg/util/errorutil/unimplemented:unimplemented_test",

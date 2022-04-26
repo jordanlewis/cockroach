@@ -2100,11 +2100,25 @@ func DecodeNonsortingUvarint(buf []byte) (remaining []byte, length int, value ui
 func DecodeNonsortingStdlibUvarint(
 	buf []byte,
 ) (remaining []byte, length int, value uint64, err error) {
-	i, n := binary.Uvarint(buf)
-	if n <= 0 {
-		return buf, 0, 0, errors.New("buffer too small")
+	var x uint64
+	var s uint
+	// Inline binary.Uvarint to remove bounds checks.
+	for i, b := range buf {
+		if i == binary.MaxVarintLen64 {
+			// Catch byte reads past MaxVarintLen64.
+			// See issue https://golang.org/issues/41185
+			return buf, 0, 0, errors.New("buffer too small") // overflow
+		}
+		if b < 0x80 {
+			if i == binary.MaxVarintLen64-1 && b > 1 {
+				return buf, 0, 0, errors.New("buffer too small") // overflow
+			}
+			return buf[i+1:], i + 1, x | uint64(b)<<s, nil
+		}
+		x |= uint64(b&0x7f) << s
+		s += 7
 	}
-	return buf[n:], n, i, nil
+	return buf, 0, 0, nil
 }
 
 // PeekLengthNonsortingUvarint returns the length of the value that starts at
@@ -2432,10 +2446,13 @@ func DecodeValueTag(b []byte) (typeOffset int, dataOffset int, colID uint32, typ
 	if len(b) == 0 {
 		return 0, 0, 0, Unknown, fmt.Errorf("empty array")
 	}
-	ret := oneByteValueTags[b[0]]
-	if ret.typ != Unknown {
-		return ret.typeOffset, ret.dataOffset, ret.colID, ret.typ, nil
-	}
+	/*
+		ret := oneByteValueTags[b[0]]
+		if ret.typ != Unknown {
+			return ret.typeOffset, ret.dataOffset, ret.colID, ret.typ, nil
+		}
+
+	*/
 	var n int
 	var tag uint64
 	b, n, tag, err = DecodeNonsortingUvarint(b)

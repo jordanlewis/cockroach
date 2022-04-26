@@ -11,6 +11,7 @@ go_library(
         "index_join.go",
         ":gen-fetcherstate-stringer",  # keep
     ],
+    gc_goopts = ["-d=ssa/check_bce/debug=1"],
     importpath = "github.com/cockroachdb/cockroach/pkg/sql/colfetcher",
     visibility = ["//visibility:public"],
     deps = [

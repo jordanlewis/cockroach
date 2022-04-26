@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/keys"
@@ -31,6 +32,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/execinfrapb"
 	"github.com/cockroachdb/cockroach/pkg/sql/rowenc"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
+	"github.com/cockroachdb/cockroach/pkg/sql/stats"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
@@ -123,11 +125,14 @@ func BenchmarkColBatchScan(b *testing.B) {
 	defer logScope.Close(b)
 	ctx := context.Background()
 
-	s, sqlDB, kvDB := serverutils.StartServer(b, base.TestServerArgs{})
+	// Disable stats refresh
+	stats.DefaultRefreshInterval = 100 * time.Minute
+	s, sqlDB, kvDB := serverutils.StartServer(b, base.TestServerArgs{
+		Knobs: base.TestingKnobs{},
+	})
 	defer s.Stopper().Stop(ctx)
 	rng, _ := randutil.NewTestRand()
 
-	const numCols = 2
 	for _, t := range []struct {
 		name        string
 		schema      string
@@ -187,7 +192,7 @@ func BenchmarkColBatchScan(b *testing.B) {
 				sqlutils.RowRandStr(rng, 10),
 				sqlutils.RowRandStr(rng, 44),
 			),
-			[]int{1 << 16},
+			[]int{1 << 18},
 			[]int{4, 5, 6, 7, 8, 9, 10},
 			[]*types.T{types.Float, types.Float, types.Float, types.Float, types.String, types.String, types.Date},
 		},
@@ -239,7 +244,7 @@ func BenchmarkColBatchScan(b *testing.B) {
 					NodeID:  evalCtx.NodeID,
 				}
 
-				b.SetBytes(int64(numRows * numCols * 8))
+				b.SetBytes(int64(numRows * len(columnIDs) * 8))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					// We have to set the spans on each iteration since the
