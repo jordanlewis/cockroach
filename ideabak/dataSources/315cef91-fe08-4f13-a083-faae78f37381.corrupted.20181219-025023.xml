@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataSource name="jordan@localhost">
+  <database-model serializer="dbm" dbms="POSTGRES" family-id="POSTGRES" format-version="4.14">
+    <root id="1">
+      <ServerVersion>10.6</ServerVersion>
+    </root>
+    <database id="2" parent="1" name="activerecord_unittest">
+      <ObjectId>16400</ObjectId>
+      <StateNumber>3003872</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="3" parent="1" name="activerecord_unittest2">
+      <ObjectId>16401</ObjectId>
+      <StateNumber>3003874</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="4" parent="1" name="albums">
+      <ObjectId>16402</ObjectId>
+      <StateNumber>3003876</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="5" parent="1" name="backend_development">
+      <ObjectId>16403</ObjectId>
+      <StateNumber>3003878</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="6" parent="1" name="backend_test">
+      <ObjectId>16404</ObjectId>
+      <StateNumber>3003880</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="7" parent="1" name="benchmarksql">
+      <ObjectId>16405</ObjectId>
+      <StateNumber>3003882</StateNumber>
+      <Owner>benchmarksql</Owner>
+    </database>
+    <database id="8" parent="1" name="company_activerecord">
+      <ObjectId>16406</ObjectId>
+      <StateNumber>3003884</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="9" parent="1" name="company_sequelize_development">
+      <ObjectId>16407</ObjectId>
+      <StateNumber>3003886</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="10" parent="1" name="company_test">
+      <ObjectId>16408</ObjectId>
+      <StateNumber>3003888</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="11" parent="1" name="constraint_db">
+      <ObjectId>16409</ObjectId>
+      <StateNumber>3003890</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="12" parent="1" name="derp">
+      <ObjectId>16410</ObjectId>
+      <StateNumber>3003892</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="13" parent="1" name="foo">
+      <ObjectId>16411</ObjectId>
+      <StateNumber>3003894</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="14" parent="1" name="hodor">
+      <ObjectId>16412</ObjectId>
+      <StateNumber>3003896</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="15" parent="1" name="jordan">
+      <ObjectId>16413</ObjectId>
+      <StateNumber>3003898</StateNumber>
+      <Owner>jordan</Owner>
+      <IntrospectionStateNumber>3007576</IntrospectionStateNumber>
+      <Current>1</Current>
+      <Relations>sequence|table|16462|16459|1
+sequence|table|16474|16470|1
+sequence|table|323386|323388|1
+sequence|table|339806|339808|1
+sequence|table|356201|356203|1
+sequence|table|356268|356270|1
+</Relations>
+    </database>
+    <database id="16" parent="1" name="logictest">
+      <ObjectId>16414</ObjectId>
+      <StateNumber>3003900</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="17" parent="1" name="mastodon_development">
+      <ObjectId>16415</ObjectId>
+      <StateNumber>3003902</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="18" parent="1" name="mastodon_test">
+      <ObjectId>16416</ObjectId>
+      <StateNumber>3003904</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="19" parent="1" name="mkyong">
+      <ObjectId>16417</ObjectId>
+      <StateNumber>3003906</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="20" parent="1" name="nukes">
+      <ObjectId>16418</ObjectId>
+      <StateNumber>3003908</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="21" parent="1" name="postgres">
+      <ObjectId>12558</ObjectId>
+      <Comment>default administrative connection database</Comment>
+      <StateNumber>3003909</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="22" parent="1" name="postgrex_test">
+      <ObjectId>16419</ObjectId>
+      <StateNumber>3003911</StateNumber>
+      <Owner>postgres</Owner>
+    </database>
+    <database id="23" parent="1" name="postgrex_test_with_schemas">
+      <ObjectId>16420</ObjectId>
+      <StateNumber>3003913</StateNumber>
+      <Owner>postgres</Owner>
+    </database>
+    <database id="24" parent="1" name="rails-signup-development">
+      <ObjectId>16421</ObjectId>
+      <StateNumber>3003915</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="25" parent="1" name="rails-signup-test">
+      <ObjectId>16422</ObjectId>
+      <StateNumber>3003917</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="26" parent="1" name="test">
+      <ObjectId>16423</ObjectId>
+      <StateNumber>3003922</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="27" parent="1" name="tpcc">
+      <ObjectId>331684</ObjectId>
+      <StateNumber>3007663</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="28" parent="1" name="ttss">
+      <ObjectId>347995</ObjectId>
+      <StateNumber>9584968</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <database id="29" parent="1" name="zabbix">
+      <ObjectId>16425</ObjectId>
+      <StateNumber>3003926</StateNumber>
+      <Owner>jordan</Owner>
+    </database>
+    <role id="30" parent="1" name="benchmarksql">
+      <ObjectId>290375</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="31" parent="1" name="blah">
+      <ObjectId>266593</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="32" parent="1" name="foo">
+      <ObjectId>323341</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="33" parent="1" name="jordan">
+      <ObjectId>10</ObjectId>
+      <SuperRole>1</SuperRole>
+      <Inherit>1</Inherit>
+      <CreateRole>1</CreateRole>
+      <CreateDb>1</CreateDb>
+      <CanLogin>1</CanLogin>
+      <Replication>1</Replication>
+      <ConnectionLimit>-1</ConnectionLimit>
+      <BypassRls>1</BypassRls>
+    </role>
+    <role id="34" parent="1" name="pg_monitor">
+      <ObjectId>3373</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="35" parent="1" name="pg_read_all_settings">
+      <ObjectId>3374</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="36" parent="1" name="pg_read_all_stats">
+      <ObjectId>3375</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="37" parent="1" name="pg_signal_backend">
+      <ObjectId>4200</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="38" parent="1" name="pg_stat_scan_tables">
+      <ObjectId>3377</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="39" parent="1" name="postgres">
+      <ObjectId>16384</ObjectId>
+      <SuperRole>1</SuperRole>
+      <Inherit>1</Inherit>
+      <CreateRole>1</CreateRole>
+      <CreateDb>1</CreateDb>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="40" parent="1" name="postgrex_cleartext_pw">
+      <ObjectId>271389</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="41" parent="1" name="postgrex_md5_pw">
+      <ObjectId>271390</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="42" parent="1" name="rolea">
+      <ObjectId>331661</ObjectId>
+      <Inherit>1</Inherit>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="43" parent="1" name="test">
+      <ObjectId>16385</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="44" parent="1" name="tester">
+      <ObjectId>323385</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+    <role id="45" parent="1" name="zabbix">
+      <ObjectId>289031</ObjectId>
+      <Inherit>1</Inherit>
+      <CanLogin>1</CanLogin>
+      <ConnectionLimit>-1</ConnectionLimit>
+    </role>
+  </database-model>
+</dataSource>

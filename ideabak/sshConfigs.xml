@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig connectionConfig="{&quot;serverAliveInterval&quot;:300}" host="34.75.182.76" id="bddf0aea-56c9-46c6-a549-2b71ba6decfc" keyPath="$USER_HOME$/.ssh/google_compute_engine" port="22" customName="gceworker" nameFormat="CUSTOM" username="jordan">
+        <option name="customName" value="gceworker" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>

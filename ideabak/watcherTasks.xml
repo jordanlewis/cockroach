@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectTasksOptions" suppressed-tasks="Stylus">
+    <enabled-global>
+      <option value="crlfmt" />
+    </enabled-global>
+  </component>
+</project>

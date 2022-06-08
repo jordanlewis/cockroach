@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
+    <data-source source="LOCAL" name="cockroach local" uuid="315cef91-fe08-4f13-a083-faae78f37381">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://localhost:26257/defaultdb</jdbc-url>
+      <driver-properties>
+        <property name="defaultRowFetchSize" value="5" />
+      </driver-properties>
+    </data-source>
+    <data-source source="LOCAL" name="LDB On stream free tier cluster" uuid="5962c7eb-31d4-4c23-9c49-1db2a118b536">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://free-tier.gcp-us-central1.cockroachlabs.cloud:26257/ldb-on-stream-673.defaultdb</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+      <driver-properties>
+        <property name="cluster" value="ldb-on-stream-673" />
+      </driver-properties>
+    </data-source>
+  </component>
+</project>

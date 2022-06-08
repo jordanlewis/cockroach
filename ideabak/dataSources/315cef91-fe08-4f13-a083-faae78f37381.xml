@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataSource name="cockroach local">
+  <database-model serializer="dbm" dbms="COCKROACH" family-id="COCKROACH" format-version="4.20">
+    <root id="1">
+      <ServerVersion>21.1.0</ServerVersion>
+      <Dbms>COCKROACH</Dbms>
+    </root>
+    <database id="2" parent="1" name="defaultdb">
+      <Current>1</Current>
+    </database>
+    <database id="3" parent="1" name="foo"/>
+    <database id="4" parent="1" name="postgres"/>
+    <database id="5" parent="1" name="system"/>
+    <schema id="6" parent="2" name="crdb_internal"/>
+    <schema id="7" parent="2" name="information_schema"/>
+    <schema id="8" parent="2" name="pg_catalog"/>
+    <schema id="9" parent="2" name="pg_extension"/>
+    <schema id="10" parent="2" name="public">
+      <Current>1</Current>
+    </schema>
+    <table id="11" parent="10" name="a"/>
+    <column id="12" parent="11" name="a">
+      <Position>1</Position>
+      <DataType>int8|-5s</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <index id="13" parent="11" name="primary">
+      <ColNames>a</ColNames>
+      <Unique>1</Unique>
+    </index>
+    <key id="14" parent="11" name="primary">
+      <ColNames>a</ColNames>
+      <Primary>1</Primary>
+    </key>
+  </database-model>
+</dataSource>
