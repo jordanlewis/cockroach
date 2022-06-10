@@ -49,13 +49,18 @@ func soundex(source string) string {
 		// Convert the first character to upper case.
 		code[0] = byte(unicode.ToUpper(runes[0]))
 	}
+	lastSoundex := soundexCode(runes[0])
 	j := 1
 	for i := 1; i < len(runes) && j < soundexLen; i++ {
 		if !isAlpha(runes[i]) {
 			continue
 		}
-		if soundexCode(runes[i]) != soundexCode(runes[i-1]) {
+		if soundexCode(runes[i]) != lastSoundex {
 			c := soundexCode(runes[i])
+			if c == 0x0 {
+				continue
+			}
+			lastSoundex = c
 			if c != '0' {
 				code[j] = c
 				j++
