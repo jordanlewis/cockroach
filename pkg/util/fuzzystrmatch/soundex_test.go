@@ -61,6 +61,11 @@ func TestSoundex(t *testing.T) {
 			Source:   "l�qă�_��",
 			Expected: "L200",
 		},
+		// non-ascii in the middle
+		{
+			Source:   "bcćcdefg",
+			Expected: "B231",
+		},
 	}
 
 	for _, tc := range tt {
