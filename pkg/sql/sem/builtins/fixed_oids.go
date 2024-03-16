@@ -11,8 +11,6 @@
 package builtins
 
 import (
-	"fmt"
-
 	"github.com/cockroachdb/errors"
 	"github.com/lib/pq/oid"
 )
@@ -2577,19 +2575,36 @@ var builtinOidsArray = []string{
 	2609: `crdb_internal.request_statement_bundle(stmtFingerprint: string, samplingProbability: float, minExecutionLatency: interval, expiresAfter: interval, redacted: bool) -> bool`,
 	2610: `crdb_internal.request_statement_bundle(stmtFingerprint: string, planGist: string, samplingProbability: float, minExecutionLatency: interval, expiresAfter: interval, redacted: bool) -> bool`,
 	2611: `crdb_internal.request_statement_bundle(stmtFingerprint: string, planGist: string, antiPlanGist: bool, samplingProbability: float, minExecutionLatency: interval, expiresAfter: interval, redacted: bool) -> bool`,
+	2612: `vectorsend(vector: vector) -> bytes`,
+	2613: `vectorrecv(input: anyelement) -> vector`,
+	2614: `vectorout(vector: vector) -> bytes`,
+	2615: `vectorin(input: anyelement) -> vector`,
+	2616: `char(vector: vector) -> "char"`,
+	2617: `name(vector: vector) -> name`,
+	2618: `text(vector: vector) -> string`,
+	2619: `varchar(vector: vector) -> varchar`,
+	2620: `bpchar(vector: vector) -> char`,
+	2621: `vector(string: string) -> vector`,
+	2622: `vector(vector: vector) -> vector`,
+	2623: `cosine_distance(v1: vector, v2: vector) -> float`,
+	2624: `l1_distance(v1: vector, v2: vector) -> float`,
+	2625: `l2_distance(v1: vector, v2: vector) -> float`,
+	2626: `inner_product(v1: vector, v2: vector) -> float`,
+	2627: `vector_dims(vector: vector) -> int`,
+	2628: `vector_norm(vector: vector) -> float`,
 }
 
 var builtinOidsBySignature map[string]oid.Oid
 
-func signatureMustHaveHardcodedOID(sig string) oid.Oid {
+func signatureMustHaveHardcodedOID(sig string) (oid.Oid, error) {
 	maybeInitializeBuiltinMap()
 	oid, ok := builtinOidsBySignature[sig]
 	if !ok {
-		panic(fmt.Sprintf("Missing an entry for %s in builtins.builtinOidsArray. "+
+		return 0, errors.Errorf("Missing an entry for %s in builtins.builtinOidsArray. "+
 			"Update the signature there if it's changed, or if it's new, add the following entry to the bottom of the list:"+
-			"%d: `%s`", sig, nextUnusedOid(), sig))
+			"%d: `%s`", sig, nextUnusedOid(), sig)
 	}
-	return oid
+	return oid, nil
 }
 
 func oidsMustBeUnique() error {

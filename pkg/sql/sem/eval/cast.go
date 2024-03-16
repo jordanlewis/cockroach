@@ -503,6 +503,8 @@ func performCastWithoutPrecisionTruncation(
 			s = t.TSQuery.String()
 		case *tree.DTSVector:
 			s = t.TSVector.String()
+		case *tree.DPGVector:
+			s = t.T.String()
 		case *tree.DEnum:
 			s = t.LogicalRep
 		case *tree.DVoid:
@@ -604,6 +606,21 @@ func performCastWithoutPrecisionTruncation(
 		case *tree.DCollatedString:
 			return tree.ParseDPGLSN(d.Contents)
 		case *tree.DPGLSN:
+			return d, nil
+		}
+
+	case types.PGVectorFamily:
+		if !evalCtx.Settings.Version.IsActive(ctx, clusterversion.V24_1) {
+			return nil, pgerror.Newf(pgcode.FeatureNotSupported,
+				"version %v must be finalized to use vector",
+				clusterversion.V24_1.Version())
+		}
+		switch d := d.(type) {
+		case *tree.DString:
+			return tree.ParseDPGVector(string(*d))
+		case *tree.DCollatedString:
+			return tree.ParseDPGVector(d.Contents)
+		case *tree.DPGVector:
 			return d, nil
 		}
 
