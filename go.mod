@@ -263,6 +263,8 @@ require (
 	github.com/Azure/go-autorest/tracing v0.6.0 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v0.5.1 // indirect
+	github.com/DataDog/datadog-go/v5 v5.0.2 // indirect
+	github.com/DataDog/gostackparse v0.5.0 // indirect
 	github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c // indirect
 	github.com/Masterminds/goutils v1.1.0 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
@@ -406,7 +408,7 @@ require (
 	github.com/tklauser/numcpus v0.3.0 // indirect
 	github.com/toqueteos/webbrowser v1.2.0 // indirect
 	github.com/trivago/tgo v1.0.7 // indirect
-	github.com/twitchtv/twirp v8.1.0+incompatible // indirect
+	github.com/twitchtv/twirp v8.1.1+incompatible // indirect
 	github.com/twpayne/go-kml v1.5.2 // indirect
 	github.com/urfave/cli/v2 v2.3.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
@@ -424,6 +426,7 @@ require (
 	go.uber.org/zap v1.19.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
+	gopkg.in/DataDog/dd-trace-go.v1 v1.38.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.5.1 // indirect
 )
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/build"
 	"github.com/cockroachdb/cockroach/pkg/server/goroutinedumper"
 	"github.com/cockroachdb/cockroach/pkg/server/profiler"
 	"github.com/cockroachdb/cockroach/pkg/server/status"
@@ -26,6 +27,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
+
+	profiler2 "gopkg.in/DataDog/dd-trace-go.v1/profiler"
 )
 
 type sampleEnvironmentCfg struct {
@@ -114,6 +117,27 @@ func startSampleEnvironment(
 			hasValidDumpDir = false
 		}
 
+		log.Info(ctx, "starting Datadog profiler")
+		err := profiler2.Start(
+			profiler2.WithService("cockroachdb"),
+			profiler2.WithEnv("test"),
+			profiler2.WithVersion(build.BinaryVersion()),
+			profiler2.WithTags("<KEY1>:<VALUE1>", "<KEY2>:<VALUE2>"),
+			profiler2.WithProfileTypes(
+				profiler2.CPUProfile,
+				profiler2.HeapProfile,
+				// The profiles below are disabled by default to keep overhead
+				// low, but can be enabled as needed.
+
+				// profiler.BlockProfile,
+				// profiler.MutexProfile,
+				// profiler.GoroutineProfile,
+			),
+		)
+		if err != nil {
+			log.Fatalf(ctx, "%s", err)
+		}
+
 		if hasValidDumpDir {
 			var err error
 			heapProfiler, err = profiler.NewHeapProfiler(ctx, cfg.heapProfileDirName, cfg.st)
@@ -148,6 +172,7 @@ func startSampleEnvironment(
 		func(ctx context.Context) {
 			var timer timeutil.Timer
 			defer timer.Stop()
+			defer profiler2.Stop()
 			timer.Reset(cfg.minSampleInterval)
 
 			for {
