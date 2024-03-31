@@ -1106,5 +1106,15 @@ func MaybeRequiresHydration(desc Descriptor) (ret bool) {
 		ret = true
 		return iterutil.StopIteration()
 	})
-	return ret
+	if ret {
+		return true
+	}
+	if tab, ok := desc.(TableDescriptor); ok {
+		for _, idx := range tab.ActiveIndexes() {
+			if !idx.GetVectorConfig().IsEmpty() {
+				return true
+			}
+		}
+	}
+	return false
 }

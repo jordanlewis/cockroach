@@ -28,6 +28,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/intsets"
 	"github.com/cockroachdb/cockroach/pkg/util/iterutil"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -178,6 +179,7 @@ type Index interface {
 	GetPredicate() string
 	GetType() descpb.IndexDescriptor_Type
 	GetGeoConfig() geopb.Config
+	GetVectorConfig() vectorpb.Config
 	GetVersion() descpb.IndexDescriptorVersion
 	GetEncodingType() catenumpb.IndexDescriptorEncodingType
 

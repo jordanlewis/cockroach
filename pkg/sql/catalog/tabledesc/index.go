@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/iterutil"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -267,6 +268,11 @@ func (w index) CollectCompositeColumnIDs() catalog.TableColSet {
 // GetGeoConfig returns the geo config in the index descriptor.
 func (w index) GetGeoConfig() geopb.Config {
 	return w.desc.GeoConfig
+}
+
+// GetVectorConfig returns the vector config in the index descriptor.
+func (w index) GetVectorConfig() vectorpb.Config {
+	return w.desc.VectorConfig
 }
 
 // GetSharded returns the ShardedDescriptor in the index descriptor
