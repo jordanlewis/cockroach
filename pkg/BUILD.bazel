@@ -2582,6 +2582,7 @@ GO_TARGETS = [
     "//pkg/util/unique:unique_test",
     "//pkg/util/uuid:uuid",
     "//pkg/util/uuid:uuid_test",
+    "//pkg/util/vector/vectorpb:vectorpb",
     "//pkg/util/vector:vector",
     "//pkg/util/vector:vector_test",
     "//pkg/util/version:version",

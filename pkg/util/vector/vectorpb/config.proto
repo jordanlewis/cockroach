@@ -1,0 +1,31 @@
+syntax = "proto3";
+package cockroach.vector.vectorindex;
+option go_package = "github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb";
+
+import "gogoproto/gogo.proto";
+
+// Config is the configuration for a vector index.
+// Each SQL index will have its own config.
+//
+// At the moment, only one major indexing strategy is implemented (ivfflat).
+message Config {
+  option (gogoproto.equal) = true;
+  option (gogoproto.onlyone) = true;
+
+  IVFFlatConfig ivf_flat = 1;
+}
+
+message IVFFlatConfig {
+  option (gogoproto.equal) = true;
+  Centroids centroids = 1;
+}
+
+message Centroids {
+  option (gogoproto.equal) = true;
+  repeated Centroid centroids = 1;
+}
+
+message Centroid {
+  option (gogoproto.equal) = true;
+  repeated float centroid = 1;
+}
