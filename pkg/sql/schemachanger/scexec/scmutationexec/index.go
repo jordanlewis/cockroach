@@ -99,6 +99,9 @@ func addNewIndexMutation(
 	if opIndex.GeoConfig != nil {
 		idx.GeoConfig = *opIndex.GeoConfig
 	}
+	if opIndex.VectorConfig != nil {
+		idx.VectorConfig = *opIndex.VectorConfig
+	}
 	return enqueueIndexMutation(tbl, idx, state, descpb.DescriptorMutation_ADD)
 }
 

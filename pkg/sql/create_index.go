@@ -37,6 +37,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util/errorutil/unimplemented"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -434,6 +435,32 @@ func populateInvertedIndexDescriptor(
 	case types.TSVectorFamily:
 		switch invCol.OpClass {
 		case "tsvector_ops", "":
+		default:
+			return newUndefinedOpclassError(invCol.OpClass)
+		}
+	case types.PGVectorFamily:
+		width := column.GetType().Width()
+		if width == 0 {
+			return pgerror.New(pgcode.InvalidObjectDefinition, "column does not have dimensions")
+		}
+		indexDesc.VectorConfig = vectorpb.Config{
+			IndexType: &vectorpb.Config_IvfFlat{
+				IvfFlat: &vectorpb.IVFFlatConfig{
+					// lists defaults to 100.
+					NLists: 100,
+				},
+			},
+			Dimensions: width,
+		}
+		indexDesc.InvertedColumnKinds[0] = catpb.InvertedIndexColumnKind_IVFFLAT
+		switch invCol.OpClass {
+		// The default operator class is "vector_l2_ops".
+		case "vector_l2_ops", "":
+			indexDesc.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_L2
+		case "vector_ip_ops":
+			indexDesc.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_IP
+		case "vector_cosine_ops":
+			indexDesc.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_COSINE
 		default:
 			return newUndefinedOpclassError(invCol.OpClass)
 		}

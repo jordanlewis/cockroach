@@ -11387,7 +11387,7 @@ opt_index_access_method:
   {
     /* FORCE DOC */
     switch $2 {
-      case "gin", "gist":
+      case "gin", "gist", "ivfflat":
         $$.val = true
       case "btree":
         $$.val = false

@@ -2592,6 +2592,7 @@ var builtinOidsArray = []string{
 	2626: `inner_product(v1: vector, v2: vector) -> float`,
 	2627: `vector_dims(vector: vector) -> int`,
 	2628: `vector_norm(vector: vector) -> float`,
+	2629: `crdb_internal.num_inverted_index_entries(val: vector, version: int) -> int`,
 }
 
 var builtinOidsBySignature map[string]oid.Oid

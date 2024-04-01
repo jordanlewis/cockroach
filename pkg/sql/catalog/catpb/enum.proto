@@ -48,4 +48,7 @@ enum InvertedIndexColumnKind {
   // TRIGRAM is the trigram kind of inverted index column. It's only valid on
   // text columns.
   TRIGRAM = 1;
+  // IVFFLAT is the IVFFLAT kind of inverted index column. It's only valid on
+  // vector columns.
+  IVFFLAT = 2;
 }

@@ -87,6 +87,11 @@ const (
 	geoMarker     = timeTZMarker + 1
 	geoDescMarker = geoMarker + 1
 
+	// Markers for the 2 sections of a vector ivf index. The centroids are stored
+	// separately from the inverted index itself.
+	vectorIvfCentroidsMarker = 0x00
+	vectorIvfIndexMarker     = 0x01
+
 	// Markers and terminators for key encoding Datum arrays in sorted order.
 	// For the arrayKeyMarker and other types like bytes and bit arrays, it
 	// might be unclear why we have a separate marker for the ascending and
@@ -1124,6 +1129,18 @@ func DecodeGeoInvertedKey(b []byte) (loX, loY, hiX, hiY float64, remaining []byt
 		hiY = loY
 	}
 	return loX, loY, hiX, hiY, b, nil
+}
+
+// EncodeIvfCentroidVector encodes the centroid and vector for an ivfflat index.
+func EncodeIvfCentroidVector(b []byte, centroid []float32, vec []float32) []byte {
+	b = append(b, vectorIvfIndexMarker)
+	for _, f := range centroid {
+		b = EncodeFloat32Ascending(b, f)
+	}
+	for _, f := range vec {
+		b = EncodeFloat32Ascending(b, f)
+	}
+	return b
 }
 
 // EncodeNullDescending is the descending equivalent of EncodeNullAscending.

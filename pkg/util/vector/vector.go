@@ -10,6 +10,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/encoding"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
+	"github.com/cockroachdb/errors"
 )
 
 // MaxDim is the maximum number of dimensions a vector can have.
@@ -242,6 +244,47 @@ func Mult(t T, t2 T) (T, error) {
 		}
 	}
 	return ret, nil
+}
+
+func distanceFuncFromProto(distanceMethod vectorpb.DistanceFunction) func(T, T) (float64, error) {
+	switch distanceMethod {
+	case vectorpb.DistanceFunction_L2:
+		return L2Distance
+	case vectorpb.DistanceFunction_IP:
+		return InnerProduct
+	case vectorpb.DistanceFunction_COSINE:
+		return CosDistance
+	}
+	panic(fmt.Sprintf("unsupported distance function %s", distanceMethod))
+}
+
+// GetClosestCentroid returns the centroid from the index configuration that is
+// closest to the given vector t.
+func GetClosestCentroid(t T, cfg vectorpb.Config) (T, error) {
+	switch cfg.IndexType.(type) {
+	case *vectorpb.Config_IvfFlat:
+	default:
+		return nil, errors.AssertionFailedf("unsupported index type %T", cfg.IndexType)
+	}
+	distanceFunc := distanceFuncFromProto(cfg.DistanceFunction)
+
+	ivf := cfg.GetIvfFlat()
+	if len(ivf.Centroids) == 0 {
+		return nil, errors.AssertionFailedf("no centroids found in index configuration")
+	}
+	var closest T
+	closestDistance := math.MaxFloat64
+	for _, centroid := range ivf.Centroids {
+		dist, err := distanceFunc(t, centroid.Centroid)
+		if err != nil {
+			return nil, err
+		}
+		if dist < closestDistance {
+			closest = centroid.Centroid
+			closestDistance = dist
+		}
+	}
+	return closest, nil
 }
 
 // Random returns a random vector.

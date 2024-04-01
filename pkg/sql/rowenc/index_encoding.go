@@ -42,6 +42,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/trigram"
 	"github.com/cockroachdb/cockroach/pkg/util/tsearch"
 	"github.com/cockroachdb/cockroach/pkg/util/unique"
+	"github.com/cockroachdb/cockroach/pkg/util/vector"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -624,10 +626,13 @@ func EncodeInvertedIndexKeys(
 	} else {
 		val = tree.DNull
 	}
-	indexGeoConfig := index.GetGeoConfig()
-	if !indexGeoConfig.IsEmpty() {
+	config := index.GetVectorConfig()
+	if indexGeoConfig := index.GetGeoConfig(); !indexGeoConfig.IsEmpty() {
 		return EncodeGeoInvertedIndexTableKeys(ctx, val, keyPrefix, indexGeoConfig)
+	} else if vectorConfig := config; !vectorConfig.IsEmpty() {
+		return EncodeVectorInvertedIndexTableKeys(ctx, val, keyPrefix, vectorConfig)
 	}
+
 	return EncodeInvertedIndexTableKeys(val, keyPrefix, index.GetVersion())
 }
 
@@ -1085,6 +1090,32 @@ func EncodeGeoInvertedIndexTableKeys(
 	default:
 		return nil, errors.Errorf("internal error: unexpected type: %s", val.ResolvedType().Family())
 	}
+}
+
+// EncodeVectorInvertedIndexTableKeys is the equivalent of EncodeInvertedIndexTableKeys
+// for vectors.
+func EncodeVectorInvertedIndexTableKeys(_ context.Context, val tree.Datum, keyPrefix []byte,
+	vectorConfig vectorpb.Config) ([][]byte, error) {
+	if val == tree.DNull {
+		return nil, nil
+	}
+	vec := tree.MustBeDPGVector(val).T
+	centroid, err := vector.GetClosestCentroid(vec, vectorConfig)
+	if err != nil {
+		return nil, err
+	}
+	if vectorConfig.Dimensions != int32(len(centroid)) {
+		return nil, errors.Errorf("centroid has %d dimensions, expected %d", len(centroid), vectorConfig.Dimensions)
+	}
+	if vectorConfig.Dimensions != int32(len(vec)) {
+		return nil, errors.Errorf("vector has %d dimensions, expected %d", len(vec), vectorConfig.Dimensions)
+	}
+	// The buffer will be used to encode the centroid and the input vector. 4 bytes per
+	// float32 times 2 vectors.
+	b := make([]byte, 0, len(keyPrefix)+int(1+4*2*vectorConfig.Dimensions))
+	b = append(b, keyPrefix...)
+	encoding.EncodeIvfCentroidVector(b, centroid, vec)
+	return [][]byte{b}, nil
 }
 
 func encodeGeoKeys(

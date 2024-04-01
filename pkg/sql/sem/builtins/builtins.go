@@ -6414,6 +6414,22 @@ SELECT
 			Volatility:        volatility.Stable,
 			CalledOnNullInput: true,
 		},
+		tree.Overload{
+			Types: tree.ParamTypes{
+				{Name: "val", Typ: types.PGVector},
+				{Name: "version", Typ: types.Int},
+			},
+			ReturnType: tree.FixedReturnType(types.Int),
+			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
+				if args[0] == tree.DNull {
+					return tree.DZero, nil
+				}
+				return tree.NewDInt(tree.DInt(1)), nil
+			},
+			Info:              "This function is used only by CockroachDB's developers for testing purposes.",
+			Volatility:        volatility.Stable,
+			CalledOnNullInput: true,
+		},
 	),
 
 	"crdb_internal.assignment_cast": makeBuiltin(

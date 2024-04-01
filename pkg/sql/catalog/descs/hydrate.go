@@ -243,7 +243,24 @@ func hydrate(
 	if !isHydratable(desc) {
 		return nil
 	}
-	return typedesc.HydrateTypesInDescriptor(ctx, desc, typeLookupFunc)
+	err := typedesc.HydrateTypesInDescriptor(ctx, desc, typeLookupFunc)
+	if err != nil {
+		return err
+	}
+	if tableDesc, ok := desc.(catalog.TableDescriptor); ok {
+		for _, idx := range tableDesc.NonDropIndexes() {
+			vectorConfig := idx.GetVectorConfig()
+			if vectorConfig.IsEmpty() {
+				continue
+			}
+			ivfFlat := vectorConfig.GetIvfFlat()
+			if ivfFlat == nil {
+				continue
+			}
+			ivfFlat.Centroids = nil // scan centroids
+		}
+	}
+	return nil
 }
 
 // makeTypeLookupFuncForHydration builds a typedesc.TypeLookupFunc for the

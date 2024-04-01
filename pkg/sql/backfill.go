@@ -1806,11 +1806,16 @@ func countExpectedRowsForInvertedIndex(
 		ctx context.Context, txn descs.Txn,
 	) error {
 		var stmt string
-		geoConfig := idx.GetGeoConfig()
-		if geoConfig.IsEmpty() {
+		if geoConfig := idx.GetGeoConfig(); geoConfig.IsEmpty() {
 			stmt = fmt.Sprintf(
 				`SELECT coalesce(sum_int(crdb_internal.num_inverted_index_entries(%s, %d)), 0) FROM [%d AS t]`,
 				colNameOrExpr, idx.GetVersion(), desc.GetID(),
+			)
+		} else if vectorConfig := idx.GetVectorConfig(); vectorConfig.IsEmpty() {
+			nLists := vectorConfig.GetIvfFlat().NLists
+			stmt = fmt.Sprintf(
+				`SELECT coalesce(sum_int(crdb_internal.num_inverted_index_entries(%s, %d)), 0) + least(%d, count(colNameOrExpr)) FROM [%d AS t]`,
+				colNameOrExpr, idx.GetVersion(), nLists, desc.GetID(),
 			)
 		} else {
 			stmt = fmt.Sprintf(
@@ -1832,6 +1837,11 @@ func countExpectedRowsForInvertedIndex(
 				return errors.New("failed to verify inverted index count")
 			}
 			expectedCount = int64(tree.MustBeDInt(row[0]))
+			// For ivf indexes, the expected count is the sum of the number of
+			// entries in the inverted index and the number of rows in the table.
+			if len(row) > 1 {
+				expectedCount += int64(tree.MustBeDInt(row[1]))
+			}
 			return nil
 		})
 	}); err != nil {

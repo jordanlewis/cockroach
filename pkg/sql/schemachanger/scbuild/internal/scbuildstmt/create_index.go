@@ -43,6 +43,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util/errorutil/unimplemented"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -348,6 +349,33 @@ func processColNodeType(
 			}
 			indexSpec.secondary.GeoConfig = geoindex.DefaultGeographyIndexConfig()
 			b.IncrementSchemaChangeIndexCounter("geography_inverted")
+		case types.PGVectorFamily:
+			width := columnType.Type.Width()
+			if width == 0 {
+				panic(pgerror.New(pgcode.InvalidObjectDefinition, "column does not have dimensions"))
+			}
+			indexSpec.secondary.VectorConfig = &vectorpb.Config{
+				IndexType: &vectorpb.Config_IvfFlat{
+					IvfFlat: &vectorpb.IVFFlatConfig{
+						// lists defaults to 100.
+						NLists: 100,
+					},
+				},
+				Dimensions: width,
+			}
+			invertedKind = catpb.InvertedIndexColumnKind_IVFFLAT
+			switch columnNode.OpClass {
+			// The default operator class is "vector_l2_ops".
+			case "vector_l2_ops", "":
+				indexSpec.secondary.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_L2
+			case "vector_ip_ops":
+				indexSpec.secondary.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_IP
+			case "vector_cosine_ops":
+				indexSpec.secondary.VectorConfig.DistanceFunction = vectorpb.DistanceFunction_COSINE
+			default:
+				panic(newUndefinedOpclassError(columnNode.OpClass))
+			}
+			b.IncrementSchemaChangeIndexCounter("ivfflat_inverted")
 		case types.StringFamily:
 			// Check the opclass of the last column in the list, which is the column
 			// we're going to inverted index.
@@ -930,7 +958,7 @@ func maybeAddIndexPredicate(b BuildCtx, n *tree.CreateIndex, idxSpec *indexSpec)
 }
 
 // maybeApplyStorageParameters apply any storage parameters into the index spec,
-// this is only used for GeoConfig today.
+// this is only used for GeoConfig and VectorConfig today.
 func maybeApplyStorageParameters(b BuildCtx, n *tree.CreateIndex, idxSpec *indexSpec) {
 	if len(n.StorageParams) == 0 {
 		return
@@ -938,6 +966,9 @@ func maybeApplyStorageParameters(b BuildCtx, n *tree.CreateIndex, idxSpec *index
 	dummyIndexDesc := &descpb.IndexDescriptor{}
 	if idxSpec.secondary.GeoConfig != nil {
 		dummyIndexDesc.GeoConfig = *idxSpec.secondary.GeoConfig
+	}
+	if idxSpec.secondary.VectorConfig != nil {
+		dummyIndexDesc.VectorConfig = *idxSpec.secondary.VectorConfig
 	}
 	storageParamSetter := &indexstorageparam.Setter{
 		IndexDesc: dummyIndexDesc,
@@ -950,6 +981,11 @@ func maybeApplyStorageParameters(b BuildCtx, n *tree.CreateIndex, idxSpec *index
 		idxSpec.secondary.GeoConfig = &dummyIndexDesc.GeoConfig
 	} else {
 		idxSpec.secondary.GeoConfig = nil
+	}
+	if !dummyIndexDesc.VectorConfig.IsEmpty() {
+		idxSpec.secondary.VectorConfig = &dummyIndexDesc.VectorConfig
+	} else {
+		idxSpec.secondary.VectorConfig = nil
 	}
 }
 

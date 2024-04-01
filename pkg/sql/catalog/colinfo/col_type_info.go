@@ -181,7 +181,7 @@ func ColumnTypeIsInvertedIndexable(t *types.T) bool {
 	switch t.Family() {
 	case types.ArrayFamily:
 		return t.ArrayContents().Family() != types.RefCursorFamily
-	case types.JsonFamily, types.StringFamily:
+	case types.JsonFamily, types.StringFamily, types.PGVectorFamily:
 		return true
 	}
 	return ColumnTypeIsOnlyInvertedIndexable(t)

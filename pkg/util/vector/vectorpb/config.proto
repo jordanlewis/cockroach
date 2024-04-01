@@ -10,19 +10,28 @@ import "gogoproto/gogo.proto";
 // At the moment, only one major indexing strategy is implemented (ivfflat).
 message Config {
   option (gogoproto.equal) = true;
-  option (gogoproto.onlyone) = true;
 
-  IVFFlatConfig ivf_flat = 1;
+  oneof index_type { IVFFlatConfig ivf_flat = 1; }
+  DistanceFunction distance_function = 2;
+  int32 dimensions = 3;
+}
+
+enum DistanceFunction {
+  // INVALID is an invalid distance function.
+  INVALID = 0;
+  // L2 is the Euclidean distance.
+  L2 = 1;
+  // IP is the inner product.
+  IP = 2;
+  // Cosine is the cosine similarity.
+  COSINE = 3;
 }
 
 message IVFFlatConfig {
   option (gogoproto.equal) = true;
-  Centroids centroids = 1;
-}
-
-message Centroids {
-  option (gogoproto.equal) = true;
-  repeated Centroid centroids = 1;
+  repeated Centroid centroids = 1 [ (gogoproto.nullable) = false ];
+  // NLists is the number of lists in the index.
+  int32 n_lists = 2;
 }
 
 message Centroid {
