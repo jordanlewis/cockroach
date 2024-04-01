@@ -35,6 +35,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil/pgdate"
 	"github.com/cockroachdb/cockroach/pkg/util/tsearch"
+	"github.com/cockroachdb/cockroach/pkg/util/vector"
 	"github.com/cockroachdb/errors"
 	"github.com/lib/pq/oid"
 )
@@ -620,6 +621,23 @@ func performCastWithoutPrecisionTruncation(
 			return tree.ParseDPGVector(string(*d))
 		case *tree.DCollatedString:
 			return tree.ParseDPGVector(d.Contents)
+		case *tree.DArray:
+			switch d.ParamTyp.Family() {
+			case types.FloatFamily, types.IntFamily, types.DecimalFamily:
+				v := make(vector.T, len(d.Array))
+				for i, elem := range d.Array {
+					if elem == tree.DNull {
+						return nil, pgerror.Newf(pgcode.NullValueNotAllowed,
+							"array must not contain nulls")
+					}
+					datum, err := performCast(ctx, evalCtx, elem, types.Float4, false)
+					if err != nil {
+						return nil, err
+					}
+					v[i] = float32(*datum.(*tree.DFloat))
+				}
+				return tree.NewDPGVector(v), nil
+			}
 		case *tree.DPGVector:
 			return d, nil
 		}
