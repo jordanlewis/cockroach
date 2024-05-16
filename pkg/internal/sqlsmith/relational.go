@@ -12,6 +12,7 @@ package sqlsmith
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/randgen"
@@ -20,6 +21,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/volatility"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util"
+	"github.com/lib/pq/oid"
 )
 
 func (s *Smither) makeStmt() (stmt tree.Statement, ok bool) {
@@ -101,15 +103,14 @@ var (
 		{10, makeInsert},
 		{10, makeDelete},
 		{10, makeUpdate},
-		{1, makeAlter},
+		{2, makeAlter},
 		{1, makeBegin},
-		{2, makeRollback},
-		{6, makeCommit},
+		{1, makeRollback},
+		{2, makeCommit},
 		{1, makeBackup},
 		{1, makeRestore},
 		{1, makeExport},
 		{1, makeImport},
-		{1, makeCreateFunc},
 	}
 	nonMutatingStatements = []statementWeight{
 		{10, makeSelect},
@@ -356,16 +357,31 @@ func makeMergeJoinExpr(s *Smither, _ colRefs, forJoin bool) (tree.TableExpr, col
 	rightAliasName := tree.NewUnqualifiedTableName(rightAlias)
 
 	// Now look for one that satisfies our constraints (some shared prefix
-	// of type + direction), might end up being the same one. We rely on
-	// Go's non-deterministic map iteration ordering for randomness.
+	// of type + direction), might end up being the same one.
 	rightTableName, cols, ok := func() (*tree.TableIndexName, [][2]colRef, bool) {
 		s.lock.RLock()
 		defer s.lock.RUnlock()
-		for tbl, idxs := range s.indexes {
-			for idxName, idx := range idxs {
+		if len(s.tables) == 0 {
+			return nil, nil, false
+		}
+		// Iterate in deterministic but random order over all tables.
+		tableNames := make([]tree.TableName, 0, len(s.tables))
+		for t := range s.indexes {
+			tableNames = append(tableNames, t)
+		}
+		sort.Slice(tableNames, func(i, j int) bool {
+			return strings.Compare(tableNames[i].String(), tableNames[j].String()) < 0
+		})
+		s.rnd.Shuffle(len(tableNames), func(i, j int) {
+			tableNames[i], tableNames[j] = tableNames[j], tableNames[i]
+		})
+		for _, tbl := range tableNames {
+			// Iterate in deterministic but random order over all indexes.
+			idxs := s.getAllIndexesForTableRLocked(tbl)
+			for _, idx := range idxs {
 				rightTableName := &tree.TableIndexName{
 					Table: tbl,
-					Index: tree.UnrestrictedName(idxName),
+					Index: tree.UnrestrictedName(idx.Name),
 				}
 				// cols keeps track of matching column pairs.
 				var cols [][2]colRef
@@ -553,6 +569,14 @@ var dropBehaviors = []tree.DropBehavior{
 
 func (s *Smither) randDropBehavior() tree.DropBehavior {
 	return dropBehaviors[s.rnd.Intn(len(dropBehaviors))]
+}
+
+func (s *Smither) randDropBehaviorNoCascade() tree.DropBehavior {
+	if s.d6() < 3 {
+		// Make RESTRICT twice less likely than DEFAULT.
+		return tree.DropRestrict
+	}
+	return tree.DropDefault
 }
 
 var stringComparisons = []treecmp.ComparisonOperatorSymbol{
@@ -834,11 +858,21 @@ func (s *Smither) makeSelect(desiredTypes []*types.T, refs colRefs) (*tree.Selec
 		return nil, nil, ok
 	}
 
+	var orderBy tree.OrderBy
+	limit := makeLimit(s)
+	if limit != nil && s.disableNondeterministicLimits {
+		// The ORDER BY clause must be fully specified with all select list columns
+		// in order to make a LIMIT clause deterministic.
+		orderBy = s.makeOrderByWithAllCols(orderByRefs.extend(selectRefs...))
+	} else {
+		orderBy = s.makeOrderBy(orderByRefs)
+	}
+
 	stmt := tree.Select{
 		Select:  clause,
 		With:    withStmt,
-		OrderBy: s.makeOrderBy(orderByRefs),
-		Limit:   makeLimit(s),
+		OrderBy: orderBy,
+		Limit:   limit,
 	}
 
 	return &stmt, selectRefs, true
@@ -876,10 +910,65 @@ func (s *Smither) makeSelectList(
 }
 
 func makeCreateFunc(s *Smither) (tree.Statement, bool) {
-	if s.disableUDFs {
+	if s.disableUDFCreation {
 		return nil, false
 	}
 	return s.makeCreateFunc()
+}
+
+func makeDropFunc(s *Smither) (tree.Statement, bool) {
+	if s.disableUDFCreation {
+		return nil, false
+	}
+	functions.Lock()
+	defer functions.Unlock()
+	class := tree.NormalClass
+	if s.d6() < 3 {
+		class = tree.GeneratorClass
+	}
+	// fns is a map from return type OID to the list of function overloads.
+	fns := functions.fns[class]
+	if len(fns) == 0 {
+		return nil, false
+	}
+	retOIDs := make([]oid.Oid, 0, len(fns))
+	for oid := range fns {
+		retOIDs = append(retOIDs, oid)
+	}
+	// Sort the slice since iterating over fns is non-deterministic.
+	sort.Slice(retOIDs, func(i, j int) bool {
+		return retOIDs[i] < retOIDs[j]
+	})
+	// Pick a random starting point within the list of OIDs.
+	oidShift := s.rnd.Intn(len(retOIDs))
+	for i := 0; i < len(retOIDs); i++ {
+		oidPos := (i + oidShift) % len(retOIDs)
+		overloads := fns[retOIDs[oidPos]]
+		// Pick a random starting point within the list of overloads.
+		ovShift := s.rnd.Intn(len(overloads))
+		for j := 0; j < len(overloads); j++ {
+			fn := overloads[(j+ovShift)%len(overloads)]
+			if fn.overload.Type == tree.UDFRoutine {
+				routineObj := tree.RoutineObj{
+					FuncName: tree.MakeRoutineNameFromPrefix(tree.ObjectNamePrefix{}, tree.Name(fn.def.Name)),
+				}
+				if s.coin() {
+					// Sometimes simulate omitting the parameter specification,
+					// sometimes specify all parameters.
+					routineObj.Params = fn.overload.RoutineParams
+				}
+				return &tree.DropRoutine{
+					IfExists:  s.d6() < 3,
+					Procedure: false,
+					Routines:  tree.RoutineObjs{routineObj},
+					// TODO(#101380): use s.randDropBehavior() once DROP
+					// FUNCTION CASCADE is implemented.
+					DropBehavior: s.randDropBehaviorNoCascade(),
+				}, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (s *Smither) makeCreateFunc() (cf *tree.CreateRoutine, ok bool) {
@@ -1008,16 +1097,16 @@ func (s *Smither) makeCreateFunc() (cf *tree.CreateRoutine, ok bool) {
 
 	// Disable CTEs temporarily, since they are not currently supported in UDFs.
 	// TODO(92961): Allow CTEs in generated statements in UDF bodies.
-	// TODO(93049): Allow UDFs to call other UDFs, as well as create other UDFs.
+	// TODO(93049): Allow UDFs to create other UDFs.
 	oldDisableWith := s.disableWith
 	oldDisableMutations := s.disableMutations
 	defer func() {
 		s.disableWith = oldDisableWith
-		s.disableUDFs = false
+		s.disableUDFCreation = false
 		s.disableMutations = oldDisableMutations
 	}()
 	s.disableWith = true
-	s.disableUDFs = true
+	s.disableUDFCreation = true
 	s.disableMutations = (funcVol != tree.RoutineVolatile) || s.disableMutations
 
 	// RoutineBodyStr
@@ -1193,12 +1282,22 @@ func (s *Smither) makeDelete(refs colRefs) (*tree.Delete, []*tableRef, bool) {
 		cols = append(cols, c...)
 	}
 
+	var orderBy tree.OrderBy
+	limit := makeLimit(s)
+	if limit != nil && s.disableNondeterministicLimits {
+		// The ORDER BY clause must be fully specified with all columns in order to
+		// make a LIMIT clause deterministic.
+		orderBy = s.makeOrderByWithAllCols(cols)
+	} else {
+		orderBy = s.makeOrderBy(cols)
+	}
+
 	del := &tree.Delete{
 		Table:     table,
 		Where:     s.makeWhere(cols, hasJoinTable),
-		OrderBy:   s.makeOrderBy(cols),
+		OrderBy:   orderBy,
 		Using:     using,
-		Limit:     makeLimit(s),
+		Limit:     limit,
 		Returning: &tree.NoReturningClause{},
 	}
 	if del.Limit == nil {
@@ -1259,12 +1358,22 @@ func (s *Smither) makeUpdate(refs colRefs) (*tree.Update, []*tableRef, bool) {
 		cols = append(cols, c...)
 	}
 
+	var orderBy tree.OrderBy
+	limit := makeLimit(s)
+	if limit != nil && s.disableNondeterministicLimits {
+		// The ORDER BY clause must be fully specified with all columns in order to
+		// make a LIMIT clause deterministic.
+		orderBy = s.makeOrderByWithAllCols(cols)
+	} else {
+		orderBy = s.makeOrderBy(cols)
+	}
+
 	update := &tree.Update{
 		Table:     table,
 		From:      from,
 		Where:     s.makeWhere(cols, hasJoinTable),
-		OrderBy:   s.makeOrderBy(cols),
-		Limit:     makeLimit(s),
+		OrderBy:   orderBy,
+		Limit:     limit,
 		Returning: &tree.NoReturningClause{},
 	}
 	colByName := make(map[tree.Name]*tree.ColumnTableDef)
@@ -1630,6 +1739,28 @@ func (s *Smither) makeOrderBy(refs colRefs) tree.OrderBy {
 			NullsOrder: s.randNullsOrder(),
 		})
 	}
+	return ob
+}
+
+func (s *Smither) makeOrderByWithAllCols(refs colRefs) tree.OrderBy {
+	if len(refs) == 0 {
+		return nil
+	}
+	var ob tree.OrderBy
+	for _, ref := range refs {
+		// PostGIS cannot order box2d types.
+		if s.postgres && ref.typ.Family() == types.Box2DFamily {
+			continue
+		}
+		ob = append(ob, &tree.Order{
+			Expr:       ref.item,
+			Direction:  s.randDirection(),
+			NullsOrder: s.randNullsOrder(),
+		})
+	}
+	s.rnd.Shuffle(len(ob), func(i, j int) {
+		ob[i], ob[j] = ob[j], ob[i]
+	})
 	return ob
 }
 

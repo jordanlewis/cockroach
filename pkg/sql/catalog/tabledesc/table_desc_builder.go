@@ -14,8 +14,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/keys"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catenumpb"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catprivilege"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/seqexpr"
@@ -264,6 +266,25 @@ func (tdb *tableDescriptorBuilder) StripDanglingBackReferences(
 	return nil
 }
 
+// StripNonExistentRoles implements the catalog.DescriptorBuilder
+// interface.
+func (tdb *tableDescriptorBuilder) StripNonExistentRoles(
+	roleExists func(role username.SQLUsername) bool,
+) error {
+	newPrivs := make([]catpb.UserPrivileges, 0, len(tdb.maybeModified.Privileges.Users))
+	for _, priv := range tdb.maybeModified.Privileges.Users {
+		exists := roleExists(priv.UserProto.Decode())
+		if exists {
+			newPrivs = append(newPrivs, priv)
+		}
+	}
+	if len(newPrivs) != len(tdb.maybeModified.Privileges.Users) {
+		tdb.maybeModified.Privileges.Users = newPrivs
+		tdb.changes.Add(catalog.StrippedNonExistentRoles)
+	}
+	return nil
+}
+
 // SetRawBytesInStorage implements the catalog.DescriptorBuilder interface.
 func (tdb *tableDescriptorBuilder) SetRawBytesInStorage(rawBytes []byte) {
 	tdb.rawBytesInStorage = append([]byte(nil), rawBytes...) // deep-copy
@@ -402,6 +423,7 @@ func maybeFillInDescriptor(
 	set(catalog.RemovedDuplicateIDsInRefs, maybeRemoveDuplicateIDsInRefs(desc))
 	set(catalog.StrippedDanglingSelfBackReferences, maybeStripDanglingSelfBackReferences(desc))
 	set(catalog.FixSecondaryIndexEncodingType, maybeFixSecondaryIndexEncodingType(desc))
+	set(catalog.FixedIncorrectForeignKeyOrigins, maybeFixForeignKeySelfReferences(desc))
 	return changes, nil
 }
 
@@ -1175,4 +1197,24 @@ func resolveTableNamesForIDs(
 	}
 
 	return result, nil
+}
+
+// maybeFixForeignKeySelfReferences fixes references that should point to the
+// current descriptor inside OutboundFKs and InboundFKs.
+func maybeFixForeignKeySelfReferences(tableDesc *descpb.TableDescriptor) (wasRepaired bool) {
+	for idx := range tableDesc.OutboundFKs {
+		fk := &tableDesc.OutboundFKs[idx]
+		if fk.OriginTableID != tableDesc.ID {
+			fk.OriginTableID = tableDesc.ID
+			wasRepaired = true
+		}
+	}
+	for idx := range tableDesc.InboundFKs {
+		fk := &tableDesc.InboundFKs[idx]
+		if fk.ReferencedTableID != tableDesc.ID {
+			fk.ReferencedTableID = tableDesc.ID
+			wasRepaired = true
+		}
+	}
+	return wasRepaired
 }

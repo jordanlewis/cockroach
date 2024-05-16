@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/roachtestflags"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/roachtestutil/operations"
@@ -50,6 +51,15 @@ const (
 	testResultFailure testResult = iota
 	testResultSuccess
 	testResultSkip
+)
+
+type ddEventType int
+
+const (
+	eventOpStarted ddEventType = iota
+	eventOpRan
+	eventOpFinishedCleanup
+	eventOpError
 )
 
 type testReportForGitHub struct {
@@ -133,6 +143,8 @@ func runTests(register func(registry.Registry), filter *registry.TestFilter) err
 	if literalArtifactsDir == "" {
 		literalArtifactsDir = artifactsDir
 	}
+
+	roachprod.ClearClusterCache = roachtestflags.ClearClusterCache
 
 	setLogConfig(artifactsDir)
 	runnerDir := filepath.Join(artifactsDir, runnerLogsDir)
@@ -437,6 +449,47 @@ func maybeDumpSummaryMarkdown(r *testRunner) error {
 	return nil
 }
 
+// maybeEmitDatadogEvent emits a datadog event if a non-nil statsd client is passed in.
+func maybeEmitDatadogEvent(
+	client *statsd.Client,
+	opSpec *registry.OperationSpec,
+	clusterName string,
+	eventType ddEventType,
+	operationID uint64,
+) {
+	if client == nil {
+		return
+	}
+	status := "started"
+
+	switch eventType {
+	case eventOpStarted:
+		status = "started"
+	case eventOpRan:
+		status = "finished running; waiting for cleanup"
+	case eventOpFinishedCleanup:
+		status = "cleaned up its state"
+	case eventOpError:
+		status = "ran with an error"
+	}
+	details := fmt.Sprintf("cluster: %s\n", clusterName)
+	ev := statsd.NewEvent(fmt.Sprintf("op %s %s", opSpec.Name, status), details)
+
+	ev.AggregationKey = fmt.Sprintf("operation-%d", operationID)
+	switch eventType {
+	case eventOpStarted:
+		ev.AlertType = statsd.Info
+	case eventOpRan:
+		ev.AlertType = statsd.Success
+	case eventOpFinishedCleanup:
+		ev.AlertType = statsd.Info
+	case eventOpError:
+		ev.AlertType = statsd.Error
+	}
+
+	_ = client.Event(ev)
+}
+
 // runOperation sequentially runs one operation matched by the passed-in filter.
 func runOperation(register func(registry.Registry), filter string, clusterName string) error {
 	//lint:ignore SA1019 deprecated
@@ -455,6 +508,15 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 	register(&r)
 	ctx := context.Background()
 
+	var statsdClient *statsd.Client
+	if roachtestflags.DogstatsdAddr != "" {
+		var err error
+		statsdClient, err = statsd.New(roachtestflags.DogstatsdAddr)
+		if err != nil {
+			return errors.Wrap(err, "failed to create statsd client")
+		}
+	}
+
 	// TODO(bilal): This is excessive for just getting the number of nodes in the
 	// cluster. We should expose a roachprod.Nodes method or so.
 	nodes, err := roachprod.PgURL(ctx, l, clusterName, roachtestflags.CertsDir, roachprod.PGURLOptions{})
@@ -463,9 +525,15 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 	}
 
 	cSpec := spec.ClusterSpec{NodeCount: len(nodes)}
+	op := &operationImpl{
+		cockroach: roachtestflags.CockroachBinaryPath,
+		l:         l,
+	}
 	c := &clusterImpl{
 		name:       clusterName,
+		cloud:      roachtestflags.Cloud,
 		spec:       cSpec,
+		f:          op,
 		l:          l,
 		expiration: cSpec.Expiration(),
 		destroyState: destroyState{
@@ -487,17 +555,13 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 	} else {
 		return errors.Errorf("no operations found for filter %s", filter)
 	}
+	op.spec = opSpec
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Cancel this context if we get an interrupt.
 	CtrlC(ctx, l, cancel, nil /* registry */)
 
-	op := &operationImpl{
-		spec:      opSpec,
-		cockroach: roachtestflags.CockroachBinaryPath,
-		l:         l,
-	}
 	op.mu.cancel = cancel
 	op.Status(fmt.Sprintf("checking if operation %s dependencies are met", opSpec.Name))
 
@@ -511,6 +575,10 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 		return nil
 	}
 
+	// operationRunID is used for datadog event aggregation and logging.
+	operationRunID := rand.Uint64()
+	maybeEmitDatadogEvent(statsdClient, opSpec, clusterName, eventOpStarted, operationRunID)
+	op.Status(fmt.Sprintf("running operation %s with run id %d", opSpec.Name, operationRunID))
 	var cleanup registry.OperationCleanup
 	func() {
 		ctx, cancel := context.WithTimeout(ctx, opSpec.Timeout)
@@ -520,9 +588,11 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 	}()
 	if op.Failed() {
 		op.Status("operation failed")
+		maybeEmitDatadogEvent(statsdClient, opSpec, clusterName, eventOpError, operationRunID)
 		return op.mu.failures[0]
 	}
 
+	maybeEmitDatadogEvent(statsdClient, opSpec, clusterName, eventOpRan, operationRunID)
 	if cleanup == nil {
 		op.Status("operation ran successfully")
 		return nil
@@ -530,13 +600,14 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 
 	op.Status(fmt.Sprintf("operation ran successfully; waiting %s before cleanup", roachtestflags.WaitBeforeCleanup))
 	select {
+	// Don't exit if the context is done due to a Ctrl-C, instead still run the
+	// cleanup code.
 	case <-ctx.Done():
-		return ctx.Err()
 	case <-time.After(roachtestflags.WaitBeforeCleanup):
 	}
 	op.Status("running cleanup")
 	func() {
-		ctx, cancel := context.WithTimeout(ctx, opSpec.Timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), opSpec.Timeout)
 		defer cancel()
 
 		cleanup.Cleanup(ctx, op, c)
@@ -544,8 +615,10 @@ func runOperation(register func(registry.Registry), filter string, clusterName s
 
 	if op.Failed() {
 		op.Status("operation cleanup failed")
+		maybeEmitDatadogEvent(statsdClient, opSpec, clusterName, eventOpError, operationRunID)
 		return op.mu.failures[0]
 	}
+	maybeEmitDatadogEvent(statsdClient, opSpec, clusterName, eventOpFinishedCleanup, operationRunID)
 
 	return nil
 }

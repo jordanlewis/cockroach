@@ -35,6 +35,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/tsearch"
 	"github.com/cockroachdb/cockroach/pkg/util/uint128"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
+	"github.com/cockroachdb/cockroach/pkg/util/vector"
 	"github.com/cockroachdb/errors"
 	"github.com/lib/pq/oid"
 )
@@ -261,8 +262,7 @@ func RandDatumWithNullChance(
 		}
 		return d
 	case types.OidFamily:
-		d := tree.MakeDOid(oid.Oid(rng.Uint32()), typ)
-		return &d
+		return tree.NewDOidWithType(oid.Oid(rng.Uint32()), typ)
 	case types.UnknownFamily:
 		return tree.DNull
 	case types.ArrayFamily:
@@ -294,6 +294,8 @@ func RandDatumWithNullChance(
 		return tree.NewDTSVector(tsearch.RandomTSVector(rng))
 	case types.TSQueryFamily:
 		return tree.NewDTSQuery(tsearch.RandomTSQuery(rng))
+	case types.PGVectorFamily:
+		return tree.NewDPGVector(vector.Random(rng))
 	default:
 		panic(errors.AssertionFailedf("invalid type %v", typ.DebugString()))
 	}
@@ -469,7 +471,7 @@ func RandDatumSimple(rng *rand.Rand, typ *types.T) tree.Datum {
 	case types.JsonFamily:
 		datum = tree.NewDJSON(randJSONSimple(rng))
 	case types.OidFamily:
-		datum = tree.NewDOid(oid.Oid(rng.Intn(simpleRange)))
+		datum = tree.NewDOidWithType(oid.Oid(rng.Intn(simpleRange)), typ)
 	case types.StringFamily:
 		datum = tree.NewDString(randStringSimple(rng))
 	case types.TimeFamily:

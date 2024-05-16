@@ -773,16 +773,26 @@ func (c *coster) computeScanCost(scan *memo.ScanExpr, required *physical.Require
 		}
 	}
 
-	if scan.Flags.ForceInvertedIndex && !scan.IsInvertedScan() {
+	if scan.Flags.ForceInvertedIndex && !scan.IsInvertedScan(c.mem.Metadata()) {
 		return hugeCost
 	}
 
 	stats := scan.Relational().Statistics()
 	rowCount := stats.RowCount
 	if isUnfiltered && c.evalCtx != nil && c.evalCtx.SessionData().DisallowFullTableScans {
-		isLarge := !stats.Available || rowCount > c.evalCtx.SessionData().LargeFullScanRows
-		if isLarge {
-			return hugeCost
+		if !scan.IsVirtualTable(c.mem.Metadata()) {
+			// Don't apply the huge cost to full scans of virtual tables since
+			// we don't reject them anyway. In other words, we would only
+			// penalize plans with full scans of virtual tables, which might
+			// force us to choose a plan that is actually worse but doesn't get
+			// the huge cost since it doesn't contain a full scan (e.g. we could
+			// do a virtual table lookup join instead).
+			// TODO(#123783): once we start rejecting plans with full scans of
+			// virtual tables, we should apply the cost penalty here.
+			isLarge := !stats.Available || rowCount > c.evalCtx.SessionData().LargeFullScanRows
+			if isLarge {
+				return hugeCost
+			}
 		}
 	}
 
@@ -1330,6 +1340,19 @@ func (c *coster) computeZigzagJoinCost(join *memo.ZigzagJoinExpr) memo.Cost {
 	// the zigzag join. See issue #68556.
 	cost += c.largeCardinalityCostPenalty(join.Relational().Cardinality, rowCount)
 
+	if c.evalCtx != nil && c.evalCtx.SessionData().OptimizerUseImprovedZigzagJoinCosting {
+		// Add one randIOCostFactor of additional seek cost so the cost is at least as
+		// much as a scan if rowCount is less than one.
+		cost += randIOCostFactor
+
+		// TODO(rytaft): We don't capture distribution info in zigzag joins, so pass
+		// an empty distribution. We need to add some distribution cost to prevent the
+		// coster from always preferring zigzag joins over scans. If we ever want to
+		// make zigzag joins a priority again, we should store a real distribution
+		// value on the zigzag join, similar to scans.
+		cost += c.distributionCost(physical.Distribution{})
+	}
+
 	return cost
 }
 
@@ -1405,12 +1428,20 @@ func (c *coster) computeGroupingCost(grouping memo.RelExpr, required *physical.R
 	// Normally, a grouping expression must process each input row once.
 	inputRowCount := grouping.Child(0).(memo.RelExpr).Relational().Statistics().RowCount
 
-	// If this is a streaming GroupBy with a limit hint, l, we only need to
-	// process enough input rows to output l rows.
+	// If this is a streaming GroupBy or a DistinctOn with a limit hint, l, we
+	// only need to process enough input rows to output l rows.
 	streamingType := private.GroupingOrderType(&required.Ordering)
-	if (streamingType != memo.NoStreaming) && grouping.Op() == opt.GroupByOp && required.LimitHint > 0 {
-		inputRowCount = streamingGroupByInputLimitHint(inputRowCount, outputRowCount, required.LimitHint)
-		outputRowCount = math.Min(outputRowCount, required.LimitHint)
+	if required.LimitHint > 0 {
+		if grouping.Op() == opt.GroupByOp && streamingType != memo.NoStreaming {
+			inputRowCount = streamingGroupByInputLimitHint(inputRowCount, outputRowCount, required.LimitHint)
+			outputRowCount = math.Min(outputRowCount, required.LimitHint)
+		} else if grouping.Op() == opt.DistinctOnOp &&
+			c.evalCtx.SessionData().OptimizerUseImprovedDistinctOnLimitHintCosting {
+			if d := distinctOnLimitHint(outputRowCount, required.LimitHint); d > 0 {
+				inputRowCount = d
+			}
+			outputRowCount = math.Min(outputRowCount, required.LimitHint)
+		}
 	}
 
 	// Cost per row depends on the number of grouping columns and the number of

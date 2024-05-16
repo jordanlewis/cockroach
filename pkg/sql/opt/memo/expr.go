@@ -709,9 +709,15 @@ type UDFDefinition struct {
 	// data source.
 	MultiColDataSource bool
 
-	// IsRecursive indicates whether the UDF recursively calls itself. This
+	// IsRecursive indicates whether the routine recursively calls itself. This
 	// applies to direct as well as indirect recursive calls (mutual recursion).
 	IsRecursive bool
+
+	// BlockStart indicates whether the routine marks the start of a PL/pgSQL
+	// block with an exception handler. This is used to determine when to
+	// initialize the common state held between sub-routines within the same
+	// block.
+	BlockStart bool
 
 	// RoutineType indicates whether this routine is a UDF, stored procedure, or
 	// builtin function.
@@ -852,8 +858,8 @@ func (s *ScanPrivate) IsFullIndexScan() bool {
 
 // IsInvertedScan returns true if the index being scanned is an inverted
 // index.
-func (s *ScanPrivate) IsInvertedScan() bool {
-	return s.InvertedConstraint != nil
+func (s *ScanPrivate) IsInvertedScan(md *opt.Metadata) bool {
+	return md.Table(s.Table).Index(s.Index).IsInverted()
 }
 
 // IsVirtualTable returns true if the table being scanned is a virtual table.

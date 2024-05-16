@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +38,7 @@ func registerDiskStalledWALFailover(r registry.Registry) {
 		Name:                "disk-stalled/wal-failover/among-stores",
 		Owner:               registry.OwnerStorage,
 		Cluster:             r.MakeClusterSpec(4, spec.CPU(16), spec.ReuseNone(), spec.SSD(2)),
-		CompatibleClouds:    registry.AllExceptAWS,
+		CompatibleClouds:    registry.OnlyGCE,
 		Suites:              registry.Suites(registry.Nightly),
 		Timeout:             3 * time.Hour,
 		SkipPostValidations: registry.PostValidationNoDeadNodes,
@@ -194,13 +193,13 @@ func registerDiskStalledDetection(r registry.Registry) {
 	stallers := map[string]func(test.Test, cluster.Cluster) diskStaller{
 		"dmsetup": func(t test.Test, c cluster.Cluster) diskStaller { return &dmsetupDiskStaller{t: t, c: c} },
 		"cgroup/read-write/logs-too=false": func(t test.Test, c cluster.Cluster) diskStaller {
-			return &cgroupDiskStaller{t: t, c: c, readOrWrite: []bandwidthReadWrite{writeBandwidth, readBandwidth}}
+			return roachtestutil.MakeCgroupDiskStaller(t, c, true, false)
 		},
 		"cgroup/read-write/logs-too=true": func(t test.Test, c cluster.Cluster) diskStaller {
-			return &cgroupDiskStaller{t: t, c: c, readOrWrite: []bandwidthReadWrite{writeBandwidth, readBandwidth}, logsToo: true}
+			return roachtestutil.MakeCgroupDiskStaller(t, c, true, true)
 		},
 		"cgroup/write-only/logs-too=true": func(t test.Test, c cluster.Cluster) diskStaller {
-			return &cgroupDiskStaller{t: t, c: c, readOrWrite: []bandwidthReadWrite{writeBandwidth}, logsToo: true}
+			return roachtestutil.MakeCgroupDiskStaller(t, c, false, true)
 		},
 	}
 
@@ -212,7 +211,7 @@ func registerDiskStalledDetection(r registry.Registry) {
 			// Use PDs in an attempt to work around flakes encountered when using SSDs.
 			// See #97968.
 			Cluster:             r.MakeClusterSpec(4, spec.ReuseNone(), spec.DisableLocalSSD()),
-			CompatibleClouds:    registry.AllExceptAWS,
+			CompatibleClouds:    registry.OnlyGCE,
 			Suites:              registry.Suites(registry.Nightly),
 			Timeout:             30 * time.Minute,
 			SkipPostValidations: registry.PostValidationNoDeadNodes,
@@ -437,14 +436,7 @@ func getProcessMonotonicTimestamp(
 	return time.Duration(u) * time.Microsecond, true
 }
 
-type diskStaller interface {
-	Setup(ctx context.Context)
-	Cleanup(ctx context.Context)
-	Stall(ctx context.Context, nodes option.NodeListOption)
-	Unstall(ctx context.Context, nodes option.NodeListOption)
-	DataDir() string
-	LogDir() string
-}
+type diskStaller = roachtestutil.DiskStaller
 
 type dmsetupDiskStaller struct {
 	t test.Test
@@ -456,10 +448,12 @@ type dmsetupDiskStaller struct {
 
 var _ diskStaller = (*dmsetupDiskStaller)(nil)
 
-func (s *dmsetupDiskStaller) device() string { return getDevice(s.t, s.c) }
+func (s *dmsetupDiskStaller) device(nodes option.NodeListOption) string {
+	return roachtestutil.GetDiskDevice(s.t, s.c, nodes)
+}
 
 func (s *dmsetupDiskStaller) Setup(ctx context.Context) {
-	dev := s.device()
+	dev := s.device(s.c.All())
 	// snapd will run "snapd auto-import /dev/dm-0" via udev triggers when
 	// /dev/dm-0 is created. This possibly interferes with the dmsetup create
 	// reload, so uninstall snapd.
@@ -501,130 +495,3 @@ func (s *dmsetupDiskStaller) Unstall(ctx context.Context, nodes option.NodeListO
 
 func (s *dmsetupDiskStaller) DataDir() string { return "{store-dir}" }
 func (s *dmsetupDiskStaller) LogDir() string  { return "logs" }
-
-type cgroupDiskStaller struct {
-	t           test.Test
-	c           cluster.Cluster
-	readOrWrite []bandwidthReadWrite
-	logsToo     bool
-}
-
-var _ diskStaller = (*cgroupDiskStaller)(nil)
-
-func (s *cgroupDiskStaller) DataDir() string { return "{store-dir}" }
-func (s *cgroupDiskStaller) LogDir() string {
-	return "logs"
-}
-func (s *cgroupDiskStaller) Setup(ctx context.Context) {
-	if s.logsToo {
-		s.c.Run(ctx, option.WithNodes(s.c.All()), "mkdir -p {store-dir}/logs")
-		s.c.Run(ctx, option.WithNodes(s.c.All()), "rm -f logs && ln -s {store-dir}/logs logs || true")
-	}
-}
-func (s *cgroupDiskStaller) Cleanup(ctx context.Context) {}
-
-func (s *cgroupDiskStaller) Stall(ctx context.Context, nodes option.NodeListOption) {
-	// Shuffle the order of read and write stall initiation.
-	rand.Shuffle(len(s.readOrWrite), func(i, j int) {
-		s.readOrWrite[i], s.readOrWrite[j] = s.readOrWrite[j], s.readOrWrite[i]
-	})
-	for _, rw := range s.readOrWrite {
-		// NB: I don't understand why, but attempting to set a
-		// bytesPerSecond={0,1} results in Invalid argument from the io.max
-		// cgroupv2 API.
-		if err := s.setThroughput(ctx, nodes, rw, throughput{limited: true, bytesPerSecond: 4}); err != nil {
-			s.t.Fatal(err)
-		}
-	}
-}
-
-func (s *cgroupDiskStaller) Unstall(ctx context.Context, nodes option.NodeListOption) {
-	for _, rw := range s.readOrWrite {
-		err := s.setThroughput(ctx, nodes, rw, throughput{limited: false})
-		s.t.L().PrintfCtx(ctx, "error unstalling the disk; stumbling on: %v", err)
-		// NB: We log the error and continue on because unstalling may not
-		// succeed if the process has successfully exited.
-	}
-}
-
-func (s *cgroupDiskStaller) device() (major, minor int) {
-	// TODO(jackson): Programmatically determine the device major,minor numbers.
-	// eg,:
-	//    deviceName := getDevice(s.t, s.c)
-	//    `cat /proc/partitions` and find `deviceName`
-	switch s.c.Cloud() {
-	case spec.GCE:
-		// ls -l /dev/sdb
-		// brw-rw---- 1 root disk 8, 16 Mar 27 22:08 /dev/sdb
-		return 8, 16
-	default:
-		s.t.Fatalf("unsupported cloud %q", s.c.Cloud())
-		return 0, 0
-	}
-}
-
-type throughput struct {
-	limited        bool
-	bytesPerSecond int
-}
-
-type bandwidthReadWrite int8
-
-const (
-	readBandwidth bandwidthReadWrite = iota
-	writeBandwidth
-)
-
-func (rw bandwidthReadWrite) cgroupV2BandwidthProp() string {
-	switch rw {
-	case readBandwidth:
-		return "rbps"
-	case writeBandwidth:
-		return "wbps"
-	default:
-		panic("unreachable")
-	}
-}
-
-func (s *cgroupDiskStaller) setThroughput(
-	ctx context.Context, nodes option.NodeListOption, rw bandwidthReadWrite, bw throughput,
-) error {
-	maj, min := s.device()
-	cockroachIOController := filepath.Join("/sys/fs/cgroup/system.slice", roachtestutil.SystemInterfaceSystemdUnitName()+".service", "io.max")
-
-	bytesPerSecondStr := "max"
-	if bw.limited {
-		bytesPerSecondStr = fmt.Sprintf("%d", bw.bytesPerSecond)
-	}
-	return s.c.RunE(ctx, option.WithNodes(nodes), "sudo", "/bin/bash", "-c", fmt.Sprintf(
-		`'echo %d:%d %s=%s > %s'`,
-		maj,
-		min,
-		rw.cgroupV2BandwidthProp(),
-		bytesPerSecondStr,
-		cockroachIOController,
-	))
-}
-
-func getDevice(t test.Test, c cluster.Cluster) string {
-	s := c.Spec()
-	switch c.Cloud() {
-	case spec.GCE:
-		switch s.LocalSSD {
-		case spec.LocalSSDDisable:
-			return "/dev/sdb"
-		case spec.LocalSSDPreferOn, spec.LocalSSDDefault:
-			// TODO(jackson): These spec values don't guarantee that we are actually
-			// using local SSDs, just that we might've.
-			return "/dev/nvme0n1"
-		default:
-			t.Fatalf("unsupported LocalSSD enum %v", s.LocalSSD)
-			return ""
-		}
-	case spec.AWS:
-		return "/dev/nvme1n1"
-	default:
-		t.Fatalf("unsupported cloud %q", c.Cloud())
-		return ""
-	}
-}

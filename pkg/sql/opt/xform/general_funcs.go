@@ -271,14 +271,6 @@ func (c *CustomFuncs) splitScanIntoUnionScansOrSelects(
 	// If OptSplitScanLimit is below maxScanCount, we will decrease maxScanCount
 	// to that value because a hard limit should never be lower than a soft limit.
 	hardMaxScanCount := int(c.e.evalCtx.SessionData().OptSplitScanLimit)
-	// Hack: If OptSplitScanLimit is set to 0, it may be because it is
-	// uninitialized for an internal SQL execution. Set it to the old maximum of
-	// 16 to ensure there are no regressions.
-	if hardMaxScanCount == 0 {
-		// TODO(msirek): Remove this code once the following PR ships:
-		//   https://github.com/cockroachdb/cockroach/pull/73267
-		hardMaxScanCount = 16
-	}
 	if hardMaxScanCount < maxScanCount {
 		maxScanCount = hardMaxScanCount
 	}
@@ -557,6 +549,24 @@ func (c *CustomFuncs) numAllowedValues(
 		}
 	}
 	return 0, false
+}
+
+// indexHasOrderingSequenceOnOne returns whether the Scan can provide an
+// ordering on at least one of the columns in cols, in either the forward or
+// reverse direction, under the assumption that we are scanning a single-key
+// span with the given keyLength.
+func indexHasOrderingSequenceOnOne(
+	md *opt.Metadata, scan memo.RelExpr, sp *memo.ScanPrivate, cols opt.ColSet, keyLength int,
+) (hasSequence bool) {
+	for col, ok := cols.Next(0); ok; col, ok = cols.Next(col) {
+		var ord props.OrderingChoice
+		ord.AppendCol(col, false)
+		if has, _ := indexHasOrderingSequence(md, scan, sp, ord, keyLength); has {
+			return true
+		}
+		col++
+	}
+	return false
 }
 
 // indexHasOrderingSequence returns whether the Scan can provide a given

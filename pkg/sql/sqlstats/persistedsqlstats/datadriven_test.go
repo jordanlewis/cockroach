@@ -70,7 +70,7 @@ func TestSQLStatsDataDriven(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	skip.UnderStressRace(t)
+	skip.UnderRace(t)
 
 	stubTime := &stubTime{}
 	injector := newRuntimeKnobsInjector()
@@ -126,7 +126,7 @@ func TestSQLStatsDataDriven(t *testing.T) {
 			}
 			return strings.Join(rows, "\n")
 		case "sql-stats-flush":
-			sqlStats.Flush(ctx, cluster.ApplicationLayer(0).AppStopper())
+			sqlStats.MaybeFlush(ctx, cluster.ApplicationLayer(0).AppStopper())
 		case "set-time":
 			mustHaveArgsOrFatal(t, d, timeArgs)
 

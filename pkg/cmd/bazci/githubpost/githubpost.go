@@ -74,7 +74,9 @@ func DefaultFormatter(ctx context.Context, f Failure) (issues.IssueFormatter, is
 	if len(teams) > 0 {
 		projColID = teams[0].TriageColumnID
 		for _, team := range teams {
-			mentions = append(mentions, "@"+string(team.Name()))
+			if !team.SilenceMentions {
+				mentions = append(mentions, "@"+string(team.Name()))
+			}
 			if team.Label != "" {
 				labels = append(labels, team.Label)
 			}
@@ -688,8 +690,20 @@ func getOwner(ctx context.Context, packageName, testName string) (_teams []team.
 		if testEng.Name() == "" {
 			log.Fatalf("test-eng team could not be found in TEAMS.yaml")
 		}
-		log.Printf("assigning %s.%s to 'test-eng' as catch-all", packageName, testName)
-		match = []team.Team{testEng}
+
+		// Workaround for #107885.
+		if strings.Contains(packageName, "backupccl") {
+			dr := co.GetTeamForAlias("cockroachdb/disaster-recovery")
+			if dr.Name() == "" {
+				log.Fatalf("disaster-recovery team could not be found in TEAMS.yaml")
+			}
+
+			log.Printf("assigning %s.%s to 'disaster-recovery' due to #107885", packageName, testName)
+			match = []team.Team{dr}
+		} else {
+			log.Printf("assigning %s.%s to 'test-eng' as catch-all", packageName, testName)
+			match = []team.Team{testEng}
+		}
 	}
 	return match
 }

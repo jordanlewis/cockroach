@@ -132,4 +132,12 @@ const (
 	// GrantExecuteOnFunctionToPublicRole indicates that EXECUTE was granted
 	// to the public role for a function.
 	GrantExecuteOnFunctionToPublicRole
+
+	// StrippedNonExistentRoles indicates that at least one role identified did
+	// not exist.
+	StrippedNonExistentRoles
+
+	// FixedIncorrectForeignKeyOrigins indicates that foreign key origin /
+	// reference IDs that should point to the current descriptor were fixed.
+	FixedIncorrectForeignKeyOrigins
 )

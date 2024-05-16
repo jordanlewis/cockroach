@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/span"
 	"github.com/cockroachdb/errors"
 )
 
@@ -86,7 +87,7 @@ type Client interface {
 	// open its subscription to its partition of a larger stream.
 	// TODO(dt): ts -> checkpointToken.
 	Subscribe(ctx context.Context, streamID streampb.StreamID, procID int32, spec SubscriptionToken,
-		initialScanTime hlc.Timestamp, previousReplicatedTime hlc.Timestamp) (Subscription, error)
+		initialScanTime hlc.Timestamp, previousReplicatedTimes span.Frontier) (Subscription, error)
 
 	// Complete completes a replication stream consumption.
 	Complete(ctx context.Context, streamID streampb.StreamID, successfulIngestion bool) error
@@ -256,7 +257,8 @@ func getFirstDialer(
 }
 
 type options struct {
-	streamID streampb.StreamID
+	streamID   streampb.StreamID
+	compressed bool
 }
 
 func (o *options) appName() string {
@@ -276,6 +278,13 @@ type Option func(*options)
 func WithStreamID(id streampb.StreamID) Option {
 	return func(o *options) {
 		o.streamID = id
+	}
+}
+
+// WithCompression controls requesting a compressed stream from the producer.
+func WithCompression(enabled bool) Option {
+	return func(o *options) {
+		o.compressed = enabled
 	}
 }
 

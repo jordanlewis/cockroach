@@ -105,7 +105,7 @@ proc generate_root_or_node_cert {argv certs_dir name} {
 proc set_role_subject_for_user {argv name role_subject} {
     report "SETTING SUBJECT ROLE OPTION for USER $name with SUBJECT $role_subject"
     send "$argv sql --certs-dir=$::certs_dir -e 'alter role $name with subject \"$role_subject\" login';\r"
-    eexpect $::prompt
+    eexpect "ALTER ROLE"
 }
 
 start_secure_server $argv $certs_dir ""
@@ -156,6 +156,39 @@ restart_secure_server_distinguished_name_flags $argv $certs_dir "O=Cockroach,CN=
 start_test "valid node-cert-distinguished-nane and root-cert-distinguished-name"
 send "$argv sql --certs-dir=$certs_dir --user=root -e 'select 1'\r"
 eexpect $::prompt
+end_test
+
+# Check cert still works without setting role subject option when cluster setting subject_required = false
+send "$argv sql --certs-dir=$certs_dir --user=gallant -e 'select 1'\r"
+eexpect $::prompt
+
+# Check cert fails without setting role subject option when cluster setting subject_required = true
+start_test "validating cert auth fails without subject role option when subject_required cluster setting is set"
+send "$argv sql --certs-dir=$certs_dir --user=root -e 'SET CLUSTER SETTING security.client_cert.subject_required.enabled = true'\r"
+eexpect $::prompt
+send "$argv sql --certs-dir=$certs_dir --user=gallant -e 'select 1'\r"
+eexpect "user \"gallant\" does not have a distinguished name set which subject_required cluster setting mandates"
+end_test
+
+# Check cert succeeds after setting role subject option when cluster setting subject_required = true
+start_test "validating cert auth succeeds with valid subject role option when subject_required cluster setting is set"
+set_role_subject_for_user $argv gallant "O=Cockroach,CN=gallant"
+send "$argv sql --certs-dir=$certs_dir --user=gallant -e 'select 1'\r"
+eexpect "(1 row)"
+end_test
+
+# Check that cert auth fails when role subject and HBAconf(name-remapping) setting are both set for same db user."
+start_test "validating cert auth fails when both role subject and HBAconf(name-remapping) setting are set"
+send "rm -f $certs_dir/client.gallant.*\r"
+eexpect $prompt
+
+set id_map_stmt "SET CLUSTER SETTING server.identity_map.configuration='crdb goofus gallant'"
+set hba_conf_stmt "SET CLUSTER SETTING server.host_based_authentication.configuration='hostssl all gallant all cert map=crdb'"
+send "$argv sql --certs-dir=$certs_dir --user=root -e \"$id_map_stmt\" \r"
+send "$argv sql --certs-dir=$certs_dir --user=root -e \"$hba_conf_stmt\" \r"
+set auth_url "postgresql://gallant@localhost:26257?sslcert=$certs_dir/client.goofus.crt&sslkey=$certs_dir/client.goofus.key"
+send "$argv sql --certs-dir=$certs_dir --url=\"$auth_url\" -e 'select 1'\r";
+eexpect "ERROR: certificate authentication failed for user \"goofus\" (DN: o=Cockroach,cn=gallant)"
 end_test
 
 stop_server $argv

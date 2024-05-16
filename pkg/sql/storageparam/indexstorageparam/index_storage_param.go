@@ -126,6 +126,8 @@ func (po *Setter) Set(
 		return po.applyS2ConfigSetting(ctx, evalCtx, key, expr, 1, 32)
 	case `geometry_min_x`, `geometry_max_x`, `geometry_min_y`, `geometry_max_y`:
 		return po.applyGeometryIndexSetting(ctx, evalCtx, key, expr)
+	case `lists`:
+		return po.applyIvfflatConfigSetting(ctx, evalCtx, key, expr)
 	// `bucket_count` is handled in schema changer when creating hash sharded
 	// indexes.
 	case `bucket_count`:
@@ -178,5 +180,19 @@ func (po *Setter) RunPostChecks() error {
 			)
 		}
 	}
+	return nil
+}
+
+func (po *Setter) applyIvfflatConfigSetting(ctx context.Context, evalCtx *eval.Context, key string,
+	expr tree.Datum) error {
+	cfg := po.IndexDesc.VectorConfig.GetIvfFlat()
+	if cfg == nil {
+		return pgerror.Newf(pgcode.InvalidParameterValue, "%q can only be applied to ivfflat indexes", key)
+	}
+	val, err := paramparse.DatumAsInt(ctx, evalCtx, key, expr)
+	if err != nil {
+		return errors.Wrapf(err, "error decoding %q", key)
+	}
+	cfg.NLists = int32(val)
 	return nil
 }

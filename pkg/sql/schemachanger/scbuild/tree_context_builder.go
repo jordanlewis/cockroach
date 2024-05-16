@@ -19,7 +19,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
-	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/cockroach/pkg/util/ulid"
 )
 
@@ -31,12 +30,9 @@ func (b buildCtx) SemaCtx() *tree.SemaContext {
 }
 
 func newSemaCtx(d Dependencies) *tree.SemaContext {
-	semaCtx := tree.MakeSemaContext()
+	semaCtx := tree.MakeSemaContext(d.CatalogReader())
 	semaCtx.Annotations = nil
 	semaCtx.SearchPath = &d.SessionData().SearchPath
-	semaCtx.TypeResolver = d.CatalogReader()
-	semaCtx.FunctionResolver = d.CatalogReader()
-	semaCtx.NameResolver = d.CatalogReader()
 	semaCtx.DateStyle = d.SessionData().GetDateStyle()
 	semaCtx.IntervalStyle = d.SessionData().GetIntervalStyle()
 	semaCtx.UnsupportedTypeChecker = eval.NewUnsupportedTypeChecker(d.ClusterSettings().Version)
@@ -65,8 +61,6 @@ func newEvalCtx(ctx context.Context, d Dependencies) *eval.Context {
 		DescIDGenerator:      d.DescIDGenerator(),
 		ULIDEntropy:          ulid.Monotonic(crypto_rand.Reader, 0),
 	}
-	rng, _ := randutil.NewPseudoRand()
-	evalCtx.RNG = rng
 	evalCtx.SetDeprecatedContext(ctx)
 	return evalCtx
 }

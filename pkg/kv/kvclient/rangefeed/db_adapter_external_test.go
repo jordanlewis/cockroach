@@ -12,6 +12,7 @@ package rangefeed_test
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestDBClientScan(t *testing.T) {
 
 	beforeAny := db.Clock().Now()
 
-	scratchKey := append(ts.Codec().TenantPrefix(), keys.ScratchRangeMin...)
+	scratchKey := slices.Clip(append(ts.Codec().TenantPrefix(), keys.ScratchRangeMin...))
 	_, _, err := srv.StorageLayer().SplitRange(scratchKey)
 	require.NoError(t, err)
 
@@ -238,7 +239,6 @@ func TestDBClientScan(t *testing.T) {
 		feed, err := f.RangeFeed(ctx, "foo-feed", []roachpb.Span{fooSpan}, db.Clock().Now(),
 			func(ctx context.Context, value *kvpb.RangeFeedValue) {},
 
-			rangefeed.WithScanRetryBehavior(rangefeed.ScanRetryRemaining),
 			rangefeed.WithInitialScanParallelismFn(func() int { return parallelism }),
 
 			rangefeed.WithInitialScan(func(ctx context.Context) {

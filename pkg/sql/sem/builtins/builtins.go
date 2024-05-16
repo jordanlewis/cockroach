@@ -26,6 +26,7 @@ import (
 	"math/bits"
 	"net"
 	"regexp/syntax"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -41,6 +42,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/security/password"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
@@ -2090,7 +2092,7 @@ var regularBuiltins = map[string]builtinDefinition{
 			Types:      tree.ParamTypes{},
 			ReturnType: tree.FixedReturnType(types.Float),
 			Fn: func(_ context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
-				return tree.NewDFloat(tree.DFloat(evalCtx.RNG.Float64())), nil
+				return tree.NewDFloat(tree.DFloat(evalCtx.GetRNG().Float64())), nil
 			},
 			Info: "Returns a random floating-point number between 0 (inclusive) and 1 (exclusive). " +
 				"Note that the value contains at most 53 bits of randomness.",
@@ -2108,7 +2110,7 @@ var regularBuiltins = map[string]builtinDefinition{
 				if seed < -1.0 || seed > 1.0 {
 					return nil, pgerror.Newf(pgcode.InvalidParameterValue, "setseed parameter %f is out of allowed range [-1,1]", seed)
 				}
-				evalCtx.RNG.Seed(int64(math.Float64bits(float64(seed))))
+				evalCtx.GetRNG().Seed(int64(math.Float64bits(float64(seed))))
 				return tree.DVoidDatum, nil
 			},
 			Info: "Sets the seed for subsequent random() calls in this session (value between -1.0 and 1.0, inclusive). " +
@@ -5366,8 +5368,11 @@ DO NOT USE -- USE 'CREATE VIRTUAL CLUSTER' INSTEAD`,
 				jobIDAlwaysValid := func(id jobspb.JobID) bool {
 					return true
 				}
+				roleAlwaysValid := func(username username.SQLUsername) bool {
+					return true
+				}
 				ret, err := evalCtx.CatalogBuiltins.RepairedDescriptor(
-					ctx, []byte(s), descIDAlwaysValid, jobIDAlwaysValid,
+					ctx, []byte(s), descIDAlwaysValid, jobIDAlwaysValid, roleAlwaysValid,
 				)
 				if err != nil {
 					return nil, err
@@ -5389,6 +5394,7 @@ DO NOT USE -- USE 'CREATE VIRTUAL CLUSTER' INSTEAD`,
 				{Name: "descriptor", Typ: types.Bytes},
 				{Name: "valid_descriptor_ids", Typ: types.IntArray},
 				{Name: "valid_job_ids", Typ: types.IntArray},
+				{Name: "valid_roles", Typ: types.StringArray},
 			},
 			ReturnType: tree.FixedReturnType(types.Bytes),
 			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
@@ -5434,8 +5440,31 @@ DO NOT USE -- USE 'CREATE VIRTUAL CLUSTER' INSTEAD`,
 						return found
 					}
 				}
+
+				roleMightExist := func(username username.SQLUsername) bool {
+					return true
+				}
+				if args[3] != tree.DNull {
+					roles, ok := tree.AsDArray(args[3])
+					if !ok {
+						return nil, errors.Newf("expected array value, got %T", args[3])
+					}
+					roleMap := make(map[username.SQLUsername]struct{})
+					for _, roleDatum := range (*roles).Array {
+						role := tree.MustBeDString(roleDatum)
+						roleName, err := username.MakeSQLUsernameFromUserInput(string(role), username.PurposeValidation)
+						if err != nil {
+							return nil, err
+						}
+						roleMap[roleName] = struct{}{}
+					}
+					roleMightExist = func(username username.SQLUsername) bool {
+						_, ok := roleMap[username]
+						return ok
+					}
+				}
 				ret, err := evalCtx.CatalogBuiltins.RepairedDescriptor(
-					ctx, []byte(s), descIDMightExist, nonTerminalJobIDMightExist,
+					ctx, []byte(s), descIDMightExist, nonTerminalJobIDMightExist, roleMightExist,
 				)
 				if err != nil {
 					return nil, err
@@ -5479,6 +5508,12 @@ SELECT
 								system.jobs
 							WHERE
 								status NOT IN ('failed', 'succeeded', 'canceled', 'revert-failed')
+						),
+						( SELECT
+							array_agg(username) as username_array FROM
+							(SELECT username
+							FROM system.users UNION
+							SELECT 'public' as username)
 						)
 					),
 					true
@@ -5654,6 +5689,50 @@ SELECT
 			Info:       "This function is used only by CockroachDB's developers for testing purposes.",
 			Volatility: volatility.Volatile,
 		},
+		tree.Overload{
+			Types:      tree.ParamTypes{{Name: "msg", Typ: types.String}, {Name: "mode", Typ: types.String}},
+			ReturnType: tree.FixedReturnType(types.Int),
+			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
+				// The user must have REPAIRCLUSTER to use this builtin.
+				if err := evalCtx.SessionAccessor.CheckPrivilege(
+					ctx, syntheticprivilege.GlobalPrivilegeObject, privilege.REPAIRCLUSTER,
+				); err != nil {
+					return nil, err
+				}
+
+				s, ok := tree.AsDString(args[0])
+				if !ok {
+					return nil, errors.Newf("expected string value, got %T", args[0])
+				}
+				msg := string(s)
+				mode, ok := tree.AsDString(args[1])
+				if !ok {
+					return nil, errors.Newf("expected string value, got %T", args[1])
+				}
+				switch string(mode) {
+				case "internalAssertion":
+					err := errors.AssertionFailedf("%s", msg)
+					// Panic instead of returning the error. The vectorized panic-catcher
+					// will catch the panic and convert it into an internal error.
+					colexecerror.InternalError(err)
+				case "indexOutOfRange":
+					msg += string(msg[math.MaxInt])
+				case "divideByZero":
+					var foo []int
+					msg += strconv.Itoa(len(msg) / len(foo))
+				case "contextCanceled":
+					panic(context.Canceled)
+				default:
+					return nil, errors.Newf(
+						"expected mode to be one of: internalAssertion, indexOutOfRange, divideByZero, contextCanceled",
+					)
+				}
+				// This code is unreachable.
+				panic(msg)
+			},
+			Info:       "This function is used only by CockroachDB's developers for testing purposes.",
+			Volatility: volatility.Volatile,
+		},
 	),
 
 	"crdb_internal.force_log_fatal": makeBuiltin(
@@ -5754,7 +5833,7 @@ SELECT
 			ReturnType: tree.FixedReturnType(types.Bytes),
 			Fn: func(_ context.Context, _ *eval.Context, args tree.Datums) (tree.Datum, error) {
 				key := tree.MustBeDBytes(args[0])
-				remainder, _, err := keys.DecodeTenantPrefixE([]byte(key))
+				remainder, _, err := keys.DecodeTenantPrefix([]byte(key))
 				if errors.Is(err, roachpb.ErrInvalidTenantID) {
 					return tree.NewDBytes(key), nil
 				} else if err != nil {
@@ -6335,6 +6414,22 @@ SELECT
 			Volatility:        volatility.Stable,
 			CalledOnNullInput: true,
 		},
+		tree.Overload{
+			Types: tree.ParamTypes{
+				{Name: "val", Typ: types.PGVector},
+				{Name: "version", Typ: types.Int},
+			},
+			ReturnType: tree.FixedReturnType(types.Int),
+			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
+				if args[0] == tree.DNull {
+					return tree.DZero, nil
+				}
+				return tree.NewDInt(tree.DInt(1)), nil
+			},
+			Info:              "This function is used only by CockroachDB's developers for testing purposes.",
+			Volatility:        volatility.Stable,
+			CalledOnNullInput: true,
+		},
 	),
 
 	"crdb_internal.assignment_cast": makeBuiltin(
@@ -6896,6 +6991,7 @@ Parameters:` + randgencfg.ConfigDoc,
 				storeID := int32(tree.MustBeDInt(args[1]))
 				startKey := []byte(tree.MustBeDBytes(args[2]))
 				endKey := []byte(tree.MustBeDBytes(args[3]))
+				log.Infof(ctx, "crdb_internal.compact_engine_span called for nodeID=%d, storeID=%d, range[startKey=%s, endKey=%s]", nodeID, storeID, startKey, endKey)
 				if err := evalCtx.CompactEngineSpan(
 					ctx, nodeID, storeID, startKey, endKey); err != nil {
 					return nil, err
@@ -7864,9 +7960,12 @@ specified store on the node it's run from. One of 'mvccGC', 'merge', 'split',
 			Category:         builtinconstants.CategorySystemInfo,
 			DistsqlBlocklist: true, // applicable only on the gateway
 		},
-		makeRequestStatementBundleBuiltinOverload(false /* withPlanGist */, false /* withAntiPlanGist */),
-		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, false /* withAntiPlanGist */),
-		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, true /* withAntiPlanGist */),
+		makeRequestStatementBundleBuiltinOverload(false /* withPlanGist */, false /* withAntiPlanGist */, false /* redacted */),
+		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, false /* withAntiPlanGist */, false /* redacted */),
+		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, true /* withAntiPlanGist */, false /* redacted */),
+		makeRequestStatementBundleBuiltinOverload(false /* withPlanGist */, false /* withAntiPlanGist */, true /* redacted */),
+		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, false /* withAntiPlanGist */, true /* redacted */),
+		makeRequestStatementBundleBuiltinOverload(true /* withPlanGist */, true /* withAntiPlanGist */, true /* redacted */),
 	),
 
 	"crdb_internal.set_compaction_concurrency": makeBuiltin(
@@ -11497,14 +11596,9 @@ func spanToDatum(span roachpb.Span) (tree.Datum, error) {
 }
 
 func makeRequestStatementBundleBuiltinOverload(
-	withPlanGist bool, withAntiPlanGist bool,
+	withPlanGist bool, withAntiPlanGist bool, withRedacted bool,
 ) tree.Overload {
 	typs := tree.ParamTypes{{Name: "stmtFingerprint", Typ: types.String}}
-	lastTyps := tree.ParamTypes{
-		{Name: "samplingProbability", Typ: types.Float},
-		{Name: "minExecutionLatency", Typ: types.Interval},
-		{Name: "expiresAfter", Typ: types.Interval},
-	}
 	info := `Used to request statement bundle for a given statement fingerprint
 that has execution latency greater than the 'minExecutionLatency'. If the
 'expiresAfter' argument is empty, then the statement bundle request never
@@ -11520,27 +11614,20 @@ will be used`
 true, then any plan other then the specified gist will be used`
 		}
 	}
-	typs = append(typs, lastTyps...)
+	typs = append(typs, tree.ParamTypes{
+		{Name: "samplingProbability", Typ: types.Float},
+		{Name: "minExecutionLatency", Typ: types.Interval},
+		{Name: "expiresAfter", Typ: types.Interval},
+	}...)
+	if withRedacted {
+		typs = append(typs, tree.ParamType{Name: "redacted", Typ: types.Bool})
+		info += `. If 'redacted'
+argument is true, then the bundle will be redacted`
+	}
 	return tree.Overload{
 		Types:      typs,
 		ReturnType: tree.FixedReturnType(types.Bool),
 		Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
-			hasPriv, shouldRedact, err := evalCtx.SessionAccessor.HasViewActivityOrViewActivityRedactedRole(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if shouldRedact {
-				return nil, pgerror.Newf(
-					pgcode.InsufficientPrivilege,
-					"users with VIEWACTIVITYREDACTED privilege cannot request statement bundle",
-				)
-			} else if !hasPriv {
-				return nil, pgerror.Newf(
-					pgcode.InsufficientPrivilege,
-					"requesting statement bundle requires VIEWACTIVITY privilege",
-				)
-			}
-
 			if args[0] == tree.DNull {
 				return nil, errors.New("stmtFingerprint must be non-NULL")
 			}
@@ -11572,6 +11659,30 @@ true, then any plan other then the specified gist will be used`
 			if args[eaIdx] != tree.DNull {
 				expiresAfter = time.Duration(tree.MustBeDInterval(args[eaIdx]).Nanos())
 			}
+			var redacted bool
+			if withRedacted {
+				if args[eaIdx+1] != tree.DNull {
+					redacted = bool(tree.MustBeDBool(args[eaIdx+1]))
+				}
+			}
+
+			hasPriv, shouldRedact, err := evalCtx.SessionAccessor.HasViewActivityOrViewActivityRedactedRole(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if shouldRedact {
+				if !redacted {
+					return nil, pgerror.Newf(
+						pgcode.InsufficientPrivilege,
+						"users with VIEWACTIVITYREDACTED privilege can only request redacted statement bundles",
+					)
+				}
+			} else if !hasPriv {
+				return nil, pgerror.Newf(
+					pgcode.InsufficientPrivilege,
+					"requesting statement bundle requires VIEWACTIVITY privilege",
+				)
+			}
 
 			if err = evalCtx.StmtDiagnosticsRequestInserter(
 				ctx,
@@ -11581,6 +11692,7 @@ true, then any plan other then the specified gist will be used`
 				samplingProbability,
 				minExecutionLatency,
 				expiresAfter,
+				redacted,
 			); err != nil {
 				return nil, err
 			}

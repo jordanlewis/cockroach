@@ -467,10 +467,11 @@ func (ep encryptionPassphrase) String() string {
 // newBackupOptions returns a list of backup options to be used when
 // creating a new backup. Each backup option has a 50% chance of being
 // included.
-func newBackupOptions(rng *rand.Rand) []backupOption {
-	possibleOpts := []backupOption{
-		revisionHistory{},
-		newEncryptionPassphrase(rng),
+func newBackupOptions(rng *rand.Rand, onlineRestoreExpected bool) []backupOption {
+	possibleOpts := []backupOption{}
+	if !onlineRestoreExpected {
+		possibleOpts = append(possibleOpts, revisionHistory{})
+		possibleOpts = append(possibleOpts, newEncryptionPassphrase(rng))
 	}
 
 	var options []backupOption
@@ -1553,7 +1554,7 @@ func (mvb *mixedVersionBackup) maybeTakePreviousVersionBackup(
 		return err
 	}
 
-	previousVersion := h.Context.FromVersion
+	previousVersion := h.Context().FromVersion
 	label := fmt.Sprintf("before upgrade in %s", sanitizeVersionForBackup(previousVersion))
 	allPrevVersionNodes := labeledNodes{Nodes: mvb.roachNodes, Version: previousVersion.String()}
 	executeOnAllNodesSpec := backupSpec{PauseProbability: neverPause, Plan: allPrevVersionNodes, Execute: allPrevVersionNodes}
@@ -1584,12 +1585,12 @@ func (d *BackupRestoreTestDriver) nextRestoreID() int64 {
 // provide more context. Example: '22.2.4-to-current_final'
 func (mvb *mixedVersionBackup) backupNamePrefix(h *mixedversion.Helper, label string) string {
 	var finalizing string
-	if h.Context.Finalizing {
+	if h.IsFinalizing() {
 		finalizing = finalizingLabel
 	}
 
-	fromVersion := sanitizeVersionForBackup(h.Context.FromVersion)
-	toVersion := sanitizeVersionForBackup(h.Context.ToVersion)
+	fromVersion := sanitizeVersionForBackup(h.Context().FromVersion)
+	toVersion := sanitizeVersionForBackup(h.Context().ToVersion)
 	sanitizedLabel := strings.ReplaceAll(label, " ", "-")
 
 	return fmt.Sprintf(
@@ -1788,7 +1789,7 @@ func (d *BackupRestoreTestDriver) runBackup(
 	case fullBackup:
 		btype := d.newBackupScope(rng)
 		name := d.backupCollectionName(d.nextBackupID(), b.namePrefix, btype)
-		createOptions := newBackupOptions(rng)
+		createOptions := newBackupOptions(rng, d.testUtils.onlineRestore)
 		collection = newBackupCollection(name, btype, createOptions, d.cluster.IsLocal())
 		l.Printf("creating full backup for %s", collection.name)
 	case incrementalBackup:
@@ -1903,7 +1904,7 @@ func (mvb *mixedVersionBackup) createBackupCollection(
 		label = labelOverride
 	}
 	backupNamePrefix := mvb.backupNamePrefix(h, label)
-	n, db := h.RandomDB(rng, mvb.roachNodes)
+	n, db := h.System.RandomDB(rng)
 	l.Printf("checking existence of crdb_internal.system_jobs via node %d", n)
 	internalSystemJobs, err := hasInternalSystemJobs(ctx, rng, db)
 	if err != nil {
@@ -1953,6 +1954,9 @@ func (d *BackupRestoreTestDriver) createBackupCollection(
 	if d.testUtils.mock {
 		numIncrementals = 1
 	}
+	if d.testUtils.onlineRestore {
+		numIncrementals = 0
+	}
 	l.Printf("creating %d incremental backups", numIncrementals)
 	for i := 0; i < numIncrementals; i++ {
 		d.randomWait(l, rng)
@@ -1972,6 +1976,11 @@ func (d *BackupRestoreTestDriver) createBackupCollection(
 	}
 
 	fingerprintAOST := latestIncBackupEndTime
+	if fingerprintAOST == "" {
+		// If latestIncBackupEndTime is empty, we never took an incremental backup.
+		// Fingerprint on the full backup endtime instead.
+		fingerprintAOST = fullBackupEndTime
+	}
 	if collection.restoreAOST != "" {
 		fingerprintAOST = collection.restoreAOST
 	}
@@ -2081,10 +2090,10 @@ func (mvb *mixedVersionBackup) planAndRunBackups(
 	ctx context.Context, l *logger.Logger, rng *rand.Rand, h *mixedversion.Helper,
 ) error {
 	onPrevious := labeledNodes{
-		Nodes: h.Context.NodesInPreviousVersion(), Version: sanitizeVersionForBackup(h.Context.FromVersion),
+		Nodes: h.Context().NodesInPreviousVersion(), Version: sanitizeVersionForBackup(h.Context().FromVersion),
 	}
 	onNext := labeledNodes{
-		Nodes: h.Context.NodesInNextVersion(), Version: sanitizeVersionForBackup(h.Context.ToVersion),
+		Nodes: h.Context().NodesInNextVersion(), Version: sanitizeVersionForBackup(h.Context().ToVersion),
 	}
 	onRandom := labeledNodes{Nodes: mvb.roachNodes, Version: "random node"}
 	defaultPauseProbability := 0.2
@@ -2122,7 +2131,7 @@ func (mvb *mixedVersionBackup) planAndRunBackups(
 		},
 	}
 
-	if h.Context.MixedBinary() {
+	if h.Context().MixedBinary() {
 		const numCollections = 2
 		rng.Shuffle(len(collectionSpecs), func(i, j int) {
 			collectionSpecs[i], collectionSpecs[j] = collectionSpecs[j], collectionSpecs[i]
@@ -2243,6 +2252,9 @@ func (bc *backupCollection) verifyBackupCollection(
 	if opt := bc.encryptionOption(); opt != nil {
 		restoreOptions = append(restoreOptions, opt.String())
 	}
+	if d.testUtils.onlineRestore {
+		restoreOptions = append(restoreOptions, "experimental deferred copy")
+	}
 
 	var optionsStr string
 	if len(restoreOptions) > 0 {
@@ -2332,7 +2344,7 @@ func (mvb *mixedVersionBackup) verifySomeBackups(
 		l.Printf("skipping check_files as it is not supported")
 	}
 
-	n, db := h.RandomDB(rng, mvb.roachNodes)
+	n, db := h.System.RandomDB(rng)
 	l.Printf("checking existence of crdb_internal.system_jobs via node %d", n)
 	internalSystemJobs, err := hasInternalSystemJobs(ctx, rng, db)
 	if err != nil {
@@ -2398,7 +2410,7 @@ func (mvb *mixedVersionBackup) verifyAllBackups(
 				l.Printf("skipping check_files as it is not supported")
 			}
 
-			n, db := h.RandomDB(rng, mvb.roachNodes)
+			n, db := h.System.RandomDB(rng)
 			l.Printf("checking existence of crdb_internal.system_jobs via node %d", n)
 			internalSystemJobs, err := hasInternalSystemJobs(ctx, rng, db)
 			if err != nil {
@@ -2421,8 +2433,8 @@ func (mvb *mixedVersionBackup) verifyAllBackups(
 		}
 	}
 
-	verify(h.Context.FromVersion)
-	verify(h.Context.ToVersion)
+	verify(h.Context().FromVersion)
+	verify(h.Context().ToVersion)
 
 	// If the context was canceled (most likely due to a test timeout),
 	// return early. In these cases, it's likely that `restoreErrors`
@@ -2637,10 +2649,11 @@ func prepSchemaChangeWorkload(
 }
 
 type CommonTestUtils struct {
-	t          test.Test
-	cluster    cluster.Cluster
-	roachNodes option.NodeListOption
-	mock       bool
+	t             test.Test
+	cluster       cluster.Cluster
+	roachNodes    option.NodeListOption
+	mock          bool
+	onlineRestore bool
 
 	connCache struct {
 		mu    syncutil.Mutex
@@ -2652,7 +2665,12 @@ type CommonTestUtils struct {
 // and puts these connections in a cache for reuse. The caller should remember to close all connections
 // once done with them to prevent any goroutine leaks (CloseConnections).
 func newCommonTestUtils(
-	ctx context.Context, t test.Test, c cluster.Cluster, nodes option.NodeListOption, mock bool,
+	ctx context.Context,
+	t test.Test,
+	c cluster.Cluster,
+	nodes option.NodeListOption,
+	mock bool,
+	onlineRestore bool,
 ) (*CommonTestUtils, error) {
 	cc := make([]*gosql.DB, len(nodes))
 	for _, node := range nodes {
@@ -2669,10 +2687,11 @@ func newCommonTestUtils(
 	}
 
 	u := &CommonTestUtils{
-		t:          t,
-		cluster:    c,
-		roachNodes: nodes,
-		mock:       mock,
+		t:             t,
+		cluster:       c,
+		roachNodes:    nodes,
+		mock:          mock,
+		onlineRestore: onlineRestore,
 	}
 	u.connCache.cache = cc
 	return u, nil
@@ -2681,7 +2700,7 @@ func newCommonTestUtils(
 func (mvb *mixedVersionBackup) CommonTestUtils(ctx context.Context) (*CommonTestUtils, error) {
 	var err error
 	mvb.utilsOnce.Do(func() {
-		mvb.commonTestUtils, err = newCommonTestUtils(ctx, mvb.t, mvb.cluster, mvb.roachNodes, false)
+		mvb.commonTestUtils, err = newCommonTestUtils(ctx, mvb.t, mvb.cluster, mvb.roachNodes, false, false)
 	})
 	return mvb.commonTestUtils, err
 }

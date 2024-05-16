@@ -127,12 +127,14 @@ type CatalogBuiltins interface {
 	// puts it into a catalog.DescriptorBuilder,
 	// calls RunPostDeserializationChanges,
 	// calls StripDanglingBackReferences,
+	// calls StripNonExistentRoles,
 	// and re-encodes it.
 	RepairedDescriptor(
 		ctx context.Context,
 		encodedDescriptor []byte,
 		descIDMightExist func(id descpb.ID) bool,
 		nonTerminalJobIDMightExist func(id jobspb.JobID) bool,
+		roleExists func(username username.SQLUsername) bool,
 	) ([]byte, error)
 }
 
@@ -440,9 +442,15 @@ type Planner interface {
 	// and a job that owns it.
 	StartHistoryRetentionJob(ctx context.Context, desc string, protectTS hlc.Timestamp, expiration time.Duration) (jobspb.JobID, error)
 
-	// ExtendHistoryRetentionJob extends the lifetime of a a cluster-level
+	// ExtendHistoryRetention extends the lifetime of a a cluster-level
 	// protected timestamp.
 	ExtendHistoryRetention(ctx context.Context, id jobspb.JobID) error
+
+	// InsertTemporarySchema inserts a temporary schema into the current session
+	// data.
+	InsertTemporarySchema(
+		tempSchemaName string, databaseID descpb.ID, schemaID descpb.ID,
+	)
 }
 
 // InternalRows is an iterator interface that's exposed by the internal
@@ -734,6 +742,7 @@ type StmtDiagnosticsRequestInsertFunc func(
 	samplingProbability float64,
 	minExecutionLatency time.Duration,
 	expiresAfter time.Duration,
+	redacted bool,
 ) error
 
 // AsOfSystemTime represents the result from the evaluation of AS OF SYSTEM TIME

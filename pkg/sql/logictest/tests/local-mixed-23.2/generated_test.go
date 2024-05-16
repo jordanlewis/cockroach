@@ -2185,13 +2185,6 @@ func TestLogic_udf(
 	runLogicTest(t, "udf")
 }
 
-func TestLogic_udf_calling_udf(
-	t *testing.T,
-) {
-	defer leaktest.AfterTest(t)()
-	runLogicTest(t, "udf_calling_udf")
-}
-
 func TestLogic_udf_delete(
 	t *testing.T,
 ) {
@@ -2407,6 +2400,13 @@ func TestLogic_values(
 ) {
 	defer leaktest.AfterTest(t)()
 	runLogicTest(t, "values")
+}
+
+func TestLogic_vector(
+	t *testing.T,
+) {
+	defer leaktest.AfterTest(t)()
+	runLogicTest(t, "vector")
 }
 
 func TestLogic_vectorize_agg(

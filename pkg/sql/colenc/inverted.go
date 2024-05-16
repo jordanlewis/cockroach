@@ -57,6 +57,7 @@ func (b *BatchEncoder) encodeInvertedSecondaryIndex(
 		vec = b.b.ColVecs()[i]
 	}
 	indexGeoConfig := index.GetGeoConfig()
+	indexVectorConfig := index.GetVectorConfig()
 	for row := 0; row < b.count; row++ {
 		if kys[row] == nil {
 			continue
@@ -65,6 +66,10 @@ func (b *BatchEncoder) encodeInvertedSecondaryIndex(
 		val := invertedColToDatum(vec, row+b.start)
 		if !indexGeoConfig.IsEmpty() {
 			if keys, err = rowenc.EncodeGeoInvertedIndexTableKeys(ctx, val, kys[row], indexGeoConfig); err != nil {
+				return err
+			}
+		} else if !indexVectorConfig.IsEmpty() {
+			if keys, err = rowenc.EncodeVectorInvertedIndexTableKeys(ctx, val, kys[row], indexVectorConfig); err != nil {
 				return err
 			}
 		} else {

@@ -16,11 +16,13 @@ import (
 
 	"github.com/cockroachdb/apd/v3"
 	"github.com/cockroachdb/cockroach/pkg/ccl/streamingccl"
+	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/repstream/streampb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
+	"github.com/cockroachdb/cockroach/pkg/util/span"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
 	"github.com/cockroachdb/errors"
@@ -30,6 +32,7 @@ import (
 type partitionedStreamClient struct {
 	urlPlaceholder url.URL
 	pgxConfig      *pgx.ConnConfig
+	compressed     bool
 
 	mu struct {
 		syncutil.Mutex
@@ -55,6 +58,7 @@ func NewPartitionedStreamClient(
 	client := partitionedStreamClient{
 		urlPlaceholder: *remote,
 		pgxConfig:      config,
+		compressed:     options.compressed,
 	}
 	client.mu.activeSubscriptions = make(map[*partitionedStreamSubscription]struct{})
 	client.mu.srcConn = conn
@@ -210,7 +214,7 @@ func (p *partitionedStreamClient) Subscribe(
 	consumerID int32,
 	spec SubscriptionToken,
 	initialScanTime hlc.Timestamp,
-	previousReplicatedTime hlc.Timestamp,
+	previousReplicatedTimes span.Frontier,
 ) (Subscription, error) {
 	_, sp := tracing.ChildSpan(ctx, "streamclient.Client.Subscribe")
 	defer sp.Finish()
@@ -220,8 +224,15 @@ func (p *partitionedStreamClient) Subscribe(
 		return nil, err
 	}
 	sps.InitialScanTimestamp = initialScanTime
-	sps.PreviousReplicatedTimestamp = previousReplicatedTime
+	if previousReplicatedTimes != nil {
+		sps.PreviousReplicatedTimestamp = previousReplicatedTimes.Frontier()
+		previousReplicatedTimes.Entries(func(s roachpb.Span, t hlc.Timestamp) (done span.OpResult) {
+			sps.Progress = append(sps.Progress, jobspb.ResolvedSpan{Span: s, Timestamp: t})
+			return span.ContinueMatch
+		})
+	}
 	sps.ConsumerID = consumerID
+	sps.Compressed = true
 
 	specBytes, err := protoutil.Marshal(&sps)
 	if err != nil {
@@ -234,6 +245,7 @@ func (p *partitionedStreamClient) Subscribe(
 		specBytes:     specBytes,
 		streamID:      streamID,
 		closeChan:     make(chan struct{}),
+		compressed:    sps.Compressed,
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -293,6 +305,8 @@ type partitionedStreamSubscription struct {
 	// Channel to send signal to close the subscription.
 	closeChan chan struct{}
 
+	compressed bool
+
 	specBytes []byte
 	streamID  streampb.StreamID
 }
@@ -327,7 +341,7 @@ func (p *partitionedStreamSubscription) Subscribe(ctx context.Context) error {
 	}
 	defer rows.Close()
 
-	p.err = subscribeInternal(ctx, rows, p.eventsChan, p.closeChan)
+	p.err = subscribeInternal(ctx, rows, p.eventsChan, p.closeChan, p.compressed)
 	return p.err
 }
 

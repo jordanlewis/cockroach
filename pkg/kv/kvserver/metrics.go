@@ -1057,13 +1057,25 @@ var (
 	}
 	metaRangeSnapshotRecoveryRcvdBytes = metric.Metadata{
 		Name:        "range.snapshots.recovery.rcvd-bytes",
-		Help:        "Number of recovery snapshot bytes received",
+		Help:        "Number of raft recovery snapshot bytes received",
 		Measurement: "Bytes",
 		Unit:        metric.Unit_BYTES,
 	}
 	metaRangeSnapshotRecoverySentBytes = metric.Metadata{
 		Name:        "range.snapshots.recovery.sent-bytes",
-		Help:        "Number of recovery snapshot bytes sent",
+		Help:        "Number of raft recovery snapshot bytes sent",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
+	}
+	metaRangeSnapshotUpreplicationRcvdBytes = metric.Metadata{
+		Name:        "range.snapshots.upreplication.rcvd-bytes",
+		Help:        "Number of upreplication snapshot bytes received",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
+	}
+	metaRangeSnapshotUpreplicationSentBytes = metric.Metadata{
+		Name:        "range.snapshots.upreplication.sent-bytes",
+		Help:        "Number of upreplication snapshot bytes sent",
 		Measurement: "Bytes",
 		Unit:        metric.Unit_BYTES,
 	}
@@ -1301,6 +1313,16 @@ timeout, and have a high chance of being dropped.`,
 The number of Raft commands that leaseholders re-proposed with a modified LAI.
 Such re-proposals happen for commands that are committed to Raft out of intended
 order, and hence can not be applied as is.`,
+		Measurement: "Commands",
+		Unit:        metric.Unit_COUNT,
+	}
+	metaRaftCommandsPending = metric.Metadata{
+		Name: "raft.commands.pending",
+		Help: `Number of Raft commands proposed and pending.
+
+The number of Raft commands that the leaseholders are tracking as in-flight.
+These commands will be periodically reproposed until they are applied or until
+they fail, either unequivocally or ambiguously.`,
 		Measurement: "Commands",
 		Unit:        metric.Unit_COUNT,
 	}
@@ -2374,6 +2396,13 @@ Note that the measurement does not include the duration for replicating the eval
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
 	}
+	metaStorageWALFailoverWriteAndSyncLatency = metric.Metadata{
+		Name: "storage.wal.failover.write_and_sync.latency",
+		Help: "The observed latency for writing and syncing to the write ahead log. Only populated " +
+			"when WAL failover is configured",
+		Measurement: "Nanoseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
 	metaReplicaReadBatchDroppedLatchesBeforeEval = metric.Metadata{
 		Name:        "kv.replica_read_batch_evaluate.dropped_latches_before_eval",
 		Help:        `Number of times read-only batches dropped latches before evaluation.`,
@@ -2439,6 +2468,20 @@ Note that the measurement does not include the duration for replicating the eval
 		Unit:        metric.Unit_COUNT,
 		Measurement: "Operations",
 		Help:        "IO operations currently in progress on the store's disk (as reported by the OS)",
+	}
+	// The disk rate metrics are computed using data sampled on the interval,
+	// COCKROACH_DISK_STATS_POLLING_INTERVAL.
+	metaDiskReadMaxBytesPerSecond = metric.Metadata{
+		Name:        "storage.disk.read-max.bytespersecond",
+		Unit:        metric.Unit_BYTES,
+		Measurement: "Bytes",
+		Help:        "Maximum rate at which bytes were read from disk (as reported by the OS)",
+	}
+	metaDiskWriteMaxBytesPerSecond = metric.Metadata{
+		Name:        "storage.disk.write-max.bytespersecond",
+		Unit:        metric.Unit_BYTES,
+		Measurement: "Bytes",
+		Help:        "Maximum rate at which bytes were written to disk (as reported by the OS)",
 	}
 )
 
@@ -2606,6 +2649,7 @@ type StoreMetrics struct {
 	WALFailoverSwitchCount            *metric.Gauge
 	WALFailoverPrimaryDuration        *metric.Gauge
 	WALFailoverSecondaryDuration      *metric.Gauge
+	WALFailoverWriteAndSyncLatency    *metric.ManualWindowHistogram
 
 	RdbCheckpoints *metric.Gauge
 
@@ -2638,6 +2682,8 @@ type StoreMetrics struct {
 	RangeSnapshotUnknownSentBytes                *metric.Counter
 	RangeSnapshotRecoveryRcvdBytes               *metric.Counter
 	RangeSnapshotRecoverySentBytes               *metric.Counter
+	RangeSnapshotUpreplicationRcvdBytes          *metric.Counter
+	RangeSnapshotUpreplicationSentBytes          *metric.Counter
 	RangeSnapshotRebalancingRcvdBytes            *metric.Counter
 	RangeSnapshotRebalancingSentBytes            *metric.Counter
 	RangeSnapshotRecvFailed                      *metric.Counter
@@ -2674,6 +2720,7 @@ type StoreMetrics struct {
 	RaftCommandsProposed       *metric.Counter
 	RaftCommandsReproposed     *metric.Counter
 	RaftCommandsReproposedLAI  *metric.Counter
+	RaftCommandsPending        *metric.Gauge
 	RaftCommandsApplied        *metric.Counter
 	RaftLogCommitLatency       metric.IHistogram
 	RaftCommandCommitLatency   metric.IHistogram
@@ -2843,15 +2890,17 @@ type StoreMetrics struct {
 	FsyncLatency     *metric.ManualWindowHistogram
 
 	// Disk metrics
-	DiskReadBytes      *metric.Gauge
-	DiskReadCount      *metric.Gauge
-	DiskReadTime       *metric.Gauge
-	DiskWriteBytes     *metric.Gauge
-	DiskWriteCount     *metric.Gauge
-	DiskWriteTime      *metric.Gauge
-	DiskIOTime         *metric.Gauge
-	DiskWeightedIOTime *metric.Gauge
-	DiskIopsInProgress *metric.Gauge
+	DiskReadBytes              *metric.Gauge
+	DiskReadCount              *metric.Gauge
+	DiskReadTime               *metric.Gauge
+	DiskWriteBytes             *metric.Gauge
+	DiskWriteCount             *metric.Gauge
+	DiskWriteTime              *metric.Gauge
+	DiskIOTime                 *metric.Gauge
+	DiskWeightedIOTime         *metric.Gauge
+	DiskIopsInProgress         *metric.Gauge
+	DiskReadMaxBytesPerSecond  *metric.Gauge
+	DiskWriteMaxBytesPerSecond *metric.Gauge
 }
 
 type tenantMetricsRef struct {
@@ -3314,6 +3363,11 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		WALFailoverSwitchCount:       metric.NewGauge(metaStorageWALFailoverSwitchCount),
 		WALFailoverPrimaryDuration:   metric.NewGauge(metaStorageWALFailoverPrimaryDuration),
 		WALFailoverSecondaryDuration: metric.NewGauge(metaStorageWALFailoverSecondaryDuration),
+		WALFailoverWriteAndSyncLatency: metric.NewManualWindowHistogram(
+			metaStorageWALFailoverWriteAndSyncLatency,
+			pebble.FsyncLatencyBuckets,
+			false, /* withRotate */
+		),
 
 		// Ingestion metrics
 		IngestCount: metric.NewGauge(metaIngestCount),
@@ -3339,6 +3393,8 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		RangeSnapshotUnknownSentBytes:                metric.NewCounter(metaRangeSnapshotUnknownSentBytes),
 		RangeSnapshotRecoveryRcvdBytes:               metric.NewCounter(metaRangeSnapshotRecoveryRcvdBytes),
 		RangeSnapshotRecoverySentBytes:               metric.NewCounter(metaRangeSnapshotRecoverySentBytes),
+		RangeSnapshotUpreplicationRcvdBytes:          metric.NewCounter(metaRangeSnapshotUpreplicationRcvdBytes),
+		RangeSnapshotUpreplicationSentBytes:          metric.NewCounter(metaRangeSnapshotUpreplicationSentBytes),
 		RangeSnapshotRebalancingRcvdBytes:            metric.NewCounter(metaRangeSnapshotRebalancingRcvdBytes),
 		RangeSnapshotRebalancingSentBytes:            metric.NewCounter(metaRangeSnapshotRebalancingSentBytes),
 		RangeSnapshotRecvFailed:                      metric.NewCounter(metaRangeSnapshotRecvFailed),
@@ -3380,6 +3436,7 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		RaftCommandsProposed:      metric.NewCounter(metaRaftCommandsProposed),
 		RaftCommandsReproposed:    metric.NewCounter(metaRaftCommandsReproposed),
 		RaftCommandsReproposedLAI: metric.NewCounter(metaRaftCommandsReproposedLAI),
+		RaftCommandsPending:       metric.NewGauge(metaRaftCommandsPending),
 		RaftCommandsApplied:       metric.NewCounter(metaRaftCommandsApplied),
 		RaftLogCommitLatency: metric.NewHistogram(metric.HistogramOptions{
 			Mode:         metric.HistogramModePreferHdrLatency,
@@ -3599,15 +3656,17 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		ReplicaReadBatchDroppedLatchesBeforeEval: metric.NewCounter(metaReplicaReadBatchDroppedLatchesBeforeEval),
 		ReplicaReadBatchWithoutInterleavingIter:  metric.NewCounter(metaReplicaReadBatchWithoutInterleavingIter),
 
-		DiskReadBytes:      metric.NewGauge(metaDiskReadBytes),
-		DiskReadCount:      metric.NewGauge(metaDiskReadCount),
-		DiskReadTime:       metric.NewGauge(metaDiskReadTime),
-		DiskWriteBytes:     metric.NewGauge(metaDiskWriteBytes),
-		DiskWriteCount:     metric.NewGauge(metaDiskWriteCount),
-		DiskWriteTime:      metric.NewGauge(metaDiskWriteTime),
-		DiskIOTime:         metric.NewGauge(metaDiskIOTime),
-		DiskWeightedIOTime: metric.NewGauge(metaDiskWeightedIOTime),
-		DiskIopsInProgress: metric.NewGauge(metaDiskIopsInProgress),
+		DiskReadBytes:              metric.NewGauge(metaDiskReadBytes),
+		DiskReadCount:              metric.NewGauge(metaDiskReadCount),
+		DiskReadTime:               metric.NewGauge(metaDiskReadTime),
+		DiskWriteBytes:             metric.NewGauge(metaDiskWriteBytes),
+		DiskWriteCount:             metric.NewGauge(metaDiskWriteCount),
+		DiskWriteTime:              metric.NewGauge(metaDiskWriteTime),
+		DiskIOTime:                 metric.NewGauge(metaDiskIOTime),
+		DiskWeightedIOTime:         metric.NewGauge(metaDiskWeightedIOTime),
+		DiskIopsInProgress:         metric.NewGauge(metaDiskIopsInProgress),
+		DiskReadMaxBytesPerSecond:  metric.NewGauge(metaDiskReadMaxBytesPerSecond),
+		DiskWriteMaxBytesPerSecond: metric.NewGauge(metaDiskWriteMaxBytesPerSecond),
 
 		// Estimated MVCC stats in split.
 		SplitsWithEstimatedStats:     metric.NewCounter(metaSplitEstimatedStats),
@@ -3823,16 +3882,23 @@ func (sm *StoreMetrics) updateEnvStats(stats fs.EnvStats) {
 	sm.EncryptionAlgorithm.Update(int64(stats.EncryptionType))
 }
 
-func (sm *StoreMetrics) updateDiskStats(stats disk.Stats) {
-	sm.DiskReadCount.Update(int64(stats.ReadsCount))
-	sm.DiskReadBytes.Update(int64(stats.BytesRead()))
-	sm.DiskReadTime.Update(int64(stats.ReadsDuration))
-	sm.DiskWriteCount.Update(int64(stats.WritesCount))
-	sm.DiskWriteBytes.Update(int64(stats.BytesWritten()))
-	sm.DiskWriteTime.Update(int64(stats.WritesDuration))
-	sm.DiskIOTime.Update(int64(stats.CumulativeDuration))
-	sm.DiskWeightedIOTime.Update(int64(stats.WeightedIODuration))
-	sm.DiskIopsInProgress.Update(int64(stats.InProgressCount))
+func (sm *StoreMetrics) updateDiskStats(rollingStats disk.StatsWindow) {
+	cumulativeStats := rollingStats.Latest()
+	sm.DiskReadCount.Update(int64(cumulativeStats.ReadsCount))
+	sm.DiskReadBytes.Update(int64(cumulativeStats.BytesRead()))
+	sm.DiskReadTime.Update(int64(cumulativeStats.ReadsDuration))
+	sm.DiskWriteCount.Update(int64(cumulativeStats.WritesCount))
+	sm.DiskWriteBytes.Update(int64(cumulativeStats.BytesWritten()))
+	sm.DiskWriteTime.Update(int64(cumulativeStats.WritesDuration))
+	sm.DiskIOTime.Update(int64(cumulativeStats.CumulativeDuration))
+	sm.DiskWeightedIOTime.Update(int64(cumulativeStats.WeightedIODuration))
+	sm.DiskIopsInProgress.Update(int64(cumulativeStats.InProgressCount))
+	maxRollingStats := rollingStats.Max()
+	// maxRollingStats is computed as the change in stats every 100ms, so we
+	// scale them to represent the change in stats every 1s.
+	perSecondMultiplier := int(time.Second / disk.DefaultDiskStatsPollingInterval)
+	sm.DiskReadMaxBytesPerSecond.Update(int64(maxRollingStats.BytesRead() * perSecondMultiplier))
+	sm.DiskWriteMaxBytesPerSecond.Update(int64(maxRollingStats.BytesWritten() * perSecondMultiplier))
 }
 
 func (sm *StoreMetrics) handleMetricsResult(ctx context.Context, metric result.Metrics) {
@@ -3915,8 +3981,9 @@ func (sm *StoreMetrics) getCounterForRangeLogEventType(
 }
 
 type pebbleCategoryIterMetrics struct {
-	IterBlockBytes        *metric.Gauge
-	IterBlockBytesInCache *metric.Gauge
+	IterBlockBytes          *metric.Gauge
+	IterBlockBytesInCache   *metric.Gauge
+	IterBlockReadLatencySum *metric.Gauge
 }
 
 func makePebbleCategorizedIterMetrics(category sstable.Category) *pebbleCategoryIterMetrics {
@@ -3932,9 +3999,16 @@ func makePebbleCategorizedIterMetrics(category sstable.Category) *pebbleCategory
 		Measurement: "Bytes",
 		Unit:        metric.Unit_BYTES,
 	}
+	metaBlockReadLatencySum := metric.Metadata{
+		Name:        fmt.Sprintf("storage.iterator.category-%s.block-load.latency-sum", category),
+		Help:        "Cumulative latency for loading bytes not in the block cache, by storage sstable iterators",
+		Measurement: "Latency",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
 	return &pebbleCategoryIterMetrics{
-		IterBlockBytes:        metric.NewGauge(metaBlockBytes),
-		IterBlockBytesInCache: metric.NewGauge(metaBlockBytesInCache),
+		IterBlockBytes:          metric.NewGauge(metaBlockBytes),
+		IterBlockBytesInCache:   metric.NewGauge(metaBlockBytesInCache),
+		IterBlockReadLatencySum: metric.NewGauge(metaBlockReadLatencySum),
 	}
 }
 
@@ -3944,6 +4018,7 @@ func (m *pebbleCategoryIterMetrics) MetricStruct() {}
 func (m *pebbleCategoryIterMetrics) update(stats sstable.CategoryStats) {
 	m.IterBlockBytes.Update(int64(stats.BlockBytes))
 	m.IterBlockBytesInCache.Update(int64(stats.BlockBytesInCache))
+	m.IterBlockReadLatencySum.Update(int64(stats.BlockReadDuration))
 }
 
 type pebbleCategoryIterMetricsContainer struct {

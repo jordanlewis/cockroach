@@ -61,6 +61,7 @@ proto_library(
         "//pkg/sql/sem/semenumpb:semenumpb_proto",
         "//pkg/sql/types:types_proto",
         "//pkg/util/hlc:hlc_proto",
+        "//pkg/util/vector/vectorpb:vectorpb_proto",
         "@com_github_gogo_protobuf//gogoproto:gogo_proto",
     ],
 )
@@ -81,6 +82,7 @@ go_proto_library(
         "//pkg/sql/sem/semenumpb",
         "//pkg/sql/types",
         "//pkg/util/hlc",
+        "//pkg/util/vector/vectorpb",
         "@com_github_gogo_protobuf//gogoproto",
     ],
 )

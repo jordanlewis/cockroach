@@ -69,6 +69,8 @@ func ParseAndRequireString(
 		d, err = ParseDIntervalWithTypeMetadata(intervalStyle(ctx), s, itm)
 	case types.PGLSNFamily:
 		d, err = ParseDPGLSN(s)
+	case types.PGVectorFamily:
+		d, err = ParseDPGVector(s)
 	case types.RefCursorFamily:
 		d = NewDRefCursor(s)
 	case types.Box2DFamily:
@@ -80,8 +82,8 @@ func ParseAndRequireString(
 	case types.JsonFamily:
 		d, err = ParseDJSON(s)
 	case types.OidFamily:
-		if t.Oid() != oid.T_oid && s == ZeroOidValue {
-			d = WrapAsZeroOid(t)
+		if t.Oid() != oid.T_oid && s == UnknownOidName {
+			d = NewDOidWithType(UnknownOidValue, t)
 		} else {
 			d, err = ParseDOidAsInt(s)
 		}

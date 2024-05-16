@@ -3329,7 +3329,8 @@ CREATE TABLE t_99035 (i INT PRIMARY KEY, j INT NOT NULL, FAMILY "primary" (i, j)
 INSERT INTO t_99035 VALUES (0,0);
 
 skipif config local-legacy-schema-changer
-statement error validation of CHECK "j > 0:::INT8" failed on row: j=0, k=[0-9]+, p=30
+skipif config local-mixed-23.2
+statement error validation of CHECK "j > 0:::INT8" failed on row: i=NULL, j=0, k=[0-9]+, p=30
 ALTER TABLE t_99035 ADD COLUMN k INT DEFAULT unique_rowid(), ALTER PRIMARY KEY USING COLUMNS (j), DROP COLUMN i, ADD COLUMN p INT DEFAULT 30, ADD CHECK (j>0);
 
 query II
@@ -3841,3 +3842,29 @@ CREATE TABLE t_identity_drop_dependency(id INT PRIMARY KEY DEFAULT nextval('publ
 
 statement error pgcode 2BP01 pq: cannot drop table t_identity_drop because other objects depend on it
 ALTER TABLE t_identity_drop ALTER COLUMN b DROP IDENTITY;
+
+subtest comma_syntax
+
+statement ok
+CREATE TABLE foo (i int);
+
+skipif config local-legacy-schema-changer
+statement ok
+ALTER TABLE foo DROP COLUMN i, ADD COLUMN i bool;
+
+skipif config local-legacy-schema-changer
+statement error pgcode 42703 pq: column "i" does not exist
+ALTER TABLE foo DROP COLUMN i, DROP COLUMN i;
+
+subtest end
+
+subtest alter_primary_key_using_dropped_column
+
+statement ok
+CREATE TABLE foo_bar (i int unique not null, j int);
+
+skipif config local-legacy-schema-changer
+statement error pgcode 55000 pq: column "i" is being dropped
+ALTER TABLE foo_bar DROP COLUMN i, ALTER PRIMARY KEY USING COLUMNS (i);
+
+subtest end

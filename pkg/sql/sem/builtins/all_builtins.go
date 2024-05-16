@@ -11,6 +11,7 @@
 package builtins
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -54,9 +55,17 @@ func init() {
 	tree.OidToBuiltinName = make(map[oid.Oid]string)
 
 	builtinsregistry.AddSubscription(func(name string, props *tree.FunctionProperties, overloads []tree.Overload) {
+		var foundErr = false
 		for i, fn := range overloads {
 			signature := name + fn.Signature(true)
-			overloads[i].Oid = signatureMustHaveHardcodedOID(signature)
+			var err error
+			overloads[i].Oid, err = signatureMustHaveHardcodedOID(signature)
+			if err != nil {
+				// Accumulate all errors to stdout and then panic if there are any.
+				fmt.Println(err)
+				foundErr = true
+				continue
+			}
 			tree.OidToBuiltinName[overloads[i].Oid] = name
 			if _, ok := CastBuiltinNames[name]; ok {
 				retOid := fn.ReturnType(nil).Oid()
@@ -65,6 +74,9 @@ func init() {
 				}
 				CastBuiltinOIDs[retOid][fn.Types.GetAt(0).Family()] = overloads[i].Oid
 			}
+		}
+		if foundErr {
+			panic("failed to resolve OIDs for builtins. See messages above.")
 		}
 		fDef := tree.NewFunctionDefinition(name, props, overloads)
 		addResolvedFuncDef(tree.ResolvedBuiltinFuncDefs, tree.OidToQualifiedBuiltinOverload, fDef)

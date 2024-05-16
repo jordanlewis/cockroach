@@ -447,12 +447,21 @@ func authCert(
 			execCfg.RPCContext.TenantID,
 			cm,
 			roleSubject,
+			security.ClientCertSubjectRequired.Get(&execCfg.Settings.SV),
 		)
 		if err != nil {
 			return err
 		}
 		return hook(ctx, systemIdentity, clientConnection)
 	})
+	if len(tlsState.PeerCertificates) > 0 && hbaEntry.GetOption("map") != "" {
+		// The common name in the certificate is set as the system identity in case we have an HBAEntry for db user.
+		commonName, err := username.MakeSQLUsernameFromUserInput(tlsState.PeerCertificates[0].Subject.CommonName, username.PurposeValidation)
+		if err != nil {
+			return nil, err
+		}
+		b.SetReplacementIdentity(commonName)
+	}
 	return b, nil
 }
 
@@ -696,7 +705,7 @@ type JWTVerifier interface {
 		_ username.SQLUsername,
 		_ []byte,
 		_ *identmap.Conf,
-	) error
+	) (detailedErrorMsg string, authError error)
 }
 
 var jwtVerifier JWTVerifier
@@ -705,8 +714,8 @@ type noJWTConfigured struct{}
 
 func (c *noJWTConfigured) ValidateJWTLogin(
 	_ context.Context, _ *cluster.Settings, _ username.SQLUsername, _ []byte, _ *identmap.Conf,
-) error {
-	return errors.New("JWT token authentication requires CCL features")
+) (detailedErrorMsg string, authError error) {
+	return "", errors.New("JWT token authentication requires CCL features")
 }
 
 // ConfigureJWTAuth is a hook for the `jwtauthccl` library to add JWT login support. It's called to
@@ -771,9 +780,10 @@ func authJwtToken(
 		if len(token) == 0 {
 			return security.NewErrPasswordUserAuthFailed(user)
 		}
-		if err = jwtVerifier.ValidateJWTLogin(ctx, execCfg.Settings, user, []byte(token), identMap); err != nil {
-			c.LogAuthFailed(ctx, eventpb.AuthFailReason_CREDENTIALS_INVALID, err)
-			return err
+		if detailedErrors, authError := jwtVerifier.ValidateJWTLogin(ctx, execCfg.Settings, user, []byte(token), identMap); authError != nil {
+			c.LogAuthFailed(ctx, eventpb.AuthFailReason_CREDENTIALS_INVALID,
+				errors.Join(authError, errors.Newf("%s", detailedErrors)))
+			return authError
 		}
 		c.LogAuthOK(ctx)
 		return nil

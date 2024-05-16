@@ -42,6 +42,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/trigram"
 	"github.com/cockroachdb/cockroach/pkg/util/tsearch"
 	"github.com/cockroachdb/cockroach/pkg/util/unique"
+	"github.com/cockroachdb/cockroach/pkg/util/vector"
+	"github.com/cockroachdb/cockroach/pkg/util/vector/vectorpb"
 	"github.com/cockroachdb/errors"
 )
 
@@ -624,10 +626,13 @@ func EncodeInvertedIndexKeys(
 	} else {
 		val = tree.DNull
 	}
-	indexGeoConfig := index.GetGeoConfig()
-	if !indexGeoConfig.IsEmpty() {
+	config := index.GetVectorConfig()
+	if indexGeoConfig := index.GetGeoConfig(); !indexGeoConfig.IsEmpty() {
 		return EncodeGeoInvertedIndexTableKeys(ctx, val, keyPrefix, indexGeoConfig)
+	} else if vectorConfig := config; !vectorConfig.IsEmpty() {
+		return EncodeVectorInvertedIndexTableKeys(ctx, val, keyPrefix, vectorConfig)
 	}
+
 	return EncodeInvertedIndexTableKeys(val, keyPrefix, index.GetVersion())
 }
 
@@ -1087,6 +1092,32 @@ func EncodeGeoInvertedIndexTableKeys(
 	}
 }
 
+// EncodeVectorInvertedIndexTableKeys is the equivalent of EncodeInvertedIndexTableKeys
+// for vectors.
+func EncodeVectorInvertedIndexTableKeys(_ context.Context, val tree.Datum, keyPrefix []byte,
+	vectorConfig vectorpb.Config) ([][]byte, error) {
+	if val == tree.DNull {
+		return nil, nil
+	}
+	vec := tree.MustBeDPGVector(val).T
+	centroid, err := vector.GetClosestCentroid(vec, vectorConfig)
+	if err != nil {
+		return nil, err
+	}
+	if vectorConfig.Dimensions != int32(len(centroid)) {
+		return nil, errors.Errorf("centroid has %d dimensions, expected %d", len(centroid), vectorConfig.Dimensions)
+	}
+	if vectorConfig.Dimensions != int32(len(vec)) {
+		return nil, errors.Errorf("vector has %d dimensions, expected %d", len(vec), vectorConfig.Dimensions)
+	}
+	// The buffer will be used to encode the centroid and the input vector. 4 bytes per
+	// float32 times 2 vectors.
+	b := make([]byte, 0, len(keyPrefix)+int(1+4*2*vectorConfig.Dimensions))
+	b = append(b, keyPrefix...)
+	encoding.EncodeIvfCentroidVector(b, centroid, vec)
+	return [][]byte{b}, nil
+}
+
 func encodeGeoKeys(
 	inKey []byte, geoKeys []geoindex.Key, bbox geopb.BoundingBox,
 ) (keys [][]byte, err error) {
@@ -1119,9 +1150,9 @@ func encodeTrigramInvertedIndexTableKeys(
 	for i := range trigrams {
 		// Make sure to copy inKey into a new byte slice to avoid aliasing.
 		inKeyLen := len(inKey)
-		// Pre-size the outkey - we know we're going to encode the trigram plus 2
-		// extra bytes for the prefix and terminator.
-		outKey := make([]byte, inKeyLen, inKeyLen+len(trigrams[i])+2)
+		// Pre-size the outkey - we know we're going to encode the trigram plus
+		// three extra bytes for the prefix, escape, and terminator.
+		outKey := make([]byte, inKeyLen, inKeyLen+len(trigrams[i])+3)
 		copy(outKey, inKey)
 		newKey := encoding.EncodeStringAscending(outKey, trigrams[i])
 		outKeys[i] = newKey
@@ -1597,10 +1628,6 @@ func EncodeSecondaryIndexes(
 	var memUsedEncodingSecondaryIdxs int64
 	if len(secondaryIndexEntries) > 0 {
 		panic(errors.AssertionFailedf("length of secondaryIndexEntries was non-zero"))
-	}
-
-	if indexBoundAccount == nil || indexBoundAccount.Monitor() == nil {
-		panic(errors.AssertionFailedf("memory monitor passed to EncodeSecondaryIndexes was nil"))
 	}
 	const sizeOfIndexEntry = int64(unsafe.Sizeof(IndexEntry{}))
 

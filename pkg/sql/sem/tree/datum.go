@@ -47,6 +47,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/tsearch"
 	"github.com/cockroachdb/cockroach/pkg/util/uint128"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
+	"github.com/cockroachdb/cockroach/pkg/util/vector"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/redact"
 	"github.com/lib/pq/oid"
@@ -1585,14 +1586,26 @@ func (d *DBytes) CompareError(ctx CompareContext, other Datum) (int, error) {
 		// NULL is less than any non-NULL value.
 		return 1, nil
 	}
-	v, ok := ctx.UnwrapDatum(other).(*DBytes)
-	if !ok {
+	var o string
+	switch t := ctx.UnwrapDatum(other).(type) {
+	case *DBytes:
+		o = string(*t)
+	case *DEncodedKey:
+		// Allow comparison with DEncodedKeys. This is required for now because
+		// histogram upper-bound values in table statistics are DBytes, but
+		// constraints with DEncodedKeys are built. When row count estimates are
+		// computed, values of these two types are compared.
+		//
+		// TODO(mgartner): We should use DEncodedKeys for histogram
+		// upper-bounds, then we can remove this case.
+		o = string(*t)
+	default:
 		return 0, makeUnsupportedComparisonMessage(d, other)
 	}
-	if *d < *v {
+	if string(*d) < o {
 		return -1, nil
 	}
-	if *d > *v {
+	if string(*d) > o {
 		return 1, nil
 	}
 	return 0, nil
@@ -1694,12 +1707,42 @@ func (*DEncodedKey) ResolvedType() *types.T {
 
 // Compare implements the Datum interface.
 func (d *DEncodedKey) Compare(ctx CompareContext, other Datum) int {
-	panic(errors.AssertionFailedf("not implemented"))
+	res, err := d.CompareError(ctx, other)
+	if err != nil {
+		panic(err)
+	}
+	return res
 }
 
 // CompareError implements the Datum interface.
 func (d *DEncodedKey) CompareError(ctx CompareContext, other Datum) (int, error) {
-	panic(errors.AssertionFailedf("not implemented"))
+	if other == DNull {
+		// NULL is less than any non-NULL value.
+		return 1, nil
+	}
+	var o string
+	switch t := ctx.UnwrapDatum(other).(type) {
+	case *DBytes:
+		// Allow comparison with DBytes. This is required for now because
+		// histogram upper-bound values in table statistics are DBytes, but
+		// constraints with DEncodedKeys are built. When row count estimates are
+		// computed, values of these two types are compared.
+		//
+		// TODO(mgartner): We should use DEncodedKeys for histogram
+		// upper-bounds, then we can remove this case.
+		o = string(*t)
+	case *DEncodedKey:
+		o = string(*t)
+	default:
+		return 0, makeUnsupportedComparisonMessage(d, other)
+	}
+	if string(*d) < o {
+		return -1, nil
+	}
+	if string(*d) > o {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // Prev implements the Datum interface.
@@ -3769,6 +3812,120 @@ func (d *DPGLSN) Size() uintptr {
 	return unsafe.Sizeof(*d)
 }
 
+// DPGVector is the Datum representation of the PGVector type.
+type DPGVector struct {
+	vector.T
+}
+
+// NewDPGVector returns a new PGVector Datum.
+func NewDPGVector(vector vector.T) *DPGVector { return &DPGVector{vector} }
+
+// AsDPGVector attempts to retrieve a DPGVector from an Expr, returning a
+// DPGVector and a flag signifying whether the assertion was successful. The
+// function should be used instead of direct type assertions wherever a
+// *DPGVector wrapped by a *DOidWrapper is possible.
+func AsDPGVector(e Expr) (*DPGVector, bool) {
+	switch t := e.(type) {
+	case *DPGVector:
+		return t, true
+	case *DOidWrapper:
+		return AsDPGVector(t.Wrapped)
+	}
+	return nil, false
+}
+
+// MustBeDPGVector attempts to retrieve a DPGVector from an Expr, panicking if the
+// assertion fails.
+func MustBeDPGVector(e Expr) *DPGVector {
+	v, ok := AsDPGVector(e)
+	if !ok {
+		panic(errors.AssertionFailedf("expected *DPGVector, found %T", e))
+	}
+	return v
+}
+
+// ParseDPGVector takes a string of PGVector and returns a DPGVector value.
+func ParseDPGVector(s string) (Datum, error) {
+	v, err := vector.ParseVector(s)
+	if err != nil {
+		return nil, pgerror.Wrapf(err, pgcode.Syntax, "could not parse vector")
+	}
+	return NewDPGVector(v), nil
+}
+
+// Format implements the NodeFormatter interface.
+func (d *DPGVector) Format(ctx *FmtCtx) {
+	bareStrings := ctx.HasFlags(FmtFlags(lexbase.EncBareStrings))
+	if !bareStrings {
+		ctx.WriteByte('\'')
+	}
+	ctx.WriteString(d.String())
+	if !bareStrings {
+		ctx.WriteByte('\'')
+	}
+}
+
+// ResolvedType implements the TypedExpr interface.
+func (d *DPGVector) ResolvedType() *types.T { return types.PGVector }
+
+// AmbiguousFormat implements the Datum interface.
+func (d *DPGVector) AmbiguousFormat() bool {
+	return true
+}
+
+func (d *DPGVector) Compare(ctx CompareContext, other Datum) int {
+	res, err := d.CompareError(ctx, other)
+	if err != nil {
+		panic(err)
+	}
+	return res
+}
+
+func (d *DPGVector) CompareError(ctx CompareContext, other Datum) (int, error) {
+	if other == DNull {
+		// NULL is less than any non-NULL value.
+		return 1, nil
+	}
+	v, ok := ctx.UnwrapDatum(other).(*DPGVector)
+	if !ok {
+		return 0, makeUnsupportedComparisonMessage(d, other)
+	}
+	return d.T.Compare(v.T)
+}
+
+// Prev implements the Datum interface.
+func (d *DPGVector) Prev(ctx CompareContext) (Datum, bool) {
+	return nil, false
+}
+
+// Next implements the Datum interface.
+func (d *DPGVector) Next(ctx CompareContext) (Datum, bool) {
+	return nil, false
+}
+
+// IsMax implements the Datum interface.
+func (d *DPGVector) IsMax(ctx CompareContext) bool {
+	return false
+}
+
+// IsMin implements the Datum interface.
+func (d *DPGVector) IsMin(ctx CompareContext) bool {
+	return false
+}
+
+// Max implements the Datum interface.
+func (d *DPGVector) Max(ctx CompareContext) (Datum, bool) {
+	return nil, false
+}
+
+// Min implements the Datum interface.
+func (d *DPGVector) Min(ctx CompareContext) (Datum, bool) { return nil, false }
+
+// Size implements the Datum interface.
+func (d *DPGVector) Size() uintptr {
+	return unsafe.Sizeof(*d) + d.T.Size()
+}
+
 // DBox2D is the Datum representation of the Box2D type.
 type DBox2D struct {
 	geo.CartesianBoundingBox
@@ -5559,6 +5716,15 @@ type DOid struct {
 	name string
 }
 
+const (
+	// UnknownOidName represents the 0 oid value as '-' for types other than T_oid
+	// in the oid family, which matches the Postgres representation.
+	UnknownOidName = "-"
+
+	// UnknownOidValue is the 0 (unknown) oid value.
+	UnknownOidValue = oid.Oid(0)
+)
+
 // IntToOid is a helper that turns a DInt into an oid.Oid and checks that the
 // value is in range.
 func IntToOid(i DInt) (oid.Oid, error) {
@@ -5581,22 +5747,20 @@ func MakeDOid(d oid.Oid, semanticType *types.T) DOid {
 
 // NewDOidWithType constructs a DOid with the given type and no name.
 func NewDOidWithType(d oid.Oid, semanticType *types.T) *DOid {
-	oid := DOid{Oid: d, semanticType: semanticType}
-	return &oid
+	return &DOid{Oid: d, semanticType: semanticType}
 }
 
 // NewDOidWithTypeAndName constructs a DOid with the given type and name.
 func NewDOidWithTypeAndName(d oid.Oid, semanticType *types.T, name string) *DOid {
-	oid := DOid{Oid: d, semanticType: semanticType, name: name}
-	return &oid
+	return &DOid{Oid: d, semanticType: semanticType, name: name}
 }
 
 // NewDOid is a helper routine to create a *DOid initialized from a DInt.
 func NewDOid(d oid.Oid) *DOid {
 	// TODO(yuzefovich): audit the callers of NewDOid to see whether any want to
 	// create a DOid with a semantic type different from types.Oid.
-	oid := MakeDOid(d, types.Oid)
-	return &oid
+	oidDatum := MakeDOid(d, types.Oid)
+	return &oidDatum
 }
 
 // AsDOid attempts to retrieve a DOid from an Expr, returning a DOid and
@@ -5687,7 +5851,10 @@ func (d *DOid) CompareError(ctx CompareContext, other Datum) (int, error) {
 
 // Format implements the Datum interface.
 func (d *DOid) Format(ctx *FmtCtx) {
-	if d.semanticType.Oid() == oid.T_oid || d.name == "" {
+	if ctx.HasFlags(FmtPgwireText) && d.semanticType.Oid() != oid.T_oid && d.Oid == UnknownOidValue {
+		// Special case for the "unknown" oid.
+		ctx.WriteString(UnknownOidName)
+	} else if d.semanticType.Oid() == oid.T_oid || d.name == "" {
 		ctx.Write(strconv.AppendUint(ctx.scratch[:0], uint64(d.Oid), 10))
 	} else if ctx.HasFlags(fmtDisambiguateDatumTypes) {
 		ctx.WriteString("crdb_internal.create_")
@@ -5771,10 +5938,6 @@ type DOidWrapper struct {
 	Oid     oid.Oid
 }
 
-// ZeroOidValue represents the 0 oid value as '-', which matches the Postgres
-// representation.
-const ZeroOidValue = "-"
-
 // wrapWithOid wraps a Datum with a custom Oid.
 func wrapWithOid(d Datum, oid oid.Oid) Datum {
 	switch v := d.(type) {
@@ -5796,16 +5959,6 @@ func wrapWithOid(d Datum, oid oid.Oid) Datum {
 		Wrapped: d,
 		Oid:     oid,
 	}
-}
-
-// WrapAsZeroOid wraps ZeroOidValue with a custom Oid.
-func WrapAsZeroOid(t *types.T) Datum {
-	tmpOid := NewDOid(0)
-	tmpOid.semanticType = t
-	if t.Oid() != oid.T_oid {
-		tmpOid.name = ZeroOidValue
-	}
-	return tmpOid
 }
 
 // UnwrapDOidWrapper exposes the wrapped datum from a *DOidWrapper.
@@ -6168,6 +6321,7 @@ var baseDatumTypeSizes = map[types.Family]struct {
 	types.GeographyFamily:      {unsafe.Sizeof(DGeography{}), variableSize},
 	types.GeometryFamily:       {unsafe.Sizeof(DGeometry{}), variableSize},
 	types.PGLSNFamily:          {unsafe.Sizeof(DPGLSN{}), fixedSize},
+	types.PGVectorFamily:       {unsafe.Sizeof(DPGVector{}), variableSize},
 	types.RefCursorFamily:      {unsafe.Sizeof(DString("")), variableSize},
 	types.TimeFamily:           {unsafe.Sizeof(DTime(0)), fixedSize},
 	types.TimeTZFamily:         {unsafe.Sizeof(DTimeTZ{}), fixedSize},
@@ -6510,6 +6664,14 @@ func AdjustValueToType(typ *types.T, inVal Datum) (outVal Datum, err error) {
 				typ.InternalType.GeoMetadata.ShapeType,
 			); err != nil {
 				return nil, err
+			}
+		}
+	case types.PGVectorFamily:
+		if in, ok := inVal.(*DPGVector); ok {
+			width := int(typ.Width())
+			if width > 0 && len(in.T) != width {
+				return nil, pgerror.Newf(pgcode.StringDataLengthMismatch,
+					"expected %d dimensions, not %d", typ.Width(), len(in.T))
 			}
 		}
 	}

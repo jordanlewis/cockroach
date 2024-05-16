@@ -57,7 +57,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/cancelchecker"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
-	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/cockroach/pkg/util/ulid"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/logtags"
@@ -413,11 +412,8 @@ func newInternalPlanner(
 	p.stmt = Statement{}
 	p.cancelChecker.Reset(ctx)
 
-	p.semaCtx = tree.MakeSemaContext()
+	p.semaCtx = tree.MakeSemaContext(p)
 	p.semaCtx.SearchPath = &sd.SearchPath
-	p.semaCtx.TypeResolver = p
-	p.semaCtx.FunctionResolver = p
-	p.semaCtx.NameResolver = p
 	p.semaCtx.DateStyle = sd.GetDateStyle()
 	p.semaCtx.IntervalStyle = sd.GetIntervalStyle()
 	p.semaCtx.UnsupportedTypeChecker = eval.NewUnsupportedTypeChecker(execCfg.Settings.Version)
@@ -564,8 +560,6 @@ func internalExtendedEvalCtx(
 		statsProvider:   sqlStatsProvider,
 		jobs:            newTxnJobsCollection(),
 	}
-	rng, _ := randutil.NewPseudoRand()
-	ret.RNG = rng
 	ret.SetDeprecatedContext(ctx)
 	ret.copyFromExecCfg(execCfg)
 	return ret
@@ -676,6 +670,7 @@ func (p *planner) User() username.SQLUsername {
 	return p.SessionData().User()
 }
 
+// TemporarySchemaName implements scbuildstmt.TemporarySchemaProvider.
 func (p *planner) TemporarySchemaName() string {
 	return temporarySchemaName(p.ExtendedEvalContext().SessionID)
 }
@@ -906,12 +901,9 @@ func (p *planner) resetPlanner(
 
 	p.cancelChecker.Reset(ctx)
 
-	p.semaCtx = tree.MakeSemaContext()
+	p.semaCtx = tree.MakeSemaContext(p)
 	p.semaCtx.SearchPath = &sd.SearchPath
 	p.semaCtx.Annotations = nil
-	p.semaCtx.TypeResolver = p
-	p.semaCtx.FunctionResolver = p
-	p.semaCtx.NameResolver = p
 	p.semaCtx.DateStyle = sd.GetDateStyle()
 	p.semaCtx.IntervalStyle = sd.GetIntervalStyle()
 	p.semaCtx.UnsupportedTypeChecker = eval.NewUnsupportedTypeChecker(p.execCfg.Settings.Version)

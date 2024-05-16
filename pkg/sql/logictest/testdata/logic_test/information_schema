@@ -1792,6 +1792,7 @@ system              public             29_36_2_not_null                         
 system              public             29_36_3_not_null                                                                                                system         public        statement_diagnostics            CHECK            NO             NO
 system              public             29_36_4_not_null                                                                                                system         public        statement_diagnostics            CHECK            NO             NO
 system              public             primary                                                                                                         system         public        statement_diagnostics            PRIMARY KEY      NO             NO
+system              public             29_35_11_not_null                                                                                               system         public        statement_diagnostics_requests   CHECK            NO             NO
 system              public             29_35_1_not_null                                                                                                system         public        statement_diagnostics_requests   CHECK            NO             NO
 system              public             29_35_2_not_null                                                                                                system         public        statement_diagnostics_requests   CHECK            NO             NO
 system              public             29_35_3_not_null                                                                                                system         public        statement_diagnostics_requests   CHECK            NO             NO
@@ -2019,6 +2020,7 @@ system              public             29_33_2_not_null                         
 system              public             29_33_4_not_null                                                                                                user_id IS NOT NULL
 system              public             29_34_1_not_null                                                                                                id IS NOT NULL
 system              public             29_34_3_not_null                                                                                                data IS NOT NULL
+system              public             29_35_11_not_null                                                                                               redacted IS NOT NULL
 system              public             29_35_1_not_null                                                                                                id IS NOT NULL
 system              public             29_35_2_not_null                                                                                                completed IS NOT NULL
 system              public             29_35_3_not_null                                                                                                statement_fingerprint IS NOT NULL
@@ -2837,7 +2839,6 @@ system         public        database_role_settings           role_name         
 system         public        database_role_settings           settings                                                                                                  3
 system         public        descriptor                       descriptor                                                                                                2
 system         public        descriptor                       id                                                                                                        1
-system         public        descriptor_id_seq                value                                                                                                     1
 system         public        eventlog                         eventType                                                                                                 2
 system         public        eventlog                         info                                                                                                      5
 system         public        eventlog                         reportingID                                                                                               4
@@ -2956,7 +2957,6 @@ system         public        replication_stats                under_replicated_r
 system         public        replication_stats                zone_id                                                                                                   1
 system         public        reports_meta                     generated                                                                                                 2
 system         public        reports_meta                     id                                                                                                        1
-system         public        role_id_seq                      value                                                                                                     1
 system         public        role_members                     isAdmin                                                                                                   3
 system         public        role_members                     member                                                                                                    2
 system         public        role_members                     member_id                                                                                                 5
@@ -3044,6 +3044,7 @@ system         public        statement_diagnostics_requests   expires_at        
 system         public        statement_diagnostics_requests   id                                                                                                        1
 system         public        statement_diagnostics_requests   min_execution_latency                                                                                     6
 system         public        statement_diagnostics_requests   plan_gist                                                                                                 9
+system         public        statement_diagnostics_requests   redacted                                                                                                  11
 system         public        statement_diagnostics_requests   requested_at                                                                                              5
 system         public        statement_diagnostics_requests   sampling_probability                                                                                      8
 system         public        statement_diagnostics_requests   statement_diagnostics_id                                                                                  4
@@ -3116,7 +3117,6 @@ system         public        task_payloads                    owner             
 system         public        task_payloads                    owner_id                                                                                                  4
 system         public        task_payloads                    type                                                                                                      7
 system         public        task_payloads                    value                                                                                                     8
-system         public        tenant_id_seq                    value                                                                                                     1
 system         public        tenant_settings                  last_updated                                                                                              4
 system         public        tenant_settings                  name                                                                                                      2
 system         public        tenant_settings                  reason                                                                                                    6
@@ -6162,17 +6162,23 @@ optimizer                                                  on
 optimizer_always_use_histograms                            on
 optimizer_hoist_uncorrelated_equality_subqueries           on
 optimizer_merge_joins_enabled                              on
+optimizer_prove_implication_with_virtual_computed_columns  on
 optimizer_use_forecasts                                    on
 optimizer_use_histograms                                   on
 optimizer_use_improved_computed_column_filters_derivation  on
 optimizer_use_improved_disjunction_stats                   on
+optimizer_use_improved_distinct_on_limit_hint_costing      on
 optimizer_use_improved_join_elimination                    on
+optimizer_use_improved_multi_column_selectivity_estimate   on
 optimizer_use_improved_split_disjunction_for_joins         on
+optimizer_use_improved_trigram_similarity_selectivity      on
+optimizer_use_improved_zigzag_join_costing                 on
 optimizer_use_limit_ordering_for_streaming_group_by        on
 optimizer_use_lock_op_for_serializable                     off
 optimizer_use_multicol_stats                               on
 optimizer_use_not_visible_indexes                          off
 optimizer_use_provided_ordering_fix                        on
+optimizer_use_trigram_similarity_optimization              on
 optimizer_use_virtual_computed_column_stats                on
 override_multi_region_zone_config                          off
 parallelize_multi_key_lookup_joins_enabled                 off

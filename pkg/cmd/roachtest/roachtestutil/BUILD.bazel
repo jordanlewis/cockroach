@@ -4,6 +4,7 @@ go_library(
     name = "roachtestutil",
     srcs = [
         "commandbuilder.go",
+        "disk_stall.go",
         "disk_usage.go",
         "health_checker.go",
         "httpclient.go",

@@ -337,7 +337,7 @@ WHERE
 `, [][]string{{"SELECT _ WHERE _", "1"}})
 
 	server.SQLServer().(*sql.Server).
-		GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, cluster.ApplicationLayer(0).AppStopper())
+		GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, cluster.ApplicationLayer(0).AppStopper())
 
 	sqlDB.CheckQueryResults(t, `
 SELECT
@@ -461,7 +461,9 @@ func TestExplicitTxnFingerprintAccounting(t *testing.T) {
 	statsCollector := sslocal.NewStatsCollector(
 		st,
 		appStats,
+		insightsProvider.Writer(false /* internal */),
 		sessionphase.NewTimes(),
+		sqlStats.GetCounters(),
 		nil, /* knobs */
 	)
 
@@ -586,7 +588,9 @@ func TestAssociatingStmtStatsWithTxnFingerprint(t *testing.T) {
 		statsCollector := sslocal.NewStatsCollector(
 			st,
 			appStats,
+			insightsProvider.Writer(false /* internal */),
 			sessionphase.NewTimes(),
+			sqlStats.GetCounters(),
 			nil, /* knobs */
 		)
 
@@ -737,7 +741,7 @@ func TestTransactionServiceLatencyOnExtendedProtocol(t *testing.T) {
 				finishedExecute.Set(true)
 			}
 		},
-		OnRecordTxnFinish: func(isInternal bool, phaseTimes *sessionphase.Times, stmt string) {
+		OnRecordTxnFinish: func(isInternal bool, phaseTimes *sessionphase.Times, stmt string, _ sqlstats.RecordedTxnStats) {
 			tc.Lock()
 			defer tc.Unlock()
 			if !isInternal && tc.query == stmt && finishedExecute.Get() {

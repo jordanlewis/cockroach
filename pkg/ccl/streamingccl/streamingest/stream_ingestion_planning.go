@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/multitenant/mtinfopb"
 	"github.com/cockroachdb/cockroach/pkg/repstream/streampb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/exprutil"
@@ -138,7 +139,12 @@ func ingestionPlanHook(
 		return nil, nil, nil, false, CannotSetExpirationWindowErr
 	}
 
-	fn := func(ctx context.Context, _ []sql.PlanNode, _ chan<- tree.Datums) error {
+	fn := func(ctx context.Context, _ []sql.PlanNode, _ chan<- tree.Datums) (err error) {
+		defer func() {
+			if err == nil {
+				telemetry.Count("physical_replication.started")
+			}
+		}()
 		ctx, span := tracing.ChildSpan(ctx, stmt.StatementTag())
 		defer span.Finish()
 
@@ -214,6 +220,7 @@ func ingestionPlanHook(
 			destinationTenantID,
 			retentionTTLSeconds,
 			options.resumeTimestamp,
+			hlc.Timestamp{},
 			noRevertFirst,
 			jobID,
 			ingestionStmt,
@@ -231,6 +238,7 @@ func createReplicationJob(
 	destinationTenantID roachpb.TenantID,
 	retentionTTLSeconds int32,
 	resumeTimestamp hlc.Timestamp,
+	revertToTimestamp hlc.Timestamp,
 	revertFirst bool,
 	jobID jobspb.JobID,
 	stmt *tree.CreateTenantFromReplication,
@@ -291,6 +299,7 @@ func createReplicationJob(
 			ReplicatedTime:        resumeTimestamp,
 			InitialSplitComplete:  revertFirst,
 			InitialRevertRequired: revertFirst,
+			InitialRevertTo:       revertToTimestamp,
 		},
 		Details: streamIngestionDetails,
 	}

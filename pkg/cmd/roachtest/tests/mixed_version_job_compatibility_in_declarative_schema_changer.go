@@ -31,7 +31,7 @@ func registerDeclarativeSchemaChangerJobCompatibilityInMixedVersion(r registry.R
 	// This test requires us to come back and change the stmts in executeSupportedDDLs to be those
 	// supported in the "previous" major release.
 	r.Add(registry.TestSpec{
-		Name:             "declarative_schema_changer/job-compatibility-mixed-version-V231-V232",
+		Name:             "declarative_schema_changer/job-compatibility-mixed-version-V241-V242",
 		Owner:            registry.OwnerSQLFoundations,
 		Cluster:          r.MakeClusterSpec(4),
 		CompatibleClouds: registry.AllExceptAWS,
@@ -72,20 +72,20 @@ func executeSupportedDDLs(
 	r *rand.Rand,
 	testingUpgradedNodes bool,
 ) error {
-	nodes := option.NodeListOption{helper.RandomNode(r, c.All())}
+	nodes := c.All().SeededRandNode(r)
 	// We are not always guaranteed to be in a mixed-version binary state.
 	// If we are, update the set of nodes; otherwise, we will choose a random
 	// node.
-	if helper.Context.MixedBinary() {
+	if helper.Context().MixedBinary() {
 		if testingUpgradedNodes {
 			// In this case, we test that older nodes are able to adopt desc. jobs from newer nodes.
-			nodes = helper.Context.NodesInNextVersion() // N.B. this is the set of upgradedNodes.
+			nodes = helper.Context().NodesInNextVersion() // N.B. this is the set of upgradedNodes.
 		} else {
 			// In this case, we test that newer nodes are able to adopt desc. jobs from older nodes.
-			nodes = helper.Context.NodesInPreviousVersion() // N.B. this is the set of oldNodes.
+			nodes = helper.Context().NodesInPreviousVersion() // N.B. this is the set of oldNodes.
 		}
 	}
-	testUtils, err := newCommonTestUtils(ctx, t, c, helper.Context.CockroachNodes, false)
+	testUtils, err := newCommonTestUtils(ctx, t, c, helper.DefaultService().Descriptor.Nodes, false, false)
 	defer testUtils.CloseConnections()
 	if err != nil {
 		return err
@@ -97,8 +97,8 @@ func executeSupportedDDLs(
 		return err
 	}
 
-	// DDLs supported since V22_2.
-	v222DDLs := []string{
+	// DDLs supported in V23_2.
+	v232DDLs := []string{
 		`COMMENT ON DATABASE testdb IS 'this is a database comment'`,
 		`COMMENT ON SCHEMA testdb.testsc IS 'this is a schema comment'`,
 		`COMMENT ON TABLE testdb.testsc.t IS 'this is a table comment'`,
@@ -109,10 +109,6 @@ func executeSupportedDDLs(
 		`ALTER TABLE testdb.testsc.t DROP COLUMN k`,
 		`ALTER TABLE testdb.testsc.t2 ADD PRIMARY KEY (i)`,
 		`ALTER TABLE testdb.testsc.t2 ALTER PRIMARY KEY USING COLUMNS (j)`,
-	}
-
-	// DDLs supported since V23_1.
-	v231DDls := []string{
 		`CREATE FUNCTION fn(a INT) RETURNS INT AS 'SELECT a*a' LANGUAGE SQL`,
 		`CREATE INDEX ON testdb.testsc.t3 (i)`,
 		`ALTER TABLE testdb.testsc.t2 ALTER COLUMN k SET NOT NULL`,
@@ -127,9 +123,18 @@ func executeSupportedDDLs(
 		`ALTER TABLE testdb.testsc.t3 VALIDATE CONSTRAINT check_positive_not_valid`,
 	}
 
+	// DDLs supported in V24_1.
+	v241DDLs := []string{
+		`ALTER TABLE testdb.testsc.t ADD COLUMN k int, ADD COLUMN l int, DROP COLUMN l`,
+		`ALTER TABLE testdb.testsc.t ALTER COLUMN k SET DEFAULT 42`,
+		`ALTER TABLE testdb.testsc.t ALTER COLUMN k DROP DEFAULT`,
+		`CREATE DATABASE testdb2`,
+		`CREATE SCHEMA testdb2.testsc`,
+		`CREATE SEQUENCE testdb2.testsc.s`,
+	}
+
 	// Used to clean up our CREATE-d elements after we are done with them.
 	cleanup := []string{
-		// Supported since V22_2.
 		`DROP INDEX testdb.testsc.t@idx`,
 		`DROP SEQUENCE testdb.testsc.s`,
 		`DROP TYPE testdb.testsc.typ`,
@@ -140,11 +145,13 @@ func executeSupportedDDLs(
 		`DROP SCHEMA testdb.testsc`,
 		`DROP DATABASE testdb CASCADE`,
 		`DROP OWNED BY foo`,
-		// Supported since V23_1.
 		`DROP FUNCTION fn`,
+		`DROP SEQUENCE testdb2.testsc.s`,
+		`DROP SCHEMA testdb2.testsc`,
+		`DROP DATABASE testdb2 CASCADE`,
 	}
 
-	ddls := append(append(v222DDLs, v231DDls...), cleanup...)
+	ddls := append(v232DDLs, append(v241DDLs, cleanup...)...)
 
 	for _, ddl := range ddls {
 		if err := helper.ExecWithGateway(r, nodes, ddl); err != nil {

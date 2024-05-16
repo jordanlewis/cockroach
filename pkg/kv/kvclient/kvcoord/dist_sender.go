@@ -38,6 +38,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/grpcutil"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/metamorphic"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/quotapool"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
@@ -312,6 +313,21 @@ This counts the number of ranges with an active rangefeed that are performing ca
 	}
 )
 
+// metamorphicRouteToLeaseholderFirst is used to control the behavior of the
+// DistSender when sending a BatchRequest.  The default behavior for a request
+// that needs to run on the leaseholder is to send to the leaseholder first, and
+// only send to a follower if the leaseholder is unavailable or the client has
+// stale leaseholder information.  If this flag is set to false, then it will
+// route the request using the default sorting logic without moving the
+// leaseholder to the front of the list. This means that most requests will not
+// go to the leaseholder first, and instead be sent to the leaseholder through a
+// follower using a proxy request. This setting is only intended for testing to
+// stress proxy behavior.
+var metamorphicRouteToLeaseholderFirst = metamorphic.ConstantWithTestBool(
+	"distsender-leaseholder-first",
+	true,
+)
+
 // CanSendToFollower is used by the DistSender to determine if it needs to look
 // up the current lease holder for a request. It is used by the
 // followerreadsccl code to inject logic to check if follower reads are enabled.
@@ -554,6 +570,7 @@ func (c rangeFeedErrorCounters) GetRangeFeedRetryCounter(
 	switch reason {
 	case kvpb.RangeFeedRetryError_REASON_REPLICA_REMOVED,
 		kvpb.RangeFeedRetryError_REASON_RANGE_SPLIT,
+		kvpb.RangeFeedRetryError_REASON_MANUAL_RANGE_SPLIT,
 		kvpb.RangeFeedRetryError_REASON_RANGE_MERGED,
 		kvpb.RangeFeedRetryError_REASON_RAFT_SNAPSHOT,
 		kvpb.RangeFeedRetryError_REASON_LOGICAL_OPS_MISSING,
@@ -695,6 +712,9 @@ type DistSender struct {
 	// the descriptor, instead of trying to reorder them by latency. The knob
 	// only applies to requests sent with the LEASEHOLDER routing policy.
 	dontReorderReplicas bool
+
+	routeToLeaseholderFirst bool
+
 	// dontConsiderConnHealth, if set, makes the GRPCTransport not take into
 	// consideration the connection health when deciding the ordering for
 	// replicas. When not set, replicas on nodes with unhealthy connections are
@@ -816,6 +836,7 @@ func NewDistSender(cfg DistSenderConfig) *DistSender {
 		ds.transportFactory = tf(ds.transportFactory)
 	}
 	ds.dontReorderReplicas = cfg.TestingKnobs.DontReorderReplicas
+	ds.routeToLeaseholderFirst = cfg.TestingKnobs.RouteToLeaseholderFirst || metamorphicRouteToLeaseholderFirst
 	ds.dontConsiderConnHealth = cfg.TestingKnobs.DontConsiderConnHealth
 	ds.rpcRetryOptions = base.DefaultRetryOptions()
 	// TODO(arul): The rpcRetryOptions passed in here from server/tenant don't
@@ -2027,7 +2048,17 @@ func (ds *DistSender) sendPartialBatch(
 		// and our local replica before attempting the request. If the sync
 		// makes our token invalid, we handle it similarly to a RangeNotFound or
 		// NotLeaseHolderError from a remote server.
-		if ba.ProxyRangeInfo != nil {
+		// NB: The routingTok is usually valid when we get to this line on a
+		// proxy request since we never retry the outer for loop, however there
+		// is an edge case where we invalidate the token once here and then
+		// invalidate it a second time in the statement below and hit a
+		// retriable range loopup error.
+		// TODO(baptist): Consider splitting out the handling in this method for
+		// proxy requests vs non-proxy requests. Currently it is hard to follow
+		// the invariants when this is called. Alternativly move this call to be
+		// done immediately when the routingTok is created as it will always be
+		// valid at that point.
+		if ba.ProxyRangeInfo != nil && routingTok.Valid() {
 			routingTok.SyncTokenAndMaybeUpdateCache(ctx, &ba.ProxyRangeInfo.Lease, &ba.ProxyRangeInfo.Desc)
 		}
 		if !routingTok.Valid() {
@@ -2550,7 +2581,9 @@ func (ds *DistSender) sendToReplicas(
 			idx = replicas.Find(routing.Leaseholder().ReplicaID)
 		}
 		if idx != -1 {
-			replicas.MoveToFront(idx)
+			if ds.routeToLeaseholderFirst {
+				replicas.MoveToFront(idx)
+			}
 			routeToLeaseholder = true
 		} else {
 			// The leaseholder node's info must have been missing from gossip when we

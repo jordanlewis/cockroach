@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
@@ -106,6 +105,7 @@ const (
 	OptLaggingRangesThreshold             = `lagging_ranges_threshold`
 	OptLaggingRangesPollingInterval       = `lagging_ranges_polling_interval`
 	OptIgnoreDisableChangefeedReplication = `ignore_disable_changefeed_replication`
+	OptEncodeJSONValueNullAsObject        = `encode_json_value_null_as_object`
 
 	OptVirtualColumnsOmitted VirtualColumnVisibility = `omitted`
 	OptVirtualColumnsNull    VirtualColumnVisibility = `null`
@@ -368,6 +368,7 @@ var ChangefeedOptionExpectValues = map[string]OptionPermittedValues{
 	OptLaggingRangesThreshold:             durationOption,
 	OptLaggingRangesPollingInterval:       durationOption,
 	OptIgnoreDisableChangefeedReplication: flagOption,
+	OptEncodeJSONValueNullAsObject:        flagOption,
 }
 
 // CommonOptions is options common to all sinks
@@ -381,7 +382,7 @@ var CommonOptions = makeStringSet(OptCursor, OptEndTime, OptEnvelope,
 	OptInitialScan, OptNoInitialScan, OptInitialScanOnly, OptUnordered, OptCustomKeyColumn,
 	OptMinCheckpointFrequency, OptMetricsScope, OptVirtualColumns, Topics, OptExpirePTSAfter,
 	OptExecutionLocality, OptLaggingRangesThreshold, OptLaggingRangesPollingInterval,
-	OptIgnoreDisableChangefeedReplication,
+	OptIgnoreDisableChangefeedReplication, OptEncodeJSONValueNullAsObject,
 )
 
 // SQLValidOptions is options exclusive to SQL sink
@@ -766,18 +767,19 @@ func (s StatementOptions) GetCanHandle() CanHandle {
 // EncodingOptions describe how events are encoded when
 // sent to the sink.
 type EncodingOptions struct {
-	Format            FormatType
-	VirtualColumns    VirtualColumnVisibility
-	Envelope          EnvelopeType
-	KeyInValue        bool
-	TopicInValue      bool
-	UpdatedTimestamps bool
-	MVCCTimestamps    bool
-	Diff              bool
-	AvroSchemaPrefix  string
-	SchemaRegistryURI string
-	Compression       string
-	CustomKeyColumn   string
+	Format                      FormatType
+	VirtualColumns              VirtualColumnVisibility
+	Envelope                    EnvelopeType
+	KeyInValue                  bool
+	TopicInValue                bool
+	UpdatedTimestamps           bool
+	MVCCTimestamps              bool
+	Diff                        bool
+	EncodeJSONValueNullAsObject bool
+	AvroSchemaPrefix            string
+	SchemaRegistryURI           string
+	Compression                 string
+	CustomKeyColumn             string
 }
 
 // GetEncodingOptions populates and validates an EncodingOptions.
@@ -819,6 +821,7 @@ func (s StatementOptions) GetEncodingOptions() (EncodingOptions, error) {
 	_, o.UpdatedTimestamps = s.m[OptUpdatedTimestamps]
 	_, o.MVCCTimestamps = s.m[OptMVCCTimestamps]
 	_, o.Diff = s.m[OptDiff]
+	_, o.EncodeJSONValueNullAsObject = s.m[OptEncodeJSONValueNullAsObject]
 
 	o.SchemaRegistryURI = s.m[OptConfluentSchemaRegistry]
 	o.AvroSchemaPrefix = s.m[OptAvroSchemaPrefix]
@@ -835,6 +838,9 @@ func (e EncodingOptions) Validate() error {
 		return errors.Errorf(`%s=%s is not supported with %s=%s`,
 			OptEnvelope, OptEnvelopeRow, OptFormat, OptFormatAvro,
 		)
+	}
+	if e.Format != OptFormatJSON && e.EncodeJSONValueNullAsObject {
+		return errors.Errorf(`%s is only usable with %s=%s`, OptEncodeJSONValueNullAsObject, OptFormat, OptFormatJSON)
 	}
 	if e.Envelope != OptEnvelopeWrapped && e.Format != OptFormatJSON && e.Format != OptFormatParquet {
 		requiresWrap := []struct {
@@ -966,18 +972,10 @@ func (s StatementOptions) GetMetricScope() (string, bool) {
 func (s StatementOptions) GetLaggingRangesConfig(
 	ctx context.Context, settings *cluster.Settings,
 ) (threshold time.Duration, pollingInterval time.Duration, e error) {
-	// This version gate prevents the scenario where the changefeed is created
-	// with options on a 23.2 node and resumed on a node with an old version
-	// which does not have those options.
-	laggingRangesVersionIsActive := settings.Version.IsActive(ctx, clusterversion.TODODelete_V23_2_ChangefeedLaggingRangesOpts)
 	threshold = DefaultLaggingRangesThreshold
 	pollingInterval = DefaultLaggingRangesPollingInterval
 	_, ok := s.m[OptLaggingRangesThreshold]
 	if ok {
-		if !laggingRangesVersionIsActive {
-			return threshold, pollingInterval, WithTerminalError(errors.New("cluster version must be 23.2 or" +
-				" greater to use lagging ranges metrics configs"))
-		}
 		t, err := s.getDurationValue(OptLaggingRangesThreshold)
 		if err != nil {
 			return threshold, pollingInterval, err
@@ -986,10 +984,6 @@ func (s StatementOptions) GetLaggingRangesConfig(
 	}
 	_, ok = s.m[OptLaggingRangesPollingInterval]
 	if ok {
-		if !laggingRangesVersionIsActive {
-			return threshold, pollingInterval, WithTerminalError(errors.New("cluster version must be 23.2 or" +
-				" greater to use lagging ranges metrics configs"))
-		}
 		i, err := s.getDurationValue(OptLaggingRangesPollingInterval)
 		if err != nil {
 			return threshold, pollingInterval, err

@@ -781,7 +781,7 @@ func TestReplicaRangefeedErrors(t *testing.T) {
 		pErr := <-streamErrC
 		assertRangefeedRetryErr(t, pErr, kvpb.RangeFeedRetryError_REASON_REPLICA_REMOVED)
 	})
-	t.Run(kvpb.RangeFeedRetryError_REASON_RANGE_SPLIT.String(), func(t *testing.T) {
+	t.Run(kvpb.RangeFeedRetryError_REASON_MANUAL_RANGE_SPLIT.String(), func(t *testing.T) {
 		tc, rangeID := setup(t, base.TestingKnobs{})
 		defer tc.Stopper().Stop(ctx)
 
@@ -814,7 +814,7 @@ func TestReplicaRangefeedErrors(t *testing.T) {
 
 		// Check the error.
 		pErr := <-streamErrC
-		assertRangefeedRetryErr(t, pErr, kvpb.RangeFeedRetryError_REASON_RANGE_SPLIT)
+		assertRangefeedRetryErr(t, pErr, kvpb.RangeFeedRetryError_REASON_MANUAL_RANGE_SPLIT)
 	})
 	t.Run(kvpb.RangeFeedRetryError_REASON_RANGE_MERGED.String(), func(t *testing.T) {
 		tc, rangeID := setup(t, base.TestingKnobs{})
@@ -1366,6 +1366,8 @@ func TestReplicaRangefeedPushesTransactions(t *testing.T) {
 func TestRangefeedCheckpointsRecoverFromLeaseExpiration(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+
+	skip.WithIssue(t, 123551)
 
 	ctx := context.Background()
 	var scratchRangeID int64 // accessed atomically

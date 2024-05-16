@@ -23,7 +23,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
-	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -109,7 +108,8 @@ type backupFixtureSpecs struct {
 	initWorkloadViaRestore *restoreSpecs
 
 	timeout time.Duration
-	suites  registry.SuiteSet
+	// A no-op, used only to set larger timeouts due roachtests limiting timeouts based on the suite
+	suites registry.SuiteSet
 
 	testName string
 
@@ -246,7 +246,6 @@ func (bd *backupDriver) monitorBackups(ctx context.Context) {
 }
 
 func registerBackupFixtures(r registry.Registry) {
-	rng, _ := randutil.NewPseudoRand()
 	for _, bf := range []backupFixtureSpecs{
 		{
 			// 400GB backup fixture with 48 incremental layers. This is used by
@@ -314,29 +313,6 @@ func registerBackupFixtures(r registry.Registry) {
 			suites: registry.Suites(registry.Weekly),
 		},
 		{
-			// 15 GB backup fixture with 48 incremental layers. This is used by
-			// restore/tpce/15GB/aws/nodes=4/cpus=8. Runs weekly to catch any
-			// regressions in the fixture generation code.
-			hardware: makeHardwareSpecs(hardwareSpecs{workloadNode: true, cpus: 4}),
-			scheduledBackupSpecs: makeBackupFixtureSpecs(
-				scheduledBackupSpecs{
-					incrementalBackupCrontab: "*/2 * * * *",
-					ignoreExistingBackups:    true,
-					backupSpecs: backupSpecs{
-						nonRevisionHistory: rng.Intn(2) == 1,
-						workload:           tpceRestore{customers: 1000},
-						version:            fixtureFromMasterVersion,
-						numBackupsInChain:  4,
-					},
-				}),
-			initWorkloadViaRestore: &restoreSpecs{
-				backup:                 backupSpecs{version: "v22.2.1", numBackupsInChain: 48},
-				restoreUptoIncremental: 48,
-			},
-			timeout: 2 * time.Hour,
-			suites:  registry.Suites(registry.Weekly),
-		},
-		{
 			// 8TB Backup Fixture.
 			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 10, volumeSize: 2000, workloadNode: true}),
 			scheduledBackupSpecs: makeBackupFixtureSpecs(scheduledBackupSpecs{
@@ -374,6 +350,22 @@ func registerBackupFixtures(r registry.Registry) {
 			// Use weekly to allow an over 24 hour timeout.
 			suites:  registry.Suites(registry.Weekly),
 			timeout: 48 * time.Hour,
+			skip:    "only for fixture generation",
+		},
+		{
+			hardware: makeHardwareSpecs(hardwareSpecs{workloadNode: true}),
+			scheduledBackupSpecs: makeBackupFixtureSpecs(scheduledBackupSpecs{
+				backupSpecs: backupSpecs{
+					workload:           tpccRestore{opts: tpccRestoreOptions{warehouses: 500}},
+					nonRevisionHistory: true,
+				},
+			}),
+			initWorkloadViaRestore: &restoreSpecs{
+				backup:                 backupSpecs{version: "v23.1.1", numBackupsInChain: 48},
+				restoreUptoIncremental: 48,
+			},
+			timeout: 1 * time.Hour,
+			suites:  registry.Suites(registry.Nightly),
 			skip:    "only for fixture generation",
 		},
 	} {

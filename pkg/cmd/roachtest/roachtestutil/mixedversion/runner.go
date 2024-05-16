@@ -29,6 +29,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachprod/grafana"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
+	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/roachtestutil/clusterupgrade"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
@@ -93,11 +94,15 @@ type (
 		seed      int64
 		logger    *logger.Logger
 
-		binaryVersions  atomic.Value
-		clusterVersions atomic.Value
+		binaryVersions  *atomic.Value
+		clusterVersions *atomic.Value
 
 		background *backgroundRunner
 		monitor    *crdbMonitor
+
+		// ranUserHooks keeps track of whether the runner has run any
+		// user-provided hooks so far.
+		ranUserHooks *atomic.Bool
 
 		connCache struct {
 			mu    syncutil.Mutex
@@ -125,16 +130,23 @@ func newTestRunner(
 	crdbNodes option.NodeListOption,
 	randomSeed int64,
 ) *testRunner {
+	var ranUserHooks atomic.Bool
+	var binaryVersions atomic.Value
+	var clusterVersions atomic.Value
+
 	return &testRunner{
-		ctx:        ctx,
-		cancel:     cancel,
-		plan:       plan,
-		logger:     l,
-		cluster:    c,
-		crdbNodes:  crdbNodes,
-		background: newBackgroundRunner(ctx, l),
-		monitor:    newCRDBMonitor(ctx, c, crdbNodes),
-		seed:       randomSeed,
+		ctx:             ctx,
+		cancel:          cancel,
+		plan:            plan,
+		logger:          l,
+		binaryVersions:  &binaryVersions,
+		clusterVersions: &clusterVersions,
+		cluster:         c,
+		crdbNodes:       crdbNodes,
+		background:      newBackgroundRunner(ctx, l),
+		monitor:         newCRDBMonitor(ctx, c, crdbNodes),
+		ranUserHooks:    &ranUserHooks,
+		seed:            randomSeed,
 	}
 }
 
@@ -143,6 +155,14 @@ func newTestRunner(
 func (tr *testRunner) run() (retErr error) {
 	stepsErr := make(chan error)
 	defer func() { tr.teardown(stepsErr, retErr != nil) }()
+	defer func() {
+		// If the test failed an we haven't run any user hooks up to this
+		// point, redirect the failure to Test Eng, as this indicates a
+		// setup problem that should be investigated separately.
+		if retErr != nil && !tr.ranUserHooks.Load() {
+			retErr = registry.ErrorWithOwner(registry.OwnerTestEng, retErr)
+		}
+	}()
 
 	go func() {
 		defer close(stepsErr)
@@ -229,6 +249,10 @@ func (tr *testRunner) runStep(ctx context.Context, step testStep) error {
 		if stopChan := ss.impl.Background(); stopChan != nil {
 			tr.startBackgroundStep(ss, stepLogger, stopChan)
 			return nil
+		}
+
+		if _, isUserHook := ss.impl.(runHookStep); isUserHook {
+			tr.ranUserHooks.Store(true)
 		}
 
 		return tr.runSingleStep(ctx, ss, stepLogger)
@@ -322,7 +346,7 @@ func (tr *testRunner) testFailure(err error, l *logger.Logger, testContext *Cont
 		if err := tr.refreshClusterVersions(); err != nil {
 			tr.logger.Printf("failed to fetch cluster versions after failure: %s", err)
 		} else {
-			clusterVersionsAfter = tr.clusterVersions
+			clusterVersionsAfter.Store(tr.clusterVersions.Load())
 		}
 	}
 
@@ -331,7 +355,7 @@ func (tr *testRunner) testFailure(err error, l *logger.Logger, testContext *Cont
 		testContext:           testContext,
 		binaryVersions:        loadAtomicVersions(tr.binaryVersions),
 		clusterVersionsBefore: loadAtomicVersions(clusterVersionsBefore),
-		clusterVersionsAfter:  loadAtomicVersions(clusterVersionsAfter),
+		clusterVersionsAfter:  loadAtomicVersions(&clusterVersionsAfter),
 	}
 
 	// failureErr wraps the original error, adding mixed-version state
@@ -395,9 +419,11 @@ func (tr *testRunner) logStep(prefix string, step *singleStep, l *logger.Logger)
 func (tr *testRunner) logVersions(l *logger.Logger, testContext Context) {
 	binaryVersions := loadAtomicVersions(tr.binaryVersions)
 	clusterVersions := loadAtomicVersions(tr.clusterVersions)
-	releasedVersions := make([]*clusterupgrade.Version, 0, len(testContext.CockroachNodes))
-	for _, node := range testContext.CockroachNodes {
-		releasedVersions = append(releasedVersions, testContext.NodeVersion(node))
+	releasedVersions := make([]*clusterupgrade.Version, 0, len(testContext.System.Descriptor.Nodes))
+	for _, node := range testContext.System.Descriptor.Nodes {
+		nv, err := testContext.NodeVersion(node)
+		handleInternalError(err)
+		releasedVersions = append(releasedVersions, nv)
 	}
 
 	if binaryVersions == nil || clusterVersions == nil {
@@ -495,11 +521,29 @@ func (tr *testRunner) connCacheInitialized() bool {
 func (tr *testRunner) newHelper(
 	ctx context.Context, l *logger.Logger, testContext Context,
 ) *Helper {
+	newService := func(sc *ServiceContext) *Service {
+		if sc == nil {
+			return nil
+		}
+
+		return &Service{
+			ServiceContext: sc,
+
+			ctx:             ctx,
+			connFunc:        tr.conn,
+			stepLogger:      l,
+			clusterVersions: tr.clusterVersions,
+		}
+	}
+
 	return &Helper{
-		Context:    &testContext,
-		ctx:        ctx,
-		runner:     tr,
-		stepLogger: l,
+		System: newService(testContext.System),
+		Tenant: newService(testContext.Tenant),
+
+		testContext: testContext,
+		ctx:         ctx,
+		runner:      tr,
+		stepLogger:  l,
 	}
 }
 
@@ -565,6 +609,10 @@ func (cm *crdbMonitor) ExpectDeaths(n int) {
 }
 
 func (cm *crdbMonitor) Stop() error {
+	if cm.monitor == nil { // test-only
+		return nil
+	}
+
 	return cm.monitor.WaitE()
 }
 
@@ -647,9 +695,11 @@ func (tfd *testFailureDetails) Format() string {
 
 	tw := newTableWriter(len(tfd.binaryVersions))
 	if tfd.testContext != nil {
-		releasedVersions := make([]*clusterupgrade.Version, 0, len(tfd.testContext.CockroachNodes))
-		for _, node := range tfd.testContext.CockroachNodes {
-			releasedVersions = append(releasedVersions, tfd.testContext.NodeVersion(node))
+		releasedVersions := make([]*clusterupgrade.Version, 0, len(tfd.testContext.System.Descriptor.Nodes))
+		for _, node := range tfd.testContext.System.Descriptor.Nodes {
+			nv, err := tfd.testContext.NodeVersion(node)
+			handleInternalError(err)
+			releasedVersions = append(releasedVersions, nv)
 		}
 		tw.AddRow("released versions", toString(releasedVersions)...)
 	}
@@ -710,6 +760,10 @@ func (tw *tableWriter) String() string {
 }
 
 func renameFailedLogger(l *logger.Logger) error {
+	if l.File == nil { // test-only
+		return nil
+	}
+
 	currentFileName := l.File.Name()
 	newLogName := path.Join(
 		filepath.Dir(currentFileName),
@@ -718,8 +772,8 @@ func renameFailedLogger(l *logger.Logger) error {
 	return os.Rename(currentFileName, newLogName)
 }
 
-func loadAtomicVersions(v atomic.Value) []roachpb.Version {
-	if v.Load() == nil {
+func loadAtomicVersions(v *atomic.Value) []roachpb.Version {
+	if v == nil || v.Load() == nil {
 		return nil
 	}
 

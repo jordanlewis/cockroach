@@ -25,24 +25,38 @@ type NonSensitiveColumns []string
 // TableRegistryConfig is the unit of configuration used
 // in the DebugZipTableRegistry, providing the option to
 // define custom redacted/unredacted queries if necessary.
-// If nonSensitiveCols is provided, you don't need to define
-// customQueryRedacted in the presence of customQueryRedacted.
-// In the absence of customQueryRedacted, nonSensitiveCols will
-// be used.
+//
+// It allows us to define how a table should be queried when the `--redact`
+// flag is passed to `debug zip`, as well as how it should be queried when
+// an unredacted debug zip is requested. The goal is to be selective in how
+// we query tables in the `--redact` case, so that newly added columns containing
+// sensitive information don't accidentally leak into debug zip outputs.
+//
+// We enforce that *some* explicit config is present for the redacted case.
+// In the absence of an explicit configuration for the unredacted case, a
+// `SELECT *` query is used.
+//
+// The following config combinations are acceptable:
+// - nonSensitiveCols defined, nothing else.
+// - customQueryRedacted defined, nothing else
+// - customQueryUnredacted defined AND customQueryRedacted defined
+// - customQueryUnredacted defined AND nonSensitiveCols defined
 type TableRegistryConfig struct {
 	// nonSensitiveCols are all the columns associated with the table that do
-	// not contain sensitive data.
-	// NB: these are required in the absence of customQueryRedacted.
-	// NB: the ordering of the columns should match the unredacted column
-	// ordering as much as possible, to provide a consistent experience across
-	// redacted/unredacted table dumps.
+	// not contain sensitive data. This is required in the absence of
+	// customQueryRedacted.
 	nonSensitiveCols NonSensitiveColumns
 	// customQueryUnredacted is the custom SQL query used to query the
-	// table when redaction is not necessary. NB: optional.
+	// table when redaction is not necessary.
+	// If omitted, unredacted debug zips will run a simple `SELECT *` against
+	// the table.
 	customQueryUnredacted string
 	// customQueryUnredacted is the custom SQL query used to query the
-	// table when redaction is required.
-	// NB: this field is optional, and takes precedence over nonSensitiveCols.
+	// table when redaction is required. This is required in the absence of
+	// nonSensitiveCols.
+	//
+	// customQueryRedacted should NOT be a `SELECT * FROM table` type query, as
+	// this could leak newly added sensitive columns into the output.
 	customQueryRedacted string
 }
 
@@ -368,6 +382,7 @@ var zipInternalTablesPerCluster = DebugZipTableRegistry{
 			"prev_ts",
 			"batches",
 			"checkpoints",
+			"megabytes",
 			"last_checkpoint",
 			"rf_checkpoints",
 			"rf_advances",
@@ -485,28 +500,32 @@ var zipInternalTablesPerCluster = DebugZipTableRegistry{
 	"crdb_internal.kv_node_status": {
 		// `env` column can contain sensitive node environment variable values,
 		// such as AWS_ACCESS_KEY.
-		nonSensitiveCols: NonSensitiveColumns{
-			"node_id",
-			"network",
-			"address",
-			"attrs",
-			"locality",
-			"server_version",
-			"go_version",
-			"tag",
-			"time",
-			"revision",
-			"cgo_compiler",
-			"platform",
-			"distribution",
-			"type",
-			"dependencies",
-			"started_at",
-			"updated_at",
-			"metrics",
-			"args",
-			"activity",
-		},
+		// Some fields are marked as `<redacted>` because we want to redact hostname, ip address and other sensitive fields
+		// in the db dump files contained in debugzip
+		customQueryRedacted: `SELECT 
+				"node_id",
+				"network",
+				'<redacted>' as address,
+				"attrs",
+				"locality",
+				"server_version",
+				"go_version",
+				"tag",
+				"time",
+				"revision",
+				"cgo_compiler",
+				"platform",
+				"distribution",
+				"type",
+				"dependencies",
+				"started_at",
+				"updated_at",
+				"metrics",
+				'<redacted>' as args,
+				'<redacted>' as env,
+				"activity"
+			FROM crdb_internal.kv_node_status
+		`,
 	},
 	"crdb_internal.kv_store_status": {
 		nonSensitiveCols: NonSensitiveColumns{
@@ -703,10 +722,25 @@ var zipInternalTablesPerNode = DebugZipTableRegistry{
 	"crdb_internal.gossip_nodes": {
 		// `cluster_name` is hashed as we only care to see whether values are
 		// identical across nodes.
+		// Some fields are marked as `<redacted>` because we want to redact hostname, ip address and other sensitive fields
+		// in the db dump files contained in debugzip
 		customQueryRedacted: `SELECT 
-			node_id, network, address, advertise_address, sql_network, sql_address, 
-			advertise_sql_address, attrs, locality, fnv32(cluster_name) as cluster_name,
-			server_version, build_tag, started_at, is_live, ranges, leases
+				node_id, 
+				network, 
+				'<redacted>' as address, 
+				'<redacted>' as advertise_address, 
+				sql_network, 
+				'<redacted>' as sql_address, 
+				'<redacted>' as advertise_sql_address, 
+				attrs, 
+				'<redacted>' as locality, 
+				fnv32(cluster_name) as cluster_name,
+				server_version, 
+				build_tag, 
+				started_at, 
+				is_live, 
+				ranges,
+				leases
 			FROM crdb_internal.gossip_nodes`,
 	},
 	"crdb_internal.leases": {
@@ -833,12 +867,24 @@ var zipInternalTablesPerNode = DebugZipTableRegistry{
 		},
 	},
 	"crdb_internal.node_runtime_info": {
-		nonSensitiveCols: NonSensitiveColumns{
-			"node_id",
-			"component",
-			"field",
-			"value",
-		},
+		// Some fields are marked as `<redacted>` because we want to redact hostname, ip address and other sensitive fields
+		// in the db dump files contained in debugzip
+		customQueryRedacted: `SELECT * FROM (
+			SELECT
+				"node_id",
+				"component",
+				"field",
+				"value"
+			FROM crdb_internal.node_runtime_info 
+      WHERE field NOT IN ('URL', 'Host', 'URI') UNION
+    		SELECT
+					"node_id",
+					"component",
+					"field",
+					'<redacted>' AS value
+				FROM crdb_internal.node_runtime_info
+				WHERE field IN ('URL', 'Host', 'URI')
+      ) ORDER BY node_id`,
 	},
 	"crdb_internal.node_sessions": {
 		// `client_address` contains unredacted client IP addresses.
@@ -1057,24 +1103,22 @@ var zipInternalTablesPerNode = DebugZipTableRegistry{
 	},
 }
 
-/**
- * NB: The following system tables explicitly forbidden:
- * 	- system.users: avoid downloading passwords.
- * 	- system.web_sessions: avoid downloading active session tokens.
- * 	- system.join_tokens: avoid downloading secret join keys.
- * 	- system.comments: avoid downloading noise from SQL schema.
- * 	- system.ui: avoid downloading noise from UI customizations.
- * 	- system.zones: the contents of crdb_internal.zones is easier to use.
- * 	- system.statement_bundle_chunks: avoid downloading a large table that's
- *    hard to interpret currently.
- * 	- system.statement_statistics: historical data, usually too much to
- *    download.
- * 	- system.transaction_statistics: ditto
- *  - system.statement_activity: ditto
- *  - system.transaction_activity: ditto
- *
- * A test makes this assertion in pkg/cli/zip_table_registry.go:TestNoForbiddenSystemTablesInDebugZip
- */
+// NB: The following system tables explicitly forbidden:
+//   - system.users: avoid downloading passwords.
+//   - system.web_sessions: avoid downloading active session tokens.
+//   - system.join_tokens: avoid downloading secret join keys.
+//   - system.comments: avoid downloading noise from SQL schema.
+//   - system.ui: avoid downloading noise from UI customizations.
+//   - system.zones: the contents of crdb_internal.zones is easier to use.
+//   - system.statement_bundle_chunks: avoid downloading a large table that's
+//     hard to interpret currently.
+//   - system.statement_statistics: historical data, usually too much to
+//     download.
+//   - system.transaction_statistics: ditto
+//   - system.statement_activity: ditto
+//   - system.transaction_activity: ditto
+//
+// A test makes this assertion in pkg/cli/zip_table_registry.go:TestNoForbiddenSystemTablesInDebugZip
 var zipSystemTables = DebugZipTableRegistry{
 	"system.database_role_settings": {
 		nonSensitiveCols: NonSensitiveColumns{
@@ -1084,13 +1128,14 @@ var zipSystemTables = DebugZipTableRegistry{
 		},
 	},
 	"system.descriptor": {
+		// For readability, we unmarsal the descriptor into JSON format.
 		customQueryUnredacted: `SELECT
 				id,
-				descriptor
+        crdb_internal.pb_to_json('cockroach.sql.sqlbase.Descriptor', descriptor, false) AS descriptor
 			FROM system.descriptor`,
 		customQueryRedacted: `SELECT
 				id,
-				crdb_internal.redact_descriptor(descriptor) AS descriptor
+        crdb_internal.pb_to_json('cockroach.sql.sqlbase.Descriptor', crdb_internal.redact_descriptor(descriptor), false) AS descriptor
 			FROM system.descriptor`,
 	},
 	"system.eventlog": {
@@ -1140,9 +1185,13 @@ var zipSystemTables = DebugZipTableRegistry{
 			FROM system.job_info`,
 	},
 	"system.lease": {
-		customQueryUnredacted: `
-			SELECT * FROM system.lease;
-		`,
+		nonSensitiveCols: NonSensitiveColumns{
+			"desc_id",
+			"version",
+			"sql_instance_id",
+			"session_id",
+			"crdb_region",
+		},
 	},
 	"system.locations": {
 		nonSensitiveCols: NonSensitiveColumns{
@@ -1285,37 +1334,50 @@ var zipSystemTables = DebugZipTableRegistry{
 	"system.settings": {
 		customQueryUnredacted: `SELECT * FROM system.settings`,
 		customQueryRedacted: `SELECT * FROM (
-    		SELECT *
-    		FROM system.settings
-			WHERE "valueType" <> 's'
+				SELECT *
+				FROM system.settings
+				WHERE "valueType" <> 's'
     	) UNION (
-			SELECT name, '<redacted>' as value,
-			"lastUpdated",
-			"valueType"
-			FROM system.settings
-			WHERE "valueType"  = 's'
+				SELECT name, '<redacted>' as value,
+				"lastUpdated",
+				"valueType"
+				FROM system.settings
+				WHERE "valueType"  = 's'
     	)`,
 	},
 	"system.span_configurations": {
+		// For readability, we decode the config into JSON format and pretty print the start and end keys.
 		nonSensitiveCols: NonSensitiveColumns{
-			"config",
+			"crdb_internal.pb_to_json('cockroach.roachpb.SpanConfig', config) as config",
 			// Boundary keys for span configs, which are derived from zone configs, are typically on
 			// metadata object boundaries (database, table, or index), and not arbitrary range boundaries
 			// and therefore do not contain sensitive information. Therefore they can remain unredacted.
-			"start_key",
+			"crdb_internal.pretty_key(start_key, 0) as start_key",
 			// Boundary keys for span configs, which are derived from zone configs, are typically on
 			// metadata object boundaries (database, table, or index), and not arbitrary range boundaries
 			// and therefore do not contain sensitive information. Therefore they can remain unredacted.
-			"end_key",
+			"crdb_internal.pretty_key(end_key, 0) as end_key",
 		},
+		// Since we are decoding the columns while selecting them, we also need to
+		// provide a custom unredacted query to make sure it doesn't default to
+		// "TABLE system.span_configurations" when `--redact` flag is not set.
+		customQueryUnredacted: `SELECT
+    crdb_internal.pb_to_json('cockroach.roachpb.SpanConfig', config) as config,
+    crdb_internal.pretty_key(start_key, 0) as start_key,
+    crdb_internal.pretty_key(end_key, 0) as end_key
+		FROM system.span_configurations`,
 	},
 	"system.sql_instances": {
-		nonSensitiveCols: NonSensitiveColumns{
+		// Some fields are marked as `<redacted>` because we want to redact hostname, ip address and other sensitive fields
+		// in the db dump files contained in debugzip
+		customQueryRedacted: `SELECT 
 			"id",
-			"addr",
+			'<redacted>' as addr,
 			"session_id",
-			"locality",
-		},
+			'<redacted>' as locality,
+			'<redacted>' as sql_addr
+			FROM system.sql_instances
+		`,
 	},
 	// system.sql_stats_cardinality shows row counts for all of the system tables related to the SQL Stats
 	// system, grouped by aggregated timestamp. None of this information is sensitive. It aids in escalations
@@ -1376,6 +1438,7 @@ var zipSystemTables = DebugZipTableRegistry{
 			"sampling_probability",
 			"plan_gist",
 			"anti_plan_gist",
+			"redacted",
 		},
 	},
 	// statement_statistics can have over 100k rows in just the last hour.

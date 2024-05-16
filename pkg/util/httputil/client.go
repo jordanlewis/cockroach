@@ -12,6 +12,7 @@ package httputil
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +33,8 @@ func NewClientWithTimeout(timeout time.Duration) *Client {
 
 // NewClientWithTimeouts defines a http.Client with the given dialer and client timeouts.
 func NewClientWithTimeouts(dialerTimeout, clientTimeout time.Duration) *Client {
+	var tlsConf *tls.Config
+	t := http.DefaultTransport.(*http.Transport)
 	return &Client{&http.Client{
 		Timeout: clientTimeout,
 		Transport: &http.Transport{
@@ -39,6 +42,15 @@ func NewClientWithTimeouts(dialerTimeout, clientTimeout time.Duration) *Client {
 			// much higher than on linux).
 			DialContext:       (&net.Dialer{Timeout: dialerTimeout}).DialContext,
 			DisableKeepAlives: true,
+
+			Proxy:                 t.Proxy,
+			MaxIdleConns:          t.MaxIdleConns,
+			IdleConnTimeout:       t.IdleConnTimeout,
+			TLSHandshakeTimeout:   t.TLSHandshakeTimeout,
+			ExpectContinueTimeout: t.ExpectContinueTimeout,
+
+			// Add our custom CA.
+			TLSClientConfig: tlsConf,
 		},
 	}}
 }
@@ -69,11 +81,56 @@ func Post(
 	return DefaultClient.Post(ctx, url, contentType, body)
 }
 
+// Put is like http.Put but uses the provided context and obeys its cancellation.
+// It also uses the default client with a default 3 second timeout.
+func Put(
+	ctx context.Context, url string, h *http.Header, body io.Reader,
+) (resp *http.Response, err error) {
+	return DefaultClient.Put(ctx, url, h, body)
+}
+
+// Delete is like http.Delete but uses the provided context and obeys its cancellation.
+// It also uses the default client with a default 3 second timeout.
+func Delete(ctx context.Context, url string, h *http.Header) (resp *http.Response, err error) {
+	return DefaultClient.Delete(ctx, url, h)
+}
+
 // Get does like http.Client.Get but uses the provided context and obeys its cancellation.
 func (c *Client) Get(ctx context.Context, url string) (resp *http.Response, err error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
+	}
+	return c.Do(req)
+}
+
+// Put is like http.Client.Put but uses the provided context and obeys its cancellation.
+// RequestHeaders can be used to set the following http headers:
+// 1. ContentType
+// 2. Authorization
+func (c *Client) Put(
+	ctx context.Context, url string, h *http.Header, body io.Reader,
+) (resp *http.Response, err error) {
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, body)
+	if err != nil {
+		return nil, err
+	}
+	if h != nil {
+		req.Header = *h
+	}
+	return c.Do(req)
+}
+
+// Delete is like http.Client.Delete but uses the provided context and obeys its cancellation.
+func (c *Client) Delete(
+	ctx context.Context, url string, h *http.Header,
+) (resp *http.Response, err error) {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if h != nil {
+		req.Header = *h
 	}
 	return c.Do(req)
 }

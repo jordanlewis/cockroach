@@ -101,3 +101,89 @@ func DecodeFloatDescending(buf []byte) ([]byte, float64, error) {
 	}
 	return b, r, err
 }
+
+// EncodeFloat32Ascending returns the resulting byte slice with the encoded float32
+// appended to b. The encoded format for a float32 value f is, for positive f, the
+// encoding of the 32 bits (in IEEE 754 format) re-interpreted as an int64 and
+// encoded using EncodeUint32Ascending. For negative f, we keep the sign bit and
+// invert all other bits, encoding this value using EncodeUint32Descending. This
+// approach was inspired by in github.com/google/orderedcode/orderedcode.go.
+//
+// One of five single-byte prefix tags are appended to the front of the encoding.
+// These tags enforce logical ordering of keys for both ascending and descending
+// encoding directions. The tags split the encoded floats into five categories:
+// - NaN for an ascending encoding direction
+// - Negative valued floats
+// - Zero (positive and negative)
+// - Positive valued floats
+// - NaN for a descending encoding direction
+// This ordering ensures that NaNs are always sorted first in either encoding
+// direction, and that after them a logical ordering is followed.
+func EncodeFloat32Ascending(b []byte, f float32) []byte {
+	// Handle the simplistic cases first.
+	switch {
+	case math.IsNaN(float64(f)):
+		return append(b, floatNaN)
+	case f == 0:
+		// This encodes both positive and negative zero the same. Negative zero uses
+		// composite indexes to decode itself correctly.
+		return append(b, floatZero)
+	}
+	u := math.Float32bits(f)
+	if u&(1<<31) != 0 {
+		u = ^u
+		b = append(b, floatNeg)
+	} else {
+		b = append(b, floatPos)
+	}
+	return EncodeUint32Ascending(b, u)
+}
+
+// EncodeFloat32Descending is the descending version of EncodeFloat32Ascending.
+func EncodeFloat32Descending(b []byte, f float32) []byte {
+	if math.IsNaN(float64(f)) {
+		return append(b, floatNaNDesc)
+	}
+	return EncodeFloat32Ascending(b, -f)
+}
+
+// DecodeFloat32Ascending returns the remaining byte slice after decoding and the decoded
+// float32 from buf.
+func DecodeFloat32Ascending(buf []byte) ([]byte, float32, error) {
+	if PeekType(buf) != Float {
+		return buf, 0, errors.Errorf("did not find marker")
+	}
+	switch buf[0] {
+	case floatNaN, floatNaNDesc:
+		return buf[1:], float32(math.NaN()), nil
+	case floatNeg:
+		b, u, err := DecodeUint32Ascending(buf[1:])
+		if err != nil {
+			return b, 0, err
+		}
+		u = ^u
+		return b, math.Float32frombits(u), nil
+	case floatZero:
+		return buf[1:], 0, nil
+	case floatPos:
+		b, u, err := DecodeUint32Ascending(buf[1:])
+		if err != nil {
+			return b, 0, err
+		}
+		return b, math.Float32frombits(u), nil
+	default:
+		return nil, 0, errors.Errorf("unknown prefix of the encoded byte slice: %q", buf)
+	}
+}
+
+// DecodeFloat32Descending decodes floats encoded with EncodeFloat32Descending.
+func DecodeFloat32Descending(buf []byte) ([]byte, float32, error) {
+	b, r, err := DecodeFloat32Ascending(buf)
+	if r != 0 && !math.IsNaN(float64(r)) {
+		// All values except for 0 and NaN were negated in EncodeFloat32Descending, so
+		// we have to negate them back. Negative zero uses composite indexes to
+		// decode itself correctly.
+		r = -r
+	}
+	return b, r, err
+}

@@ -75,6 +75,7 @@ func TestSqlActivityUpdateJob(t *testing.T) {
 	ts := srv.ApplicationLayer()
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 
 	var count int
 	row := db.QueryRow(t, "SELECT count_rows() FROM system.public.transaction_activity")
@@ -107,7 +108,7 @@ func TestSqlActivityUpdateJob(t *testing.T) {
 	db.Exec(t, "SET SESSION application_name=$1", appName)
 	db.Exec(t, "SELECT 1;")
 
-	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, srv.AppStopper())
+	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, srv.AppStopper())
 
 	db.Exec(t, "SET SESSION application_name=$1", "randomIgnore")
 
@@ -145,6 +146,7 @@ func TestMergeFunctionLogic(t *testing.T) {
 	defer srv.Stopper().Stop(context.Background())
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 
 	appName := "TestMergeFunctionLogic"
 	db.Exec(t, "SET SESSION application_name=$1", appName)
@@ -152,7 +154,7 @@ func TestMergeFunctionLogic(t *testing.T) {
 	db.Exec(t, "SELECT * FROM system.statement_statistics")
 	db.Exec(t, "SELECT count_rows() FROM system.transaction_statistics")
 
-	srv.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, srv.AppStopper())
+	srv.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, srv.AppStopper())
 
 	db.Exec(t, "SET SESSION application_name=$1", "randomIgnore")
 
@@ -238,7 +240,7 @@ func TestSqlActivityUpdateTopLimitJob(t *testing.T) {
 	defer log.Scope(t).Close(t)
 
 	skip.WithIssue(t, 120626)
-	skip.UnderStressRace(t, "test is too slow to run under race")
+	skip.UnderRace(t, "test is too slow to run under race")
 
 	stubTime := timeutil.Now().Truncate(time.Hour)
 	sqlStatsKnobs := sqlstats.CreateTestingKnobs()
@@ -259,6 +261,7 @@ func TestSqlActivityUpdateTopLimitJob(t *testing.T) {
 	ts := srv.ApplicationLayer()
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 
 	// Give permission to write to sys tables.
 	db.Exec(t, "INSERT INTO system.users VALUES ('node', NULL, true, 3)")
@@ -317,7 +320,7 @@ func TestSqlActivityUpdateTopLimitJob(t *testing.T) {
 		db.Exec(t, "SET SESSION application_name=$1", "randomIgnore")
 
 		db.Exec(t, "SET CLUSTER SETTING sql.stats.flush.enabled  = true;")
-		ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, srv.AppStopper())
+		ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, srv.AppStopper())
 		db.Exec(t, "SET CLUSTER SETTING sql.stats.flush.enabled  = false;")
 
 		// Run the updater to add rows to the activity tables.
@@ -503,7 +506,9 @@ func TestSqlActivityJobRunsAfterStatsFlush(t *testing.T) {
 	defer srv.Stopper().Stop(context.Background())
 	defer db.Close()
 
-	_, err := db.ExecContext(ctx, "SET CLUSTER SETTING sql.stats.flush.interval = '100ms'")
+	_, err := db.ExecContext(ctx, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, "SET CLUSTER SETTING sql.stats.flush.interval = '100ms'")
 	require.NoError(t, err)
 	appName := "TestScheduledSQLStatsCompaction"
 	_, err = db.ExecContext(ctx, "SET SESSION application_name=$1", appName)
@@ -567,6 +572,7 @@ func TestTransactionActivityMetadata(t *testing.T) {
 	updater := newSqlActivityUpdater(st, execCfg.InternalDB, sqlStatsKnobs)
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 	db.Exec(t, "SET SESSION application_name = 'test_txn_activity_table'")
 
 	// Generate some sql stats data.
@@ -574,7 +580,7 @@ func TestTransactionActivityMetadata(t *testing.T) {
 
 	// Flush and transfer stats.
 	var metadataJSON string
-	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, s.AppStopper())
+	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, s.AppStopper())
 
 	// Ensure that the metadata column contains the populated 'stmtFingerprintIDs' field.
 	var metadata struct {
@@ -591,7 +597,7 @@ func TestTransactionActivityMetadata(t *testing.T) {
 	db.Exec(t, "SELECT 1")
 
 	// Flush and transfer top stats.
-	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, s.AppStopper())
+	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, s.AppStopper())
 	require.NoError(t, updater.transferTopStats(ctx, stubTime, 100, 100, 100))
 
 	// Ensure that the metadata column contains the populated 'stmtFingerprintIDs' field.
@@ -634,6 +640,7 @@ func TestActivityStatusCombineAPI(t *testing.T) {
 	updater := newSqlActivityUpdater(st, execCfg.InternalDB, sqlStatsKnobs)
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 	// Generate a random app name each time to avoid conflicts
 	appName := "test_status_api" + uuid.FastMakeV4().String()
 	db.Exec(t, "SET SESSION application_name = $1", appName)
@@ -646,7 +653,7 @@ func TestActivityStatusCombineAPI(t *testing.T) {
 
 	// Flush and transfer stats.
 	var metadataJSON string
-	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, s.AppStopper())
+	ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, s.AppStopper())
 
 	// Ensure that the metadata column contains the populated 'stmtFingerprintIDs' field.
 	var metadata struct {
@@ -779,6 +786,7 @@ func TestFlushToActivityWithDifferentAggTs(t *testing.T) {
 	ts := srv.ApplicationLayer()
 
 	db := sqlutils.MakeSQLRunner(sqlDB)
+	db.Exec(t, `SET CLUSTER SETTING sql.stats.activity.flush.enabled = true;`)
 
 	// Start with empty activity tables.
 	execCfg := ts.ExecutorConfig().(ExecutorConfig)
@@ -838,7 +846,7 @@ func TestFlushToActivityWithDifferentAggTs(t *testing.T) {
 				fmt.Fprintf(&buf, "%s\n", strings.Join(row, ","))
 			}
 		case "flush-stats":
-			ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).Flush(ctx, srv.AppStopper())
+			ts.SQLServer().(*Server).GetSQLStatsProvider().(*persistedsqlstats.PersistedSQLStats).MaybeFlush(ctx, srv.AppStopper())
 		case "update-top-activity":
 			// Populate the Top Activity. This will use the transfer all scenarios
 			// with there only being a few rows.

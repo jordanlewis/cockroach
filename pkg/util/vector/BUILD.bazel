@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "vector",
+    srcs = [
+        "kmeans.go",
+        "vector.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/util/vector",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sql/pgwire/pgcode",
+        "//pkg/sql/pgwire/pgerror",
+        "//pkg/util/encoding",
+        "//pkg/util/vector/vectorpb",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "vector_test",
+    srcs = ["vector_test.go"],
+    embed = [":vector"],
+    deps = [
+        "//pkg/util/randutil",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

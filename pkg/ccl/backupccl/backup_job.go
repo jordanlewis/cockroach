@@ -60,7 +60,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/sql/stats"
-	"github.com/cockroachdb/cockroach/pkg/util"
 	bulkutil "github.com/cockroachdb/cockroach/pkg/util/bulk"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
@@ -68,6 +67,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log/logutil"
+	"github.com/cockroachdb/cockroach/pkg/util/metamorphic"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
@@ -88,7 +88,7 @@ var BackupCheckpointInterval = settings.RegisterDurationSetting(
 	"the minimum time between writing progress checkpoints during a backup",
 	time.Minute)
 
-var forceReadBackupManifest = util.ConstantWithMetamorphicTestBool("backup-read-manifest", false)
+var forceReadBackupManifest = metamorphic.ConstantWithTestBool("backup-read-manifest", false)
 
 var useBulkOracle = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
@@ -259,7 +259,7 @@ func backup(
 		numTotalSpans += len(spec.IntroducedSpans) + len(spec.Spans)
 	}
 
-	progressLogger := jobs.NewChunkProgressLogger(job, numTotalSpans, job.FractionCompleted(), jobs.ProgressUpdateOnly)
+	progressLogger := jobs.NewChunkProgressLoggerForJob(job, numTotalSpans, job.FractionCompleted(), jobs.ProgressUpdateOnly)
 
 	requestFinishedCh := make(chan struct{}, numTotalSpans) // enough buffer to never block
 	var jobProgressLoop func(ctx context.Context) error
@@ -808,13 +808,7 @@ func (b *backupResumer) Resume(ctx context.Context, execCtx interface{}) error {
 
 	mem := p.ExecCfg().RootMemoryMonitor.MakeBoundAccount()
 	defer mem.Close(ctx)
-
 	var memSize int64
-	defer func() {
-		if memSize != 0 {
-			mem.Shrink(ctx, memSize)
-		}
-	}()
 
 	if backupManifest == nil || forceReadBackupManifest {
 		backupManifest, memSize, err = b.readManifestOnResume(ctx, &mem, p.ExecCfg(), defaultStore,

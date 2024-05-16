@@ -24,7 +24,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/repstream/streampb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
-	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/span"
@@ -37,7 +36,6 @@ var (
 	uri    = flag.String("uri", "", "sql uri")
 	tenant = flag.String("tenant", "", "tenant name")
 
-	parallelScan       = flag.Int("scans", 16, "parallel scan count")
 	batchSize          = flag.Int("batch-size", 1<<20, "batch size")
 	checkpointInterval = flag.Duration("checkpoint-iterval", 10*time.Second, "checkpoint interval")
 	statsInterval      = flag.Duration("stats-interval", 5*time.Second, "period over which to measure throughput")
@@ -124,7 +122,6 @@ func streamPartition(ctx context.Context, streamAddr *url.URL) error {
 	var sps streampb.StreamPartitionSpec
 	sps.Config.MinCheckpointFrequency = *checkpointInterval
 	sps.Config.BatchByteSize = int64(*batchSize)
-	sps.Config.InitialScanParallelism = int32(*parallelScan)
 	sps.Spans = append(sps.Spans, tenantSpan)
 	sps.InitialScanTimestamp = replicationProducerSpec.ReplicationStartTime
 	spsBytes, err := protoutil.Marshal(&sps)
@@ -144,7 +141,7 @@ func streamPartition(ctx context.Context, streamAddr *url.URL) error {
 	sub, err := client.Subscribe(ctx, replicationProducerSpec.StreamID, 1,
 		spsBytes,
 		sps.InitialScanTimestamp,
-		hlc.Timestamp{})
+		nil)
 	if err != nil {
 		return err
 	}
@@ -247,8 +244,10 @@ func subscriptionConsumer(
 				}
 				switch event.Type() {
 				case streamingccl.KVEvent:
-					kv := event.GetKV()
-					sz = kv.Size()
+					sz = 0
+					for _, kv := range event.GetKVs() {
+						sz += kv.Size()
+					}
 				case streamingccl.SSTableEvent:
 					ssTab := event.GetSSTable()
 					sz = ssTab.Size()

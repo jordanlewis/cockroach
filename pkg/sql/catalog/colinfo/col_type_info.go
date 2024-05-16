@@ -132,6 +132,14 @@ func ValidateColumnDefType(ctx context.Context, version clusterversion.Handle, t
 			)
 		}
 
+	case types.PGVectorFamily:
+		if !version.IsActive(ctx, clusterversion.V24_1) {
+			return pgerror.Newf(
+				pgcode.FeatureNotSupported,
+				"pg_vector not supported until version 24.1",
+			)
+		}
+
 	case types.RefCursorFamily:
 		if !version.IsActive(ctx, clusterversion.V23_2) {
 			return pgerror.Newf(
@@ -173,7 +181,7 @@ func ColumnTypeIsInvertedIndexable(t *types.T) bool {
 	switch t.Family() {
 	case types.ArrayFamily:
 		return t.ArrayContents().Family() != types.RefCursorFamily
-	case types.JsonFamily, types.StringFamily:
+	case types.JsonFamily, types.StringFamily, types.PGVectorFamily:
 		return true
 	}
 	return ColumnTypeIsOnlyInvertedIndexable(t)

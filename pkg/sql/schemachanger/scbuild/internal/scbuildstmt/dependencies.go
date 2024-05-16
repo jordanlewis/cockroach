@@ -37,6 +37,7 @@ type BuildCtx interface {
 	context.Context
 	ClusterAndSessionInfo
 	SchemaFeatureChecker
+	TemporarySchemaProvider
 	BuilderState
 	EventLogState
 	TreeAnnotator
@@ -405,6 +406,8 @@ type NameResolver interface {
 	ResolveIndexByName(tableIndexName *tree.TableIndexName, p ResolveParams) ElementResultSet
 
 	// ResolveColumn retrieves a column by name and returns its elements.
+	// N.B. Column target statuses should be handled outside of this logic (ex. resolving a column by name that is in the
+	// dropping state shouldn't prevent a column of the same name being added).
 	ResolveColumn(relationID catid.DescID, columnName tree.Name, p ResolveParams) ElementResultSet
 
 	// ResolveConstraint retrieves a constraint by name and returns its elements.
@@ -431,4 +434,12 @@ type ReferenceProvider interface {
 	ReferencedTypes() catalog.DescriptorIDSet
 	// ReferencedRelationIDs Returns all referenced relation IDs.
 	ReferencedRelationIDs() catalog.DescriptorIDSet
+}
+
+// TemporarySchemaProvider provides functions needed to help support
+// temporary schemas.
+type TemporarySchemaProvider interface {
+	// TemporarySchemaName gets the name of the temporary schema for the current
+	// session.
+	TemporarySchemaName() string
 }

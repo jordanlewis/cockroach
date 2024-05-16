@@ -15,6 +15,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	gosql "database/sql"
@@ -22,9 +23,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"math/rand"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -59,6 +62,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/cockroach/pkg/workload/debug"
 	"github.com/cockroachdb/errors"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -68,6 +72,9 @@ import (
 // node. Without retrying, a `kafka controller not available` error is
 // seen with a 1-5% probability
 var kafkaCreateTopicRetryDuration = 1 * time.Minute
+
+// hydraRetryDuration is the length of time we retry hydra oauth setup.
+var hydraRetryDuration = 1 * time.Minute
 
 type sinkType string
 
@@ -905,6 +912,202 @@ func runCDCBank(ctx context.Context, t test.Test, c cluster.Cluster) {
 	m.Wait()
 }
 
+type cdcCheckpointType int
+
+const (
+	cdcNormalCheckpoint cdcCheckpointType = iota
+	cdcShutdownCheckpoint
+)
+
+// runCDCInitialScanRollingRestart runs multiple initial-scan-only changefeeds
+// on a 4-node cluster, using node 1 as the coordinator and continuously
+// restarting nodes 2-4 to hopefully force the changefeed to replan and exercise
+// the checkpoint restore logic.
+func runCDCInitialScanRollingRestart(
+	ctx context.Context, t test.Test, c cluster.Cluster, checkpointType cdcCheckpointType,
+) {
+	startOpts := option.DefaultStartOpts()
+	ips, err := c.ExternalIP(ctx, t.L(), c.Node(1))
+	sinkURL := fmt.Sprintf("https://%s:%d", ips[0], debug.WebhookServerPort)
+	sink := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// We configure "racks" localities to push replicas off n1 later.
+	racks := install.MakeClusterSettings(install.NumRacksOption(c.Spec().NodeCount))
+	racks.Env = append(racks.Env, `COCKROACH_CHANGEFEED_TESTING_FAST_RETRY=true`)
+	c.Start(ctx, t.L(), option.DefaultStartOpts(), racks)
+	m := c.NewMonitor(ctx, c.All())
+
+	restart := func(n int) error {
+		cmd := fmt.Sprintf("./cockroach node drain --certs-dir=%s --port={pgport:%d} --self", install.CockroachNodeCertsDir, n)
+		if err := c.RunE(ctx, option.WithNodes(c.Node(n)), cmd); err != nil {
+			return err
+		}
+		m.ExpectDeath()
+		c.Stop(ctx, t.L(), option.DefaultStopOpts(), c.Node(n))
+		opts := startOpts
+		opts.RoachprodOpts.IsRestart = true
+		c.Start(ctx, t.L(), opts, racks, c.Node(n))
+		m.ResetDeaths()
+		return nil
+	}
+
+	// Restart n1 to shed any leases it still has.
+	if err := restart(1); err != nil {
+		t.Fatal(err)
+	}
+
+	db := c.Conn(ctx, t.L(), 1)
+
+	// Setup a large table with 1M rows and a small table with 5 rows.
+	// Keep ranges off n1 so that our plans use 2, 3, and 4.
+	const (
+		largeRowCount = 1000000
+		smallRowCount = 5
+	)
+	t.L().Printf("setting up test data...")
+	setupStmts := []string{
+		`ALTER RANGE default CONFIGURE ZONE USING constraints = '[-rack=0]'`,
+		fmt.Sprintf(`CREATE TABLE large (id PRIMARY KEY) AS SELECT generate_series(1, %d) id`, largeRowCount),
+		`ALTER TABLE large SCATTER`,
+		fmt.Sprintf(`CREATE TABLE small (id PRIMARY KEY) AS SELECT generate_series(%d, %d)`, largeRowCount+1, largeRowCount+smallRowCount),
+		`ALTER TABLE small SCATTER`,
+		`SET CLUSTER SETTING jobs.registry.retry.initial_delay = '.1s'`,
+		`SET CLUSTER SETTING jobs.registry.retry.max_delay = '.4s'`,
+	}
+	switch checkpointType {
+	case cdcNormalCheckpoint:
+		setupStmts = append(setupStmts,
+			`SET CLUSTER SETTING changefeed.frontier_checkpoint_frequency = '1s'`,
+			`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled = 'false'`,
+		)
+	case cdcShutdownCheckpoint:
+		const largeSplitCount = 5
+		setupStmts = append(setupStmts,
+			`SET CLUSTER SETTING changefeed.frontier_checkpoint_frequency = '0'`,
+			`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled = 'true'`,
+			// Split some bigger chunks up to scatter it a bit more.
+			fmt.Sprintf(`ALTER TABLE large SPLIT AT SELECT id FROM large ORDER BY random() LIMIT %d`, largeSplitCount/4),
+			`ALTER TABLE large SCATTER`,
+			// Finish splitting, so that drained ranges spread out evenly.
+			fmt.Sprintf(`ALTER TABLE large SPLIT AT SELECT id FROM large ORDER BY random() LIMIT %d`, largeSplitCount),
+			`ALTER TABLE large SCATTER`,
+		)
+	}
+	for _, s := range setupStmts {
+		t.L().Printf(s)
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.L().Printf("test data is setup")
+
+	c.Put(ctx, t.DeprecatedWorkload(), "./workload", c.Node(1))
+
+	// Run the sink server.
+	m.Go(func(ctx context.Context) error {
+		t.L().Printf("starting up sink server at %s...", sinkURL)
+		err := c.RunE(ctx, option.WithNodes(c.Node(1)), "./workload debug webhook-server")
+		if err != nil {
+			return err
+		}
+		t.L().Printf("sink server exited")
+		return nil
+	})
+
+	// Restart nodes 2, 3, and 4 in a loop.
+	stopRestarts := make(chan struct{})
+	m.Go(func(ctx context.Context) error {
+		defer func() {
+			t.L().Printf("done restarting nodes")
+		}()
+		t.L().Printf("starting rolling drain+restarts of 2, 3, 4...")
+		for {
+			for _, n := range []int{2, 3, 4} {
+				select {
+				case <-stopRestarts:
+					return nil
+				case <-ctx.Done():
+					return nil
+				default:
+					if err := restart(n); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	})
+
+	wait := make(chan struct{})
+
+	// Run the changefeed, then ask the sink how many rows it saw.
+	var unique int
+	func() {
+		defer close(wait)
+		defer close(stopRestarts)
+		defer func() {
+			_, err := sink.Get(sinkURL + "/exit")
+			t.L().Printf("exiting webhook sink status: %v", err)
+		}()
+
+		const numChangefeeds = 5
+		for i := 1; i < numChangefeeds; i++ {
+			t.L().Printf("starting changefeed...")
+			var job int
+			if err := db.QueryRow(
+				fmt.Sprintf("CREATE CHANGEFEED FOR TABLE large, small INTO 'webhook-%s/?insecure_tls_skip_verify=true' WITH initial_scan='only'", sinkURL),
+			).Scan(&job); err != nil {
+				t.Fatal(err)
+			}
+
+			t.L().Printf("waiting for changefeed %d...", job)
+			if _, err := db.ExecContext(ctx, "SHOW JOB WHEN COMPLETE $1", job); err != nil {
+				t.Fatal(err)
+			}
+
+			t.L().Printf("changefeed complete, checking sink...")
+			get := func(p string) (int, error) {
+				b, err := sink.Get(sinkURL + p)
+				if err != nil {
+					return 0, err
+				}
+				body, err := io.ReadAll(b.Body)
+				if err != nil {
+					return 0, err
+				}
+				i, err := strconv.Atoi(string(body))
+				if err != nil {
+					return 0, err
+				}
+				return i, nil
+			}
+			unique, err = get("/unique")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dupes, err := get("/dupes")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.L().Printf("sink got %d unique, %d dupes", unique, dupes)
+			expected := largeRowCount + smallRowCount
+			if unique != expected {
+				t.Fatalf("expected %d, got %d", expected, unique)
+			}
+			_, err = sink.Get(sinkURL + "/reset")
+			t.L().Printf("resetting sink %v", err)
+		}
+	}()
+
+	<-wait
+	// TODO(#116314)
+	if runtime.GOOS != "darwin" {
+		m.Wait()
+	}
+}
+
 // This test verifies that the changefeed avro + confluent schema registry works
 // end-to-end (including the schema registry default of requiring backward
 // compatibility within a topic).
@@ -1081,7 +1284,7 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	}
 
 	for _, f := range feeds {
-		t.Status(f.desc)
+		t.Status(fmt.Sprintf("running:%s, query:%s", f.desc, f.queryArg))
 		_, err := newChangefeedCreator(db, t.L(), globalRand, "auth_test_table", f.queryArg, makeDefaultFeatureFlags()).Create()
 		if err != nil {
 			t.Fatalf("%s: %s", f.desc, err.Error())
@@ -1091,12 +1294,15 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 
 func registerCDC(r registry.Registry) {
 	r.Add(registry.TestSpec{
-		Name:             "cdc/initial-scan-only",
-		Owner:            registry.OwnerCDC,
-		Benchmark:        true,
-		Cluster:          r.MakeClusterSpec(4, spec.CPU(16), spec.Arch(vm.ArchAMD64)),
-		RequiresLicense:  true,
-		CompatibleClouds: registry.AllExceptAWS,
+		Name:            "cdc/initial-scan-only",
+		Owner:           registry.OwnerCDC,
+		Benchmark:       true,
+		Cluster:         r.MakeClusterSpec(4, spec.CPU(16), spec.Arch(vm.ArchAMD64)),
+		RequiresLicense: true,
+		// This test uses google cloudStorageSink because it is the fastest,
+		// but it is not a requirement for this test. The sink could be
+		// chosen on a per cloud basis if we want to run this on other clouds.
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			ct := newCDCTester(ctx, t, c)
@@ -1116,6 +1322,30 @@ func registerCDC(r registry.Registry) {
 			waitForCompletion()
 
 			exportStatsFile()
+		},
+	})
+	r.Add(registry.TestSpec{
+		Name:             "cdc/initial-scan-rolling-restart/normal-checkpoint",
+		Owner:            registry.OwnerCDC,
+		Cluster:          r.MakeClusterSpec(4),
+		RequiresLicense:  true,
+		CompatibleClouds: registry.OnlyGCE,
+		Suites:           registry.Suites(registry.Nightly),
+		Timeout:          time.Minute * 15,
+		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
+			runCDCInitialScanRollingRestart(ctx, t, c, cdcNormalCheckpoint)
+		},
+	})
+	r.Add(registry.TestSpec{
+		Name:             "cdc/initial-scan-rolling-restart/shutdown-checkpoint",
+		Owner:            registry.OwnerCDC,
+		Cluster:          r.MakeClusterSpec(4),
+		RequiresLicense:  true,
+		CompatibleClouds: registry.OnlyGCE,
+		Suites:           registry.Suites(registry.Nightly),
+		Timeout:          time.Minute * 15,
+		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
+			runCDCInitialScanRollingRestart(ctx, t, c, cdcShutdownCheckpoint)
 		},
 	})
 	r.Add(registry.TestSpec{
@@ -1146,12 +1376,45 @@ func registerCDC(r registry.Registry) {
 		},
 	})
 	r.Add(registry.TestSpec{
-		Name:             "cdc/initial-scan-only/parquet",
+		Name:             "cdc/tpcc-1000/sink=cloudstorage",
 		Owner:            registry.OwnerCDC,
 		Benchmark:        true,
-		Cluster:          r.MakeClusterSpec(4, spec.CPU(16), spec.Arch(vm.ArchAMD64)),
+		Cluster:          r.MakeClusterSpec(4, spec.CPU(16)),
+		Leases:           registry.MetamorphicLeases,
 		RequiresLicense:  true,
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
+		Suites:           registry.Suites(registry.Nightly),
+		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
+			ct := newCDCTester(ctx, t, c)
+			defer ct.Close()
+
+			ct.runTPCCWorkload(tpccArgs{warehouses: 1000, duration: "120m"})
+
+			feed := ct.newChangefeed(feedArgs{
+				sinkType: cloudStorageSink,
+				targets:  allTpccTargets,
+				opts: map[string]string{
+					"initial_scan": "'no'",
+					"diff":         "",
+				},
+			})
+			ct.runFeedLatencyVerifier(feed, latencyTargets{
+				initialScanLatency: 3 * time.Minute,
+				steadyLatency:      10 * time.Minute,
+			})
+			ct.waitForWorkload()
+		},
+	})
+	r.Add(registry.TestSpec{
+		Name:            "cdc/initial-scan-only/parquet",
+		Owner:           registry.OwnerCDC,
+		Benchmark:       true,
+		Cluster:         r.MakeClusterSpec(4, spec.CPU(16), spec.Arch(vm.ArchAMD64)),
+		RequiresLicense: true,
+		// This test uses google cloudStorageSink because it is the fastest,
+		// but it is not a requirement for this test. The sink could be
+		// chosen on a per cloud basis if we want to run this on other clouds.
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			ct := newCDCTester(ctx, t, c)
@@ -1366,7 +1629,7 @@ func registerCDC(r registry.Registry) {
 		Benchmark:        true,
 		Cluster:          r.MakeClusterSpec(4, spec.CPU(16)),
 		Leases:           registry.MetamorphicLeases,
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		RequiresLicense:  true,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
@@ -1395,7 +1658,7 @@ func registerCDC(r registry.Registry) {
 		Owner:            `cdc`,
 		Benchmark:        true,
 		Cluster:          r.MakeClusterSpec(4, spec.CPU(16)),
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		Leases:           registry.MetamorphicLeases,
 		RequiresLicense:  true,
@@ -1502,7 +1765,7 @@ func registerCDC(r registry.Registry) {
 		Benchmark:        true,
 		Cluster:          r.MakeClusterSpec(4, spec.CPU(16)),
 		Leases:           registry.MetamorphicLeases,
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		RequiresLicense:  true,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
@@ -1544,7 +1807,7 @@ func registerCDC(r registry.Registry) {
 		Owner:            `cdc`,
 		Cluster:          r.MakeClusterSpec(1),
 		Leases:           registry.MetamorphicLeases,
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		RequiresLicense:  true,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
@@ -2368,12 +2631,20 @@ func (k kafkaManager) configureHydraOauth(ctx context.Context) (string, string) 
 		err := k.c.RunE(ctx, option.WithNodes(k.kafkaSinkNode), `/home/ubuntu/hydra-serve.sh`)
 		return errors.Wrap(err, "hydra failed")
 	})
-	result, err := k.c.RunWithDetailsSingleNode(ctx, k.t.L(), option.WithNodes(k.kafkaSinkNode), "/home/ubuntu/hydra create oauth2-client",
-		"-e", "http://localhost:4445",
-		"--grant-type", "client_credentials",
-		"--token-endpoint-auth-method", "client_secret_basic",
-		"--name", `"Test Client"`,
-	)
+
+	var result install.RunResultDetails
+	// The admin server may not be up immediately, so retry the create command
+	// until it succeeds or times out.
+
+	err = retry.ForDuration(hydraRetryDuration, func() error {
+		result, err = k.c.RunWithDetailsSingleNode(ctx, k.t.L(), option.WithNodes(k.kafkaSinkNode), "/home/ubuntu/hydra create oauth2-client",
+			"-e", "http://localhost:4445",
+			"--grant-type", "client_credentials",
+			"--token-endpoint-auth-method", "client_secret_basic",
+			"--name", `"Test Client"`,
+		)
+		return err
+	})
 	if err != nil {
 		k.t.Fatal(err)
 	}

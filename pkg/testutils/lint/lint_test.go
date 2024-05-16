@@ -598,6 +598,9 @@ func TestLint(t *testing.T) {
 			{re: `\bos\.(Getenv|LookupEnv)\("COCKROACH`,
 				excludes: []string{
 					":!cmd/bazci/githubpost",
+					":!acceptance/test_acceptance.go",           // For COCKROACH_RUN_ACCEPTANCE
+					":!compose/compare/compare/compare_test.go", // For COCKROACH_RUN_COMPOSE_COMPARE
+					":!compose/compose_test.go",                 // For COCKROACH_RUN_COMPOSE
 				},
 			},
 			{
@@ -623,18 +626,21 @@ func TestLint(t *testing.T) {
 					":!testutils/bazelcodecover/code_cover_on.go", // For BAZEL_COVER_DIR.
 					":!util/log/tracebacks.go",
 					":!util/sdnotify/sdnotify_unix.go",
-					":!util/grpcutil",                        // GRPC_GO_* variables
-					":!roachprod",                            // roachprod requires AWS environment variables
-					":!cli/env.go",                           // The CLI needs the PGHOST variable.
-					":!cli/start.go",                         // The CLI needs the GOMEMLIMIT and GOGC variables.
-					":!internal/codeowners/codeowners.go",    // For BAZEL_TEST.
-					":!internal/team/team.go",                // For BAZEL_TEST.
-					":!util/log/test_log_scope.go",           // For TEST_UNDECLARED_OUTPUT_DIR, REMOTE_EXEC
-					":!testutils/datapathutils/data_path.go", // For TEST_UNDECLARED_OUTPUT_DIR, REMOTE_EXEC
-					":!testutils/backup.go",                  // For BACKUP_TESTING_BUCKET
-					":!compose/compose_test.go",              // For PATH.
-					":!testutils/skip/skip.go",               // For REMOTE_EXEC.
-					":!build/engflow/engflow.go",             // For GITHUB_ACTIONS_BRANCH, etc.
+					":!util/grpcutil",                           // GRPC_GO_* variables
+					":!roachprod",                               // roachprod requires AWS environment variables
+					":!cli/env.go",                              // The CLI needs the PGHOST variable.
+					":!cli/start.go",                            // The CLI needs the GOMEMLIMIT and GOGC variables.
+					":!internal/codeowners/codeowners.go",       // For BAZEL_TEST.
+					":!internal/team/team.go",                   // For BAZEL_TEST.
+					":!util/log/test_log_scope.go",              // For TEST_UNDECLARED_OUTPUT_DIR, REMOTE_EXEC
+					":!testutils/datapathutils/data_path.go",    // For TEST_UNDECLARED_OUTPUT_DIR, REMOTE_EXEC
+					":!testutils/backup.go",                     // For BACKUP_TESTING_BUCKET
+					":!compose/compose_test.go",                 // For PATH.
+					":!testutils/skip/skip.go",                  // For REMOTE_EXEC.
+					":!build/engflow/engflow.go",                // For GITHUB_ACTIONS_BRANCH, etc.
+					":!acceptance/test_acceptance.go",           // For COCKROACH_RUN_ACCEPTANCE
+					":!compose/compare/compare/compare_test.go", // For COCKROACH_RUN_COMPOSE_COMPARE
+					":!compose/compose_test.go",                 // For COCKROACH_RUN_COMPOSE
 				},
 			},
 		} {
@@ -1545,6 +1551,7 @@ func TestLint(t *testing.T) {
 			":!sql/colexec/execgen",
 			":!kv/kvpb/gen/main.go",
 			":!testutils/serverutils/fwgen/gen.go",
+			":!gen/genbzl/main.go",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -2009,6 +2016,8 @@ func TestLint(t *testing.T) {
 			// times and merging the results: https://staticcheck.io/docs/running-staticcheck/cli/build-tags/
 			// This is more trouble than it's worth right now.
 			stream.GrepNot(`pkg/cmd/mirror/go/mirror.go`),
+			// As above, the bazel build tag has an impact here.
+			stream.GrepNot(`pkg/testutils/docker/single_node_docker_test.go`),
 		}
 		for analyzerName, config := range nogoConfig {
 			if !staticcheckCheckNameRe.MatchString(analyzerName) {
@@ -2059,7 +2068,7 @@ func TestLint(t *testing.T) {
 			// engine, don't forget to "register" the newly added package in
 			// sql/colexecerror/error.go file.
 			"sql/col*",
-			":!sql/colexecerror/error.go",
+			":!sql/colexecerror/error*.go",
 			// This exception is because execgen itself uses panics during code
 			// generation - not at execution time. The (glob,exclude) directive
 			// (see git help gitglossary) makes * behave like a normal, single dir
@@ -2671,6 +2680,44 @@ func TestLint(t *testing.T) {
 		if err := stream.ForEach(filter, func(s string) {
 			t.Errorf("\n%s <- forbidden; use constructors in `authserver/cookie.go` instead", s)
 		}); err != nil {
+			t.Error(err)
+		}
+
+		if err := cmd.Wait(); err != nil {
+			if out := stderr.String(); len(out) > 0 {
+				t.Fatalf("err=%s, stderr=%s", err, out)
+			}
+		}
+	})
+
+	// This is a weird restriction we impose so that lints don't
+	// accidentally get skipped on some packages due to #124154.
+	// Namely, we use the string `external/` to filter out third-party
+	// code from lint analysis, and that check would exclude first-party
+	// packages if any ended in the word "external".
+	t.Run("TestExternalPackageName", func(t *testing.T) {
+		cmd, stderr, filter, err := dirCmd(pkgDir, "git", "ls-files", "*external*")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+
+		filters := []stream.Filter{
+			filter,
+			stream.Grep(`\.go$`),
+			stream.Map(filepath.Dir),
+			stream.Uniq(),
+		}
+		if err := stream.ForEach(
+			stream.Sequence(filters...), func(pkgName string) {
+				pkgBase := filepath.Base(pkgName)
+				if strings.HasSuffix(pkgBase, "external") {
+					t.Errorf("package name cannot end in the string 'external': found package pkg/%s\n", pkgName)
+				}
+			}); err != nil {
 			t.Error(err)
 		}
 

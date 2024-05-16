@@ -16,7 +16,6 @@ go_library(
     importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/clusterversion",
         "//pkg/kv",
         "//pkg/kv/kvpb",
         "//pkg/kv/kvserver/concurrency/isolation",
@@ -60,9 +59,9 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":concurrency"],
+    exec_properties = {"test.Pool": "heavy"},
     shard_count = 16,
     deps = [
-        "//pkg/clusterversion",
         "//pkg/keys",
         "//pkg/kv/kvpb",
         "//pkg/kv/kvserver/batcheval",
@@ -80,6 +79,7 @@ go_test(
         "//pkg/testutils",
         "//pkg/testutils/datapathutils",
         "//pkg/testutils/skip",
+        "//pkg/util",
         "//pkg/util/allstacks",
         "//pkg/util/hlc",
         "//pkg/util/leaktest",

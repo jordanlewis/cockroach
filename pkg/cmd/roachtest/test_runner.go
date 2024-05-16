@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/build"
+	"github.com/cockroachdb/cockroach/pkg/cmd/roachprod/grafana"
+	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/roachtestflags"
@@ -49,7 +51,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/version"
 	"github.com/cockroachdb/errors"
-	"github.com/cockroachdb/logtags"
 	"github.com/petermattis/goid"
 )
 
@@ -81,6 +82,17 @@ var (
 		return registry.ErrorWithOwner(
 			registry.OwnerTestEng, fmt.Errorf("preempted VMs: %s", preemptedVMs),
 			registry.WithTitleOverride("vm_preemption"),
+			registry.InfraFlake,
+		)
+	}
+
+	// vmHostError is the error that indicates that a test failed
+	// a result of VM host error. These errors are directed to Test Eng
+	// instead of owning teams.
+	vmHostError = func(hostErrorVMs string) error {
+		return registry.ErrorWithOwner(
+			registry.OwnerTestEng, fmt.Errorf("hostError VMs: %s", hostErrorVMs),
+			registry.WithTitleOverride("vm_host_error"),
 			registry.InfraFlake,
 		)
 	}
@@ -315,7 +327,21 @@ func (r *testRunner) Run(
 		// Don't spin up more workers than necessary.
 		parallelism = n * count
 	}
+	for i := range tests {
+		//  TODO(bhaskar): remove this once we have more usage details
+		//  and more convinced about using spot VMs for all the runs.
+		if roachtestflags.Cloud == spec.GCE &&
+			tests[i].Benchmark &&
+			!tests[i].Suites.Contains(registry.Weekly) &&
+			rand.Float64() <= 0.5 {
+			lopt.l.PrintfCtx(ctx, "using spot VMs to run test %s", tests[i].Name)
+			tests[i].Cluster.UseSpotVMs = true
+		}
 
+		if roachtestflags.UseSpotVM {
+			tests[i].Cluster.UseSpotVMs = true
+		}
+	}
 	r.status.running = make(map[*testImpl]struct{})
 	r.status.pass = make(map[*testImpl]struct{})
 	r.status.fail = make(map[*testImpl]struct{})
@@ -336,20 +362,29 @@ func (r *testRunner) Run(
 		if err := r.stopper.RunAsyncTask(ctx, "worker", func(ctx context.Context) {
 			defer wg.Done()
 
-			err := r.runWorker(
-				ctx, fmt.Sprintf("w%d", i) /* name */, r.work, qp,
+			name := fmt.Sprintf("w%d", i)
+			formattedPrefix := fmt.Sprintf("[%s] ", name)
+			childLogger, err := l.ChildLogger(name, logger.LogPrefix(formattedPrefix))
+			if err != nil {
+				l.ErrorfCtx(ctx, "unable to create logger %s: %s", name, err)
+				childLogger = l
+			}
+
+			err = r.runWorker(
+				ctx, name, r.work, qp,
 				r.stopper.ShouldQuiesce(),
 				clusterFactory,
 				clustersOpt,
 				lopt,
 				topt,
-				l,
+				childLogger,
+				n*count,
 			)
 
 			if err != nil {
 				// A worker returned an error. Let's shut down.
 				msg := fmt.Sprintf("Worker %d returned with error. Quiescing. Error: %v", i, err)
-				shout(ctx, l, lopt.stdout, msg)
+				shout(ctx, childLogger, lopt.stdout, msg)
 				errs.AddErr(err)
 				// Stop the stopper. This will cause all workers to not pick up more
 				// tests after finishing the currently running one. We add one to the
@@ -525,10 +560,10 @@ func (r *testRunner) runWorker(
 	lopt loggingOpt,
 	topt testOpts,
 	l *logger.Logger,
+	maxTotalFailures int,
 ) error {
 	stdout := lopt.stdout
 
-	ctx = logtags.AddTag(ctx, name, nil /* value */)
 	wStatus := r.addWorker(ctx, name)
 	defer func() {
 		r.removeWorker(ctx, name)
@@ -581,6 +616,14 @@ func (r *testRunner) runWorker(
 				// The context has been canceled. No need to continue.
 				return errors.Wrap(ctx.Err(), "worker ctx done")
 			}
+		}
+
+		// stop the tests if the failure rate has been exceeded
+		r.status.Lock()
+		failureRate := float64(len(r.status.fail)) / float64(maxTotalFailures)
+		r.status.Unlock()
+		if failureRate > roachtestflags.AutoKillThreshold {
+			return errors.Errorf("failure rate %.2f exceeds limit %.2f", failureRate, roachtestflags.AutoKillThreshold)
 		}
 
 		wStatus.SetTest(nil /* test */, testToRunRes{})
@@ -662,20 +705,6 @@ func (r *testRunner) runWorker(
 				// Switch architecture of local cluster (see above).
 				c.arch = arch
 			}
-		}
-
-		//  TODO(babusrithar): remove this once we see enough data in
-		//  nightly runs. This is a temp logic to test spot VMs.
-		if roachtestflags.Cloud == spec.GCE &&
-			testToRun.spec.Benchmark &&
-			!testToRun.spec.Suites.Contains(registry.Weekly) &&
-			rand.Float64() <= 0.5 {
-			l.PrintfCtx(ctx, "using spot VMs to run test %s", testToRun.spec.Name)
-			testToRun.spec.Cluster.UseSpotVMs = true
-		}
-
-		if roachtestflags.UseSpotVM {
-			testToRun.spec.Cluster.UseSpotVMs = true
 		}
 
 		// Verify that required native libraries are available.
@@ -1045,6 +1074,13 @@ func (r *testRunner) runTest(
 					t.resetFailures()
 					t.Error(vmPreemptionError(preemptedVMNames))
 				}
+				hostErrorVMNames := getHostErrorVMNames(ctx, c, l)
+				if hostErrorVMNames != "" {
+					failureMsg = fmt.Sprintf("VMs received host error during the test run: %s\n\n**Other Failures:**\n%s", hostErrorVMNames, failureMsg)
+					t.resetFailures()
+					t.Error(vmHostError(hostErrorVMNames))
+				}
+
 				output := fmt.Sprintf("%s\ntest artifacts and logs in: %s", failureMsg, t.ArtifactsDir())
 
 				issue, err := github.MaybePost(t, l, output)
@@ -1120,7 +1156,10 @@ func (r *testRunner) runTest(
 		// Only include tests with a Run function in the summary output.
 		if s.Run != nil {
 			if t.Failed() {
-				r.status.fail[t] = struct{}{}
+				errWithOwner := failuresAsErrorWithOwnership(t.failures())
+				if errWithOwner == nil || !errWithOwner.InfraFlake {
+					r.status.fail[t] = struct{}{}
+				}
 			} else if s.Skip != "" {
 				r.status.skip[t] = struct{}{}
 			} else {
@@ -1170,6 +1209,7 @@ func (r *testRunner) runTest(
 			}
 		}()
 
+		grafanaAnnotateTestStart(runCtx, t, c)
 		// This is the call to actually run the test.
 		s.Run(runCtx, t, c)
 	}()
@@ -1192,6 +1232,11 @@ func (r *testRunner) runTest(
 			s = "with failure(s)"
 		}
 		t.L().Printf("test completed %s", s)
+		annotationText := fmt.Sprintf("%s completed %s", t.Name(), s)
+		// Attempt to annotate the test completion on Grafana.
+		if err := c.AddGrafanaAnnotation(ctx, t.L(), grafana.AddAnnotationRequest{Text: annotationText}); err != nil {
+			t.L().Printf(errors.Wrap(err, "error adding annotation for test end").Error())
+		}
 	case <-time.After(timeout):
 		// NB: We're adding the timeout failure intentionally without cancelling the context
 		// to capture as much state as possible during artifact collection.
@@ -1238,6 +1283,28 @@ func (r *testRunner) runTest(
 	}
 }
 
+// getVMNames returns a comma separated list of VM names.
+func getVMNames(fullVMNames []string) string {
+	var vmNames []string
+	for _, name := range fullVMNames {
+		// Expected format: projects/{project}/zones/{zone}/instances/{name}
+		parts := strings.Split(name, "/")
+
+		// If the instance name is in the expected format, only include
+		// the VM name and the zone, to make it easier to for a human
+		// reading the output.
+		if len(parts) == 6 {
+			instanceName := parts[5]
+			zone := parts[3]
+			vmNames = append(vmNames, fmt.Sprintf("%s (%s)", instanceName, zone))
+		} else {
+			vmNames = append(vmNames, name)
+		}
+	}
+
+	return strings.Join(vmNames, ", ")
+}
+
 // getPreemptedVMNames returns a comma separated list of preempted VM
 // names, or an empty string if no VM was preempted or an error was found.
 func getPreemptedVMNames(ctx context.Context, c *clusterImpl, l *logger.Logger) string {
@@ -1248,23 +1315,23 @@ func getPreemptedVMNames(ctx context.Context, c *clusterImpl, l *logger.Logger) 
 	}
 
 	var preemptedVMNames []string
-	for _, item := range preemptedVMs {
-		// Expected format: projects/{project}/zones/{zone}/instances/{name}
-		parts := strings.Split(item.Name, "/")
-
-		// If the instance name is in the expected format, only include
-		// the VM name and the zone, to make it easier to for a human
-		// reading the output.
-		if len(parts) == 6 {
-			instanceName := parts[5]
-			zone := parts[3]
-			preemptedVMNames = append(preemptedVMNames, fmt.Sprintf("%s (%s)", instanceName, zone))
-		} else {
-			preemptedVMNames = append(preemptedVMNames, item.Name)
-		}
+	for _, preemptedVM := range preemptedVMs {
+		preemptedVMNames = append(preemptedVMNames, preemptedVM.Name)
 	}
 
-	return strings.Join(preemptedVMNames, ", ")
+	return getVMNames(preemptedVMNames)
+}
+
+// getHostErrorVMNames returns a comma separated list of host error VM
+// names, or an empty string if no VM had a host error.
+func getHostErrorVMNames(ctx context.Context, c *clusterImpl, l *logger.Logger) string {
+	hostErrorVMs, err := c.GetHostErrorVMs(ctx, l)
+	if err != nil {
+		l.Printf("failed to check hostError VMs:\n%+v", err)
+		return ""
+	}
+
+	return getVMNames(hostErrorVMs)
 }
 
 // The assertions here are executed after each test, and may result in a test failure. Test authors
@@ -1785,4 +1852,19 @@ func testTimeout(spec *registry.TestSpec) time.Duration {
 		timeout = d
 	}
 	return timeout
+}
+
+// Annotate the start of the test in Grafana and the branch if applicable.
+func grafanaAnnotateTestStart(ctx context.Context, t test.Test, c cluster.Cluster) {
+	const BuildBranch = "TC_BUILD_BRANCH"
+	text := fmt.Sprintf("Starting %s", t.Name())
+	var tags []string
+	branch := os.Getenv(BuildBranch)
+	if branch != "" {
+		tags = []string{branch}
+	}
+
+	if err := c.AddGrafanaAnnotation(ctx, t.L(), grafana.AddAnnotationRequest{Text: text, Tags: tags}); err != nil {
+		t.L().Printf(errors.Wrap(err, "error adding annotation for test start").Error())
+	}
 }

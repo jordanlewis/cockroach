@@ -59,7 +59,7 @@ func alterTableAddColumn(
 			IsExistenceOptional: true,
 			RequiredPrivilege:   privilege.CREATE,
 		})
-		_, _, col := scpb.FindColumn(elts)
+		_, colTargetStatus, col := scpb.FindColumn(elts)
 		if col != nil {
 			if t.IfNotExists {
 				return
@@ -69,7 +69,9 @@ func alterTableAddColumn(
 					"column name %q conflicts with a system column name",
 					d.Name))
 			}
-			panic(sqlerrors.NewColumnAlreadyExistsInRelationError(string(d.Name), tn.Object()))
+			if colTargetStatus != scpb.ToAbsent {
+				panic(sqlerrors.NewColumnAlreadyExistsInRelationError(string(d.Name), tn.Object()))
+			}
 		}
 	}
 	if d.IsSerial {
@@ -723,14 +725,23 @@ func addSecondaryIndexTargetsForAddColumn(
 	}
 }
 
-func mustRetrieveTemporaryIndexElem(
+func retrieveTemporaryIndexElem(
 	b BuildCtx, tableID catid.DescID, indexID catid.IndexID,
 ) (temporaryIndexElem *scpb.TemporaryIndex) {
-	scpb.ForEachTemporaryIndex(b.QueryByID(tableID), func(current scpb.Status, target scpb.TargetStatus, e *scpb.TemporaryIndex) {
+	b.QueryByID(tableID).FilterTemporaryIndex().ForEach(func(
+		_ scpb.Status, _ scpb.TargetStatus, e *scpb.TemporaryIndex,
+	) {
 		if e.IndexID == indexID {
 			temporaryIndexElem = e
 		}
 	})
+	return temporaryIndexElem
+}
+
+func mustRetrieveTemporaryIndexElem(
+	b BuildCtx, tableID catid.DescID, indexID catid.IndexID,
+) (temporaryIndexElem *scpb.TemporaryIndex) {
+	temporaryIndexElem = retrieveTemporaryIndexElem(b, tableID, indexID)
 	if temporaryIndexElem == nil {
 		panic(errors.AssertionFailedf("programming error: cannot find a TemporaryIndex element"+
 			" of ID %v", indexID))

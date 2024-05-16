@@ -81,6 +81,32 @@ func TestOnlineRestoreBasic(t *testing.T) {
 	rSQLDB.CheckQueryResults(t, createStmt, createStmtRes)
 }
 
+func TestOnlineRestorePartitioned(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+	defer nodelocal.ReplaceNodeLocalForTesting(t.TempDir())()
+
+	srv, sqlDB, _, cleanupFn := backupRestoreTestSetupWithParams(t, 3, 100,
+		InitManualReplication,
+		base.TestClusterArgs{
+			ServerArgs: base.TestServerArgs{DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant},
+		},
+	)
+	defer cleanupFn()
+
+	sqlDB.Exec(t, `BACKUP DATABASE data TO ('nodelocal://1/a?COCKROACH_LOCALITY=default', 
+		'nodelocal://1/b?COCKROACH_LOCALITY=dc%3Ddc2', 
+		'nodelocal://1/c?COCKROACH_LOCALITY=dc%3Ddc3')`)
+
+	j := sqlDB.QueryStr(t, `RESTORE DATABASE data FROM ('nodelocal://1/a?COCKROACH_LOCALITY=default', 
+		'nodelocal://1/b?COCKROACH_LOCALITY=dc%3Ddc2', 
+		'nodelocal://1/c?COCKROACH_LOCALITY=dc%3Ddc3') WITH new_db_name='d2', EXPERIMENTAL DEFERRED COPY`)
+
+	srv.Servers[0].JobRegistry().(*jobs.Registry).TestingNudgeAdoptionQueue()
+
+	sqlDB.Exec(t, fmt.Sprintf(`SHOW JOB WHEN COMPLETE %s`, j[0][4]))
+}
+
 func TestOnlineRestoreStatementResult(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
@@ -176,6 +202,9 @@ func TestOnlineRestoreWaitForDownload(t *testing.T) {
 	var downloadJobID jobspb.JobID
 	sqlDB.QueryRow(t, `SELECT job_id FROM [SHOW JOBS] WHERE description LIKE '%Background Data Download%'`).Scan(&downloadJobID)
 	jobutils.WaitForJobToSucceed(t, sqlDB, downloadJobID)
+	sqlDB.CheckQueryResults(t, `SELECT * FROM crdb_internal.tenant_span_stats(
+		ARRAY(SELECT(crdb_internal.table_span('data2.bank'::regclass::oid::int)[1], crdb_internal.table_span('data2.bank'::regclass::oid::int)[2]))
+	) WHERE (stats->>'external_file_bytes')::int > 0`, [][]string{})
 }
 
 // TestOnlineRestoreTenant runs an online restore of a tenant and ensures the

@@ -41,6 +41,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/duration"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
+	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeofday"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil/pgdate"
@@ -288,10 +289,43 @@ type Context struct {
 	RoutineSender DeferredRoutineSender
 
 	// ULIDEntropy is the entropy source for ULID generation.
+	// TODO(yuzefovich): consider making its allocation lazy, similar to how
+	// RNG is done, or use the RNG somehow.
 	ULIDEntropy ulid.MonotonicReader
 
-	// RNG is the random number generator use for the "random" built-in function.
-	RNG *rand.Rand
+	// RNGFactory, if set, provides the random number generator for the "random"
+	// built-in function.
+	//
+	// NB: do not access this field directly - use GetRNG() instead. This field
+	// is exported only for the connExecutor to pass its "external" RNGFactory.
+	RNGFactory *RNGFactory
+
+	// internal provides the random number generator for the "random" built-in
+	// function if RNGFactory is not set. This field exists to allow not setting
+	// RNGFactory on the code paths that don't need to preserve usage of the
+	// same RNG within a session.
+	internalRNGFactory RNGFactory
+}
+
+// RNGFactory is a simple wrapper to preserve the RNG throughout the session.
+type RNGFactory struct {
+	rng *rand.Rand
+}
+
+// GetRNG returns the RNG of the Context (which is lazily instantiated if
+// necessary).
+func (ec *Context) GetRNG() *rand.Rand {
+	if ec.RNGFactory != nil {
+		return ec.RNGFactory.getOrCreate()
+	}
+	return ec.internalRNGFactory.getOrCreate()
+}
+
+func (r *RNGFactory) getOrCreate() *rand.Rand {
+	if r.rng == nil {
+		r.rng, _ = randutil.NewPseudoRand()
+	}
+	return r.rng
 }
 
 // JobsProfiler is the interface used to fetch job specific execution details
@@ -802,17 +836,21 @@ func arrayOfType(typ *types.T) (*tree.DArray, error) {
 // where type aliases should be ignored.
 func UnwrapDatum(ctx context.Context, evalCtx *Context, d tree.Datum) tree.Datum {
 	d = tree.UnwrapDOidWrapper(d)
-	if p, ok := d.(*tree.Placeholder); ok && evalCtx != nil && evalCtx.HasPlaceholders() {
-		ret, err := Expr(ctx, evalCtx, p)
-		if err != nil {
-			// If we fail to evaluate the placeholder, it's because we don't have
-			// a placeholder available. Just return the placeholder and someone else
-			// will handle this problem.
-			return d
-		}
-		return ret
+	if evalCtx == nil || !evalCtx.HasPlaceholders() {
+		return d
 	}
-	return d
+	p, ok := d.(*tree.Placeholder)
+	if !ok {
+		return d
+	}
+	ret, err := Expr(ctx, evalCtx, p)
+	if err != nil {
+		// If we fail to evaluate the placeholder, it's because we don't have
+		// a placeholder available. Just return the placeholder and someone else
+		// will handle this problem.
+		return d
+	}
+	return ret
 }
 
 // StreamManagerFactory stores methods that return the streaming managers.

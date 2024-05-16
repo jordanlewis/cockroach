@@ -24,6 +24,7 @@ import "sql/catalog/catpb/function.proto";
 import "sql/schemachanger/scpb/scpb.proto";
 import "sql/types/types.proto";
 import "geo/geopb/config.proto";
+import "util/vector/vectorpb/config.proto";
 import "gogoproto/gogo.proto";
 import "roachpb/metadata.proto";
 
@@ -511,7 +512,11 @@ message IndexDescriptor {
   // with index visibility in-between as partially not visible.
   optional double invisibility = 29 [(gogoproto.nullable) = false];
 
-  // Next ID: 30
+  // VectorConfig, if it's not the zero value, describes configuration for
+  // this vector index.
+  optional vector.vectorindex.Config vector_config = 30 [(gogoproto.nullable) = false];
+
+  // Next ID: 31
 }
 
 // ConstraintToUpdate represents a constraint to be added to the table and

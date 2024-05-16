@@ -48,6 +48,7 @@ type config struct {
 	onSSTable            OnSSTable
 	onValues             OnValues
 	onDeleteRange        OnDeleteRange
+	onMetadata           OnMetadata
 	extraPProfLabels     []string
 }
 
@@ -64,11 +65,8 @@ type scanConfig struct {
 	// mon is the memory monitor to while scanning.
 	mon *mon.BytesMonitor
 
-	// callback to invoke when initial scan of a span completed.
-	onSpanDone OnScanCompleted
-
-	// configures retry behavior
-	retryBehavior ScanRetryBehavior
+	// OnSpanDone is invoked when initial scan of some span is completed.
+	OnSpanDone OnScanCompleted
 
 	// overSystemTable indicates whether this rangefeed is over a system table
 	// (used internally for CRDB's own functioning) and therefore should be
@@ -210,6 +208,19 @@ func WithOnSSTable(f OnSSTable) Option {
 	})
 }
 
+// OnMetadata is called when a RangefeedMetadata event is passed to the eventCh.
+// This occurs when a partial rangefeed begins, and if the the rangefeed client
+// was initialized with an OnMetadata function.
+type OnMetadata func(ctx context.Context, value *kvpb.RangeFeedMetadata)
+
+// WithOnMetadata sets up a callback that's invoked when a partial rangefeed is
+// spawned.
+func WithOnMetadata(fn OnMetadata) Option {
+	return optionFunc(func(c *config) {
+		c.onMetadata = fn
+	})
+}
+
 // OnDeleteRange is called when an MVCC range tombstone is written (e.g. when
 // DeleteRange is called with UseRangeTombstone, but not when the range is
 // deleted using point tombstones). If this callback is not provided, an error
@@ -303,24 +314,7 @@ type OnScanCompleted func(ctx context.Context, sp roachpb.Span) error
 // have been completed when performing an initial scan.
 func WithOnScanCompleted(fn OnScanCompleted) Option {
 	return optionFunc(func(c *config) {
-		c.onSpanDone = fn
-	})
-}
-
-// ScanRetryBehavior specifies how rangefeed should handle errors during initial scan.
-type ScanRetryBehavior int
-
-const (
-	// ScanRetryAll will retry all spans if any error occurred during initial scan.
-	ScanRetryAll ScanRetryBehavior = iota
-	// ScanRetryRemaining will retry remaining spans, including the one that failed.
-	ScanRetryRemaining
-)
-
-// WithScanRetryBehavior configures range feed to retry initial scan as per specified behavior.
-func WithScanRetryBehavior(b ScanRetryBehavior) Option {
-	return optionFunc(func(c *config) {
-		c.retryBehavior = b
+		c.OnSpanDone = fn
 	})
 }
 

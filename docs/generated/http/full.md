@@ -98,6 +98,7 @@ Note: this does *not* check readiness. Use the Health RPC for that purpose.
 | Field | Type | Label | Description | Support status |
 | ----- | ---- | ----- | ----------- | -------------- |
 | node_id | [string](#cockroach.server.serverpb.DetailsRequest-string) |  | node_id is a string so that "local" can be used to specify that no forwarding is necessary. | [reserved](#support-status) |
+| redact | [bool](#cockroach.server.serverpb.DetailsRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -229,6 +230,10 @@ The nodes are SQL instances in case of multi-tenant
 clusters.
 
 
+| Field | Type | Label | Description | Support status |
+| ----- | ---- | ----- | ----------- | -------------- |
+| redact | [bool](#cockroach.server.serverpb.NodesListRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
+
 
 
 
@@ -297,6 +302,10 @@ Support status: [alpha](#support-status)
 NodesRequest requests a copy of the node information as known to gossip
 and the KV layer.
 
+
+| Field | Type | Label | Description | Support status |
+| ----- | ---- | ----- | ----------- | -------------- |
+| redact | [bool](#cockroach.server.serverpb.NodesRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -463,6 +472,7 @@ Support status: [alpha](#support-status)
 | Field | Type | Label | Description | Support status |
 | ----- | ---- | ----- | ----------- | -------------- |
 | node_id | [string](#cockroach.server.serverpb.NodeRequest-string) |  | node_id is a string so that "local" can be used to specify that no forwarding is necessary. | [reserved](#support-status) |
+| redact | [bool](#cockroach.server.serverpb.NodeRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -598,6 +608,10 @@ Support status: [reserved](#support-status)
 NodesRequest requests a copy of the node information as known to gossip
 and the KV layer.
 
+
+| Field | Type | Label | Description | Support status |
+| ----- | ---- | ----- | ----------- | -------------- |
+| redact | [bool](#cockroach.server.serverpb.NodesRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -870,6 +884,7 @@ Support status: [reserved](#support-status)
 | Field | Type | Label | Description | Support status |
 | ----- | ---- | ----- | ----------- | -------------- |
 | node_id | [string](#cockroach.server.serverpb.NodeRequest-string) |  | node_id is a string so that "local" can be used to specify that no forwarding is necessary. | [reserved](#support-status) |
+| redact | [bool](#cockroach.server.serverpb.NodeRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -1417,6 +1432,7 @@ Support status: [reserved](#support-status)
 | range_ids | [int64](#cockroach.server.serverpb.RangesRequest-int64) | repeated |  | [reserved](#support-status) |
 | limit | [int32](#cockroach.server.serverpb.RangesRequest-int32) |  | The pagination limit to use, if set. NB: Pagination is based on ascending RangeID. | [reserved](#support-status) |
 | offset | [int32](#cockroach.server.serverpb.RangesRequest-int32) |  | The pagination offset to use, if set. NB: Pagination is based on ascending RangeID. | [reserved](#support-status) |
+| redact | [bool](#cockroach.server.serverpb.RangesRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -1907,6 +1923,7 @@ Support status: [reserved](#support-status)
 | Field | Type | Label | Description | Support status |
 | ----- | ---- | ----- | ----------- | -------------- |
 | node_id | [string](#cockroach.server.serverpb.GossipRequest-string) |  | node_id is a string so that "local" can be used to specify that no forwarding is necessary. | [reserved](#support-status) |
+| redact | [bool](#cockroach.server.serverpb.GossipRequest-bool) |  | redact, if true, requests redaction of sensitive data away from the API response. | [reserved](#support-status) |
 
 
 
@@ -4449,6 +4466,7 @@ Support status: [reserved](#support-status)
 | sampling_probability | [double](#cockroach.server.serverpb.CreateStatementDiagnosticsReportRequest-double) |  | SamplingProbability controls how likely we are to try and collect a diagnostics report for a given execution. The semantics with MinExecutionLatency are worth noting (and perhaps simplifying?): - If SamplingProbability is zero, we're always sampling. This is for   compatibility with pre-22.2 versions where this parameter was not   available. - If SamplingProbability is non-zero, MinExecutionLatency must be non-zero.   We'll sample stmt executions with the given probability until:   (a) we capture one that exceeds MinExecutionLatency, or   (b) we hit the ExpiresAfter point.<br><br>SamplingProbability lets users control at a per-stmt granularity how much collection overhead is acceptable to try an capture an outlier execution for further analysis (are high p99.9s due to latch waits? racing with split transfers?). A high sampling rate can capture a trace sooner, but the added overhead may also cause the trace to be non-representative if the tracing overhead across all requests is causing resource saturation (network, memory) and resulting in slowdown.<br><br>TODO(irfansharif): Wire this up to the UI code. When selecting the latency threshold, we should want to force specifying a sampling probability.<br><br>TODO(irfansharif): We could do better than a hard-coded default value for probability (100% could be too high-overhead so probably not the right one). Strawman: could consider the recent request rate for the fingerprint (say averaged over the last 10m? 30m?), consider what %-ile the latency target we're looking to capture is under, and suggest a sampling probability that gets you at least one trace in the next T seconds with 95% likelihood? Or provide a hint for how long T is for the currently chosen sampling probability. | [reserved](#support-status) |
 | plan_gist | [string](#cockroach.server.serverpb.CreateStatementDiagnosticsReportRequest-string) |  | PlanGist, when set, indicates a particular plan that we want collect diagnostics for. This can be useful when a single fingerprint can result in multiple plans.<br><br>There is a caveat to using this filtering: since the plan gist for a running query is only available after the optimizer has done its part, the trace will only include things after the optimizer is done. | [reserved](#support-status) |
 | anti_plan_gist | [bool](#cockroach.server.serverpb.CreateStatementDiagnosticsReportRequest-bool) |  | AntiPlanGist, when set, indicates that any plan not matching PlanGist will do. | [reserved](#support-status) |
+| redacted | [bool](#cockroach.server.serverpb.CreateStatementDiagnosticsReportRequest-bool) |  | Redacted, when set, indicates that the redacted bundle is requested. | [reserved](#support-status) |
 
 
 
@@ -4486,7 +4504,7 @@ Support status: [reserved](#support-status)
 | statement_diagnostics_id | [int64](#cockroach.server.serverpb.CreateStatementDiagnosticsReportResponse-int64) |  |  | [reserved](#support-status) |
 | requested_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.CreateStatementDiagnosticsReportResponse-google.protobuf.Timestamp) |  |  | [reserved](#support-status) |
 | min_execution_latency | [google.protobuf.Duration](#cockroach.server.serverpb.CreateStatementDiagnosticsReportResponse-google.protobuf.Duration) |  |  | [reserved](#support-status) |
-| expires_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.CreateStatementDiagnosticsReportResponse-google.protobuf.Timestamp) |  |  | [reserved](#support-status) |
+| expires_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.CreateStatementDiagnosticsReportResponse-google.protobuf.Timestamp) |  | TODO(yuzefovich): should we populate plan_gist, anti_plan_gist, and redacted fields? | [reserved](#support-status) |
 
 
 
@@ -4590,7 +4608,7 @@ Support status: [reserved](#support-status)
 | statement_diagnostics_id | [int64](#cockroach.server.serverpb.StatementDiagnosticsReportsResponse-int64) |  |  | [reserved](#support-status) |
 | requested_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.StatementDiagnosticsReportsResponse-google.protobuf.Timestamp) |  |  | [reserved](#support-status) |
 | min_execution_latency | [google.protobuf.Duration](#cockroach.server.serverpb.StatementDiagnosticsReportsResponse-google.protobuf.Duration) |  |  | [reserved](#support-status) |
-| expires_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.StatementDiagnosticsReportsResponse-google.protobuf.Timestamp) |  |  | [reserved](#support-status) |
+| expires_at | [google.protobuf.Timestamp](#cockroach.server.serverpb.StatementDiagnosticsReportsResponse-google.protobuf.Timestamp) |  | TODO(yuzefovich): should we populate plan_gist, anti_plan_gist, and redacted fields? | [reserved](#support-status) |
 
 
 
@@ -7689,6 +7707,10 @@ Support status: [reserved](#support-status)
 
 
 
+| Field | Type | Label | Description | Support status |
+| ----- | ---- | ----- | ----------- | -------------- |
+| max_concurrency | [int32](#cockroach.server.serverpb.RecoveryCollectReplicaInfoRequest-int32) |  | MaxConcurrency is the maximum parallelism that will be used when fanning out RPCs to nodes in the cluster while servicing this request. A value of 0 disables concurrency. A negative value configures no limit for concurrency. | [reserved](#support-status) |
+
 
 
 
@@ -7799,6 +7821,7 @@ Support status: [reserved](#support-status)
 | all_nodes | [bool](#cockroach.server.serverpb.RecoveryStagePlanRequest-bool) |  | If all nodes is true, then receiver should act as a coordinator and perform a fan-out to stage plan on all nodes of the cluster. | [reserved](#support-status) |
 | force_plan | [bool](#cockroach.server.serverpb.RecoveryStagePlanRequest-bool) |  | ForcePlan tells receiver to ignore any plan already staged on the node if it is present and replace it with new plan (including empty one). | [reserved](#support-status) |
 | force_local_internal_version | [bool](#cockroach.server.serverpb.RecoveryStagePlanRequest-bool) |  | ForceLocalInternalVersion tells server to update internal component of plan version to the one of active cluster version. This option needs to be set if target cluster is stuck in recovery where only part of nodes were successfully migrated. | [reserved](#support-status) |
+| max_concurrency | [int32](#cockroach.server.serverpb.RecoveryStagePlanRequest-int32) |  | MaxConcurrency is the maximum parallelism that will be used when fanning out RPCs to nodes in the cluster while servicing this request. A value of 0 disables concurrency. A negative value configures no limit for concurrency. | [reserved](#support-status) |
 
 
 
@@ -7888,6 +7911,7 @@ Support status: [reserved](#support-status)
 | plan_id | [bytes](#cockroach.server.serverpb.RecoveryVerifyRequest-bytes) |  | PlanID is ID of the plan to verify. | [reserved](#support-status) |
 | decommissioned_node_ids | [int32](#cockroach.server.serverpb.RecoveryVerifyRequest-int32) | repeated | DecommissionedNodeIDs is a set of nodes that should be marked as decommissioned in the cluster when loss of quorum recovery successfully applies. | [reserved](#support-status) |
 | max_reported_ranges | [int32](#cockroach.server.serverpb.RecoveryVerifyRequest-int32) |  | MaxReportedRanges is the maximum number of failed ranges to report. If more unhealthy ranges are found, error will be returned alongside range to indicate that ranges were cut short. | [reserved](#support-status) |
+| max_concurrency | [int32](#cockroach.server.serverpb.RecoveryVerifyRequest-int32) |  | MaxConcurrency is the maximum parallelism that will be used when fanning out RPCs to nodes in the cluster while servicing this request. A value of 0 disables concurrency. A negative value configures no limit for concurrency. | [reserved](#support-status) |
 
 
 

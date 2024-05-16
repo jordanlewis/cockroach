@@ -18,6 +18,7 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -110,6 +111,7 @@ func TestAuthenticateTenant(t *testing.T) {
 		commonName       string
 		rootDNString     string
 		nodeDNString     string
+		subjectRequired  bool
 		expTenID         roachpb.TenantID
 		expErr           string
 		tenantScope      uint64
@@ -192,6 +194,16 @@ func TestAuthenticateTenant(t *testing.T) {
 			expErr: `need root or node client cert to perform RPCs on this server \(this is tenant system; cert is valid for "foo" on all tenants, "bar" on all tenants\)`},
 		{systemID: stid, ous: nil, commonName: "foo", certDNSName: "bar", certPrincipalMap: "bar:root"},
 		{systemID: stid, ous: nil, commonName: "foo", certDNSName: "bar", certPrincipalMap: "bar:node"},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true,
+			expErr: `root and node roles do not have valid DNs set which subject_required cluster setting mandates`},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true, rootDNString: "CN=bar",
+			expErr: `need root or node client cert to perform RPCs on this server: cert dn did not match set root or node dn`},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true, nodeDNString: "CN=bar",
+			expErr: `need root or node client cert to perform RPCs on this server: cert dn did not match set root or node dn`},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true, rootDNString: "CN=foo"},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true, nodeDNString: "CN=foo"},
+		{systemID: stid, ous: nil, commonName: "foo", subjectRequired: true,
+			rootDNString: "CN=foo", nodeDNString: "CN=bar"},
 	} {
 		t.Run(fmt.Sprintf("from %v to %v (md %q)", tc.commonName, tc.systemID, tc.clientTenantInMD), func(t *testing.T) {
 			err := security.SetCertPrincipalMap(strings.Split(tc.certPrincipalMap, ","))
@@ -248,7 +260,10 @@ func TestAuthenticateTenant(t *testing.T) {
 				ctx = metadata.NewIncomingContext(ctx, md)
 			}
 
-			tenID, err := rpc.TestingAuthenticateTenant(ctx, tc.systemID)
+			clusterSettings := map[settings.InternalKey]settings.EncodedValue{
+				security.ClientCertSubjectRequiredSettingName: {Value: strconv.FormatBool(tc.subjectRequired), Type: "b"},
+			}
+			tenID, err := rpc.TestingAuthenticateTenant(ctx, tc.systemID, clusterSettings)
 
 			if tc.expErr == "" {
 				require.Equal(t, tc.expTenID, tenID)
@@ -351,14 +366,15 @@ func TestTenantAuthRequest(t *testing.T) {
 		}
 	}
 
-	makeTimeseriesQueryReq := func(tenantID roachpb.TenantID) *tspb.TimeSeriesQueryRequest {
-		return &tspb.TimeSeriesQueryRequest{
-			Queries: []tspb.Query{
-				{
-					TenantID: tenantID,
-				},
-			},
+	tenantTwo := roachpb.MustMakeTenantID(2)
+	makeTimeseriesQueryReq := func(tenantID *roachpb.TenantID) *tspb.TimeSeriesQueryRequest {
+		req := &tspb.TimeSeriesQueryRequest{
+			Queries: []tspb.Query{{}},
 		}
+		if tenantID != nil {
+			req.Queries[0].TenantID = *tenantID
+		}
+		return req
 	}
 
 	const noError = ""
@@ -880,15 +896,19 @@ func TestTenantAuthRequest(t *testing.T) {
 		},
 		"/cockroach.ts.tspb.TimeSeries/Query": {
 			{
-				req:    makeTimeseriesQueryReq(tenID),
+				req:    makeTimeseriesQueryReq(&tenID),
 				expErr: noError,
 			},
 			{
-				req:    makeTimeseriesQueryReq(roachpb.TenantID{}),
-				expErr: `tsdb query with unspecified tenant not permitted`,
+				req:    makeTimeseriesQueryReq(nil),
+				expErr: noError,
 			},
 			{
-				req:    makeTimeseriesQueryReq(roachpb.MustMakeTenantID(2)),
+				req:    makeTimeseriesQueryReq(&roachpb.TenantID{}),
+				expErr: noError,
+			},
+			{
+				req:    makeTimeseriesQueryReq(&tenantTwo),
 				expErr: `tsdb query with invalid tenant not permitted`,
 			},
 		},
@@ -961,14 +981,14 @@ func TestSpecialTenantID(t *testing.T) {
 func TestTenantAuthCapabilityChecks(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 
-	makeTimeseriesQueryReq := func(tenantID roachpb.TenantID) *tspb.TimeSeriesQueryRequest {
-		return &tspb.TimeSeriesQueryRequest{
-			Queries: []tspb.Query{
-				{
-					TenantID: tenantID,
-				},
-			},
+	makeTimeseriesQueryReq := func(tenantID *roachpb.TenantID) *tspb.TimeSeriesQueryRequest {
+		req := &tspb.TimeSeriesQueryRequest{
+			Queries: []tspb.Query{{}},
 		}
+		if tenantID != nil {
+			req.Queries[0].TenantID = *tenantID
+		}
+		return req
 	}
 
 	tenID := roachpb.MustMakeTenantID(10)
@@ -999,18 +1019,34 @@ func TestTenantAuthCapabilityChecks(t *testing.T) {
 		},
 		"/cockroach.ts.tspb.TimeSeries/Query": {
 			{
-				req: makeTimeseriesQueryReq(tenID),
+				req: makeTimeseriesQueryReq(&tenID),
 				configureAuthorizer: func(authorizer *mockAuthorizer) {
 					authorizer.hasTSDBQueryCapability = true
 				},
 				expErr: "",
 			},
 			{
-				req: makeTimeseriesQueryReq(tenID),
+				req: makeTimeseriesQueryReq(&tenID),
 				configureAuthorizer: func(authorizer *mockAuthorizer) {
 					authorizer.hasTSDBQueryCapability = false
 				},
 				expErr: "tenant does not have capability",
+			},
+			{
+				req: makeTimeseriesQueryReq(nil),
+				configureAuthorizer: func(authorizer *mockAuthorizer) {
+					authorizer.hasTSDBQueryCapability = false
+					authorizer.hasTSDBAllCapability = true
+				},
+				expErr: "tenant does not have capability",
+			},
+			{
+				req: makeTimeseriesQueryReq(nil),
+				configureAuthorizer: func(authorizer *mockAuthorizer) {
+					authorizer.hasTSDBQueryCapability = true
+					authorizer.hasTSDBAllCapability = true
+				},
+				expErr: "",
 			},
 		},
 	} {
@@ -1038,6 +1074,16 @@ type mockAuthorizer struct {
 	hasTSDBQueryCapability             bool
 	hasNodelocalStorageCapability      bool
 	hasExemptFromRateLimiterCapability bool
+	hasTSDBAllCapability               bool
+}
+
+func (m mockAuthorizer) HasTSDBAllMetricsCapability(
+	ctx context.Context, tenID roachpb.TenantID,
+) error {
+	if m.hasTSDBAllCapability {
+		return nil
+	}
+	return errors.New("tenant does not have capability")
 }
 
 func (m mockAuthorizer) HasProcessDebugCapability(

@@ -32,6 +32,11 @@ var (
 		Usage: `Cloud provider to use ("local", "gce", "aws", or "azure"); by
 		        default, only tests compatible with the given cloud are run`,
 	})
+	_ = registerRunOpsFlag(&Cloud, FlagInfo{
+		Name: "cloud",
+		Usage: `Cloud provider that the cluster is running on. Used by operations
+		        to tailor behaviour to that cloud.`,
+	})
 
 	Suite string
 	_     = registerListFlag(&Suite, FlagInfo{
@@ -290,6 +295,12 @@ var (
 		Usage: `The port on which to serve the HTTP interface`,
 	})
 
+	DogstatsdAddr string = ""
+	_                    = registerRunOpsFlag(&DogstatsdAddr, FlagInfo{
+		Name:  "dogstatsd-addr",
+		Usage: `The address to which to connect to dogstatsd, to send Datadog events.`,
+	})
+
 	PreferLocalSSD bool = true
 	_                   = registerRunFlag(&PreferLocalSSD, FlagInfo{
 		Name:  "local-ssd",
@@ -352,10 +363,25 @@ var (
 		Usage: `Use SpotVM to run tests, If the provider does not support spotVM, it will be ignored`,
 	})
 
+	AutoKillThreshold float64 = 1.0
+	_                         = registerRunFlag(&AutoKillThreshold, FlagInfo{
+		Name:  "auto-kill-threshold",
+		Usage: `Percentage of failed tests before all remaining tests are automatically terminated.`,
+	})
+
 	GlobalSeed int64 = randutil.NewPseudoSeed()
 	_                = registerRunFlag(&GlobalSeed, FlagInfo{
 		Name:  "global-seed",
 		Usage: `The global random seed used for all tests.`,
+	})
+
+	ClearClusterCache bool = true
+	_                      = registerRunFlag(&ClearClusterCache, FlagInfo{
+		Name: "clear-cluster-cache",
+		Usage: `
+						Clear the local cluster cache of missing clusters when syncing resources with
+						providers. Set this to false when running many concurrent Azure tests. Azure
+						can return stale VM information when many PUT calls are made in succession.`,
 	})
 )
 

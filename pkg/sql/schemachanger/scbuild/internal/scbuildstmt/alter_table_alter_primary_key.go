@@ -287,7 +287,8 @@ func alterPKInPrimaryIndexAndItsTemp(
 //  3. no inaccessible columns;
 //  4. no nullable columns;
 //  5. no virtual columns (starting from v22.1);
-//  6. add more here
+//  6. No columns that are scheduled to be dropped (target status set to `ABSENT`);
+//  7. add more here
 //
 // Panic if any precondition is found unmet.
 func checkForEarlyExit(b BuildCtx, tbl *scpb.Table, t alterPrimaryKeySpec) {
@@ -329,7 +330,7 @@ func checkForEarlyExit(b BuildCtx, tbl *scpb.Table, t alterPrimaryKeySpec) {
 			panic(errors.AssertionFailedf("programming error: resolving column %v does not give a "+
 				"Column element.", col.Column))
 		}
-		if colCurrentStatus == scpb.Status_DROPPED || colCurrentStatus == scpb.Status_ABSENT {
+		if colCurrentStatus == scpb.Status_DROPPED || colCurrentStatus == scpb.Status_ABSENT || colTargetStatus == scpb.ToAbsent {
 			if colTargetStatus == scpb.ToPublic {
 				panic(pgerror.Newf(pgcode.ObjectNotInPrerequisiteState,
 					"column %q is being added", col.Column))
@@ -344,6 +345,19 @@ func checkForEarlyExit(b BuildCtx, tbl *scpb.Table, t alterPrimaryKeySpec) {
 		if !isColNotNull(b, tbl.TableID, colElem.ColumnID) {
 			panic(pgerror.Newf(pgcode.InvalidSchemaDefinition, "cannot use nullable column "+
 				"%q in primary key", col.Column))
+		}
+
+		columnType := mustRetrieveColumnTypeElem(b, tbl.TableID, colElem.ColumnID)
+		version := b.EvalCtx().Settings.Version.ActiveVersion(b)
+		// Check if the column type is indexable.
+		if !colinfo.ColumnTypeIsIndexable(columnType.Type) ||
+			(columnType.Type.Family() == types.JsonFamily && !version.IsActive(clusterversion.V23_2)) {
+			panic(unimplemented.NewWithIssueDetailf(35730,
+				columnType.Type.DebugString(),
+				"column %s is of type %s and thus is not indexable",
+				col.Column,
+				columnType.Type),
+			)
 		}
 	}
 }

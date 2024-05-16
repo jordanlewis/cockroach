@@ -24,10 +24,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
-	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/metamorphic"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/span"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
@@ -196,10 +196,6 @@ func (f *RangeFeed) Start(ctx context.Context, spans []roachpb.Span) error {
 		return errors.AssertionFailedf("expected at least 1 span, got none")
 	}
 
-	if !atomic.CompareAndSwapInt32(&f.started, 0, 1) {
-		return errors.AssertionFailedf("rangefeed already started")
-	}
-
 	// Maintain a frontier in order to resume at a reasonable timestamp.
 	// TODO(ajwerner): Consider exposing the frontier through a RangeFeed method.
 	// Doing so would require some synchronization.
@@ -207,12 +203,23 @@ func (f *RangeFeed) Start(ctx context.Context, spans []roachpb.Span) error {
 	if err != nil {
 		return err
 	}
+	return f.start(ctx, frontier, true)
+}
 
-	for _, sp := range spans {
-		if _, err := frontier.Forward(sp, f.initialTimestamp); err != nil {
-			frontier.Release() // release whatever was allocated.
-			return err
-		}
+// StartFromFrontier is like Start but allows passing a frontier containing the
+// spans on which to create the feed, which can reflect any previous progress,
+// unlike passing just the spans to Start().
+//
+// The rangefeed takes ownership of the passed frontier until it is closed; the
+// caller must not interact with it until Close returns. The caller remains
+// responsible for releasing the frontier thereafter however.
+func (f *RangeFeed) StartFromFrontier(ctx context.Context, frontier span.Frontier) error {
+	return f.start(ctx, frontier, false)
+}
+
+func (f *RangeFeed) start(ctx context.Context, frontier span.Frontier, ownsFrontier bool) error {
+	if !atomic.CompareAndSwapInt32(&f.started, 0, 1) {
+		return errors.AssertionFailedf("rangefeed already started")
 	}
 
 	// Frontier merges and de-dups passed in spans.  So, use frontier to initialize
@@ -223,8 +230,9 @@ func (f *RangeFeed) Start(ctx context.Context, spans []roachpb.Span) error {
 	})
 
 	runWithFrontier := func(ctx context.Context) {
-		defer frontier.Release()
-
+		if ownsFrontier {
+			defer frontier.Release()
+		}
 		// pprof.Do function does exactly what we do here, but it also results in
 		// pprof.Do function showing up in the stack traces -- so, just set and reset
 		// labels manually.
@@ -235,9 +243,9 @@ func (f *RangeFeed) Start(ctx context.Context, spans []roachpb.Span) error {
 	}
 
 	f.spansDebugStr = func() string {
-		n := len(spans)
+		n := len(f.spans)
 		if n == 1 {
-			return spans[0].String()
+			return f.spans[0].String()
 		}
 
 		return fmt.Sprintf("{%s}", frontier.String())
@@ -270,7 +278,7 @@ func (f *RangeFeed) Close() {
 // will be reset.
 const resetThreshold = 30 * time.Second
 
-var useMuxRangeFeed = util.ConstantWithMetamorphicTestBool("use-mux-rangefeed", true)
+var useMuxRangeFeed = metamorphic.ConstantWithTestBool("use-mux-rangefeed", true)
 
 // run will run the RangeFeed until the context is canceled or if the client
 // indicates that an initial scan error is non-recoverable.
@@ -280,8 +288,17 @@ func (f *RangeFeed) run(ctx context.Context, frontier span.Frontier) {
 	restartLogEvery := log.Every(10 * time.Second)
 
 	if f.withInitialScan {
-		if done := f.runInitialScan(ctx, &restartLogEvery, &r); done {
+		if failed := f.runInitialScan(ctx, &restartLogEvery, &r, frontier); failed {
 			return
+		}
+	} else {
+		for _, sp := range f.spans {
+			if _, err := frontier.Forward(sp, f.initialTimestamp); err != nil {
+				if fn := f.onUnrecoverableError; fn != nil {
+					fn(ctx, err)
+				}
+				return
+			}
 		}
 	}
 
@@ -303,6 +320,9 @@ func (f *RangeFeed) run(ctx context.Context, frontier span.Frontier) {
 	}
 	if f.withDiff {
 		rangefeedOpts = append(rangefeedOpts, kvcoord.WithDiff())
+	}
+	if f.onMetadata != nil {
+		rangefeedOpts = append(rangefeedOpts, kvcoord.WithMetadata())
 	}
 
 	for i := 0; r.Next(); i++ {
@@ -399,6 +419,11 @@ func (f *RangeFeed) processEvents(
 						"received unexpected rangefeed DeleteRange event with no OnDeleteRange handler: %s", ev)
 				}
 				f.onDeleteRange(ctx, ev.DeleteRange)
+			case ev.Metadata != nil:
+				if f.onMetadata == nil {
+					return errors.AssertionFailedf("received unexpected metadata event with no OnMetadata handler")
+				}
+				f.onMetadata(ctx, ev.Metadata)
 			case ev.Error != nil:
 				// Intentionally do nothing, we'll get an error returned from the
 				// call to RangeFeed.

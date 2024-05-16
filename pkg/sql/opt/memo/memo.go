@@ -189,6 +189,14 @@ type Memo struct {
 	mergeJoinsEnabled                          bool
 	plpgsqlUseStrictInto                       bool
 	useVirtualComputedColumnStats              bool
+	useTrigramSimilarityOptimization           bool
+	useImprovedDistinctOnLimitHintCosting      bool
+	useImprovedTrigramSimilaritySelectivity    bool
+	trigramSimilarityThreshold                 float64
+	splitScanLimit                             int32
+	useImprovedZigzagJoinCosting               bool
+	useImprovedMultiColumnSelectivityEstimate  bool
+	proveImplicationWithVirtualComputedCols    bool
 
 	// txnIsoLevel is the isolation level under which the plan was created. This
 	// affects the planning of some locking operations, so it must be included in
@@ -264,6 +272,14 @@ func (m *Memo) Init(ctx context.Context, evalCtx *eval.Context) {
 		mergeJoinsEnabled:                          evalCtx.SessionData().OptimizerMergeJoinsEnabled,
 		plpgsqlUseStrictInto:                       evalCtx.SessionData().PLpgSQLUseStrictInto,
 		useVirtualComputedColumnStats:              evalCtx.SessionData().OptimizerUseVirtualComputedColumnStats,
+		useTrigramSimilarityOptimization:           evalCtx.SessionData().OptimizerUseTrigramSimilarityOptimization,
+		useImprovedDistinctOnLimitHintCosting:      evalCtx.SessionData().OptimizerUseImprovedDistinctOnLimitHintCosting,
+		useImprovedTrigramSimilaritySelectivity:    evalCtx.SessionData().OptimizerUseImprovedTrigramSimilaritySelectivity,
+		trigramSimilarityThreshold:                 evalCtx.SessionData().TrigramSimilarityThreshold,
+		splitScanLimit:                             evalCtx.SessionData().OptSplitScanLimit,
+		useImprovedZigzagJoinCosting:               evalCtx.SessionData().OptimizerUseImprovedZigzagJoinCosting,
+		useImprovedMultiColumnSelectivityEstimate:  evalCtx.SessionData().OptimizerUseImprovedMultiColumnSelectivityEstimate,
+		proveImplicationWithVirtualComputedCols:    evalCtx.SessionData().OptimizerProveImplicationWithVirtualComputedColumns,
 		txnIsoLevel:                                evalCtx.TxnIsoLevel,
 	}
 	m.metadata.Init()
@@ -417,6 +433,14 @@ func (m *Memo) IsStale(
 		m.mergeJoinsEnabled != evalCtx.SessionData().OptimizerMergeJoinsEnabled ||
 		m.plpgsqlUseStrictInto != evalCtx.SessionData().PLpgSQLUseStrictInto ||
 		m.useVirtualComputedColumnStats != evalCtx.SessionData().OptimizerUseVirtualComputedColumnStats ||
+		m.useTrigramSimilarityOptimization != evalCtx.SessionData().OptimizerUseTrigramSimilarityOptimization ||
+		m.useImprovedDistinctOnLimitHintCosting != evalCtx.SessionData().OptimizerUseImprovedDistinctOnLimitHintCosting ||
+		m.useImprovedTrigramSimilaritySelectivity != evalCtx.SessionData().OptimizerUseImprovedTrigramSimilaritySelectivity ||
+		m.trigramSimilarityThreshold != evalCtx.SessionData().TrigramSimilarityThreshold ||
+		m.splitScanLimit != evalCtx.SessionData().OptSplitScanLimit ||
+		m.useImprovedZigzagJoinCosting != evalCtx.SessionData().OptimizerUseImprovedZigzagJoinCosting ||
+		m.useImprovedMultiColumnSelectivityEstimate != evalCtx.SessionData().OptimizerUseImprovedMultiColumnSelectivityEstimate ||
+		m.proveImplicationWithVirtualComputedCols != evalCtx.SessionData().OptimizerProveImplicationWithVirtualComputedColumns ||
 		m.txnIsoLevel != evalCtx.TxnIsoLevel {
 		return true, nil
 	}

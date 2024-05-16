@@ -948,17 +948,17 @@ func (r *Replica) executeAdminBatch(
 	switch tArgs := args.(type) {
 	case *kvpb.AdminSplitRequest:
 		var reply kvpb.AdminSplitResponse
-		reply, pErr = r.AdminSplit(ctx, *tArgs, "manual")
+		reply, pErr = r.AdminSplit(ctx, *tArgs, manualAdminReason)
 		resp = &reply
 
 	case *kvpb.AdminUnsplitRequest:
 		var reply kvpb.AdminUnsplitResponse
-		reply, pErr = r.AdminUnsplit(ctx, *tArgs, "manual")
+		reply, pErr = r.AdminUnsplit(ctx, *tArgs, manualAdminReason)
 		resp = &reply
 
 	case *kvpb.AdminMergeRequest:
 		var reply kvpb.AdminMergeResponse
-		reply, pErr = r.AdminMerge(ctx, *tArgs, "manual")
+		reply, pErr = r.AdminMerge(ctx, *tArgs, manualAdminReason)
 		resp = &reply
 
 	case *kvpb.AdminTransferLeaseRequest:
@@ -1349,7 +1349,7 @@ func (ec *endCmds) done(
 	// do so if the request is consistent and was operating on the leaseholder
 	// under a valid range lease.
 	if ba.ReadConsistency == kvpb.CONSISTENT && ec.st.State == kvserverpb.LeaseState_VALID {
-		ec.repl.updateTimestampCache(ctx, &ec.st, ba, br, pErr)
+		ec.repl.updateTimestampCache(ctx, ba, br, pErr)
 	}
 
 	if ts := ec.replicatingSince; !ts.IsZero() {

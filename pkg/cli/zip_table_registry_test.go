@@ -38,6 +38,10 @@ func TestQueryForTable(t *testing.T) {
 			customQueryUnredacted: "SELECT * FROM table_with_custom_queries",
 			customQueryRedacted:   "SELECT a, b, c FROM table_with_custom_queries",
 		},
+		"table_with_non_sensitive_cols_and_custom_unredacted_query": {
+			nonSensitiveCols:      NonSensitiveColumns{"x", "crdb_internal.pretty_key(y, 0) as y", "z"},
+			customQueryUnredacted: "SELECT x, crdb_internal.pretty_key(y, 0) as y, z FROM table_with_non_sensitive_cols_and_custom_unredacted_query",
+		},
 	}
 
 	t.Run("errors if no table config present in registry", func(t *testing.T) {
@@ -86,6 +90,23 @@ func TestQueryForTable(t *testing.T) {
 		assert.Contains(t, err.Error(), "no non-sensitive columns defined")
 		assert.Empty(t, actual)
 	})
+
+	t.Run("produces query when a combination of nonSensitiveCols and customQueryUnredacted is supplied", func(t *testing.T) {
+		table := "table_with_non_sensitive_cols_and_custom_unredacted_query"
+		expected := "SELECT x, crdb_internal.pretty_key(y, 0) as y, z FROM table_with_non_sensitive_cols_and_custom_unredacted_query"
+
+		t.Run("with redact flag", func(t *testing.T) {
+			actual, err := reg.QueryForTable(table, true /* redact */)
+			assert.NoError(t, err)
+			assert.Equal(t, expected, actual)
+		})
+
+		t.Run("without redact flag", func(t *testing.T) {
+			actual, err := reg.QueryForTable(table, false /* redact */)
+			assert.NoError(t, err)
+			assert.Equal(t, expected, actual)
+		})
+	})
 }
 
 func TestNoForbiddenSystemTablesInDebugZip(t *testing.T) {
@@ -111,34 +132,28 @@ func TestNoForbiddenSystemTablesInDebugZip(t *testing.T) {
 	}
 }
 
-func TestNoNonSensitiveColsAndCustomRedactedQueries(t *testing.T) {
+func TestTableRegistryConfigs(t *testing.T) {
 	defer leaktest.AfterTest(t)()
-	errFmtString := `FAILURE: The debug zip TableRegistryConfig for table %q
-contains both a custom redacted query (customQueryRedacted) AND a list of
-non sensitive columns (nonSensitiveCols). customQueryRedacted will ALWAYS
-be used in place of nonSensitiveCols if defined, so please remove the
-nonSensitiveCols. PLEASE be sure that NONE of the columns outside of those
-listed in nonSensitiveCols have leaked into your customQueryRedacted, as 
-this would be a PCI leak. If any columns in your customQueryRedacted were 
-NOT already listed in nonSensitiveCols, you MUST confirm with the compliance 
-team that these columns are acceptable to reveal in an unredacted manner, or
-you must redact them at the SQL level.`
+
+	validate := func(table string, regConfig TableRegistryConfig) {
+		if regConfig.customQueryRedacted == "" && len(regConfig.nonSensitiveCols) == 0 {
+			t.Fatalf("table %q contains no redacted query configuration", table)
+		}
+		if regConfig.customQueryRedacted != "" && len(regConfig.nonSensitiveCols) > 0 {
+			t.Fatalf(
+				"table %q has both customQueryRedacted and nonSensitiveCols. These fields are mutually exclusive.",
+				table)
+		}
+	}
+
 	for table, regConfig := range zipInternalTablesPerCluster {
-		if regConfig.customQueryRedacted != "" && len(regConfig.nonSensitiveCols) > 0 {
-			t.Fatalf(errFmtString, table)
-		}
+		validate(table, regConfig)
 	}
-
 	for table, regConfig := range zipInternalTablesPerNode {
-		if regConfig.customQueryRedacted != "" && len(regConfig.nonSensitiveCols) > 0 {
-			t.Fatalf(errFmtString, table)
-		}
+		validate(table, regConfig)
 	}
-
 	for table, regConfig := range zipSystemTables {
-		if regConfig.customQueryRedacted != "" && len(regConfig.nonSensitiveCols) > 0 {
-			t.Fatalf(errFmtString, table)
-		}
+		validate(table, regConfig)
 	}
 }
 

@@ -16,4 +16,8 @@ import "github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 func RegisterOperations(r registry.Registry) {
 	registerAddColumn(r)
 	registerAddIndex(r)
+	registerNetworkPartition(r)
+	registerDiskStall(r)
+	registerNodeKill(r)
+	registerClusterSettings(r)
 }

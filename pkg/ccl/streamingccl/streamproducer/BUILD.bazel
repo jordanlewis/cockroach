@@ -63,6 +63,7 @@ go_library(
         "//pkg/util/tracing",
         "//pkg/util/uuid",
         "@com_github_cockroachdb_errors//:errors",
+        "@com_github_golang_snappy//:snappy",
     ],
 )
 
@@ -75,9 +76,9 @@ go_test(
         "replication_manager_test.go",
         "replication_stream_test.go",
         "stream_event_batcher_test.go",
+        "stream_lifetime_test.go",
     ],
     embed = [":streamproducer"],
-    tags = ["ccl_test"],
     deps = [
         "//pkg/base",
         "//pkg/ccl",

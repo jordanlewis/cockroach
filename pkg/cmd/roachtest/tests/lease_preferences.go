@@ -103,7 +103,7 @@ func registerLeasePreferences(r registry.Registry) {
 		// validation.
 		SkipPostValidations: registry.PostValidationNoDeadNodes,
 		Cluster:             r.MakeClusterSpec(5, spec.CPU(4)),
-		CompatibleClouds:    registry.AllExceptAWS,
+		CompatibleClouds:    registry.OnlyGCE,
 		Suites:              registry.Suites(registry.Nightly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runLeasePreferences(ctx, t, c, leasePreferencesSpec{
@@ -129,7 +129,7 @@ func registerLeasePreferences(r registry.Registry) {
 		// validation.
 		SkipPostValidations: registry.PostValidationNoDeadNodes,
 		Cluster:             r.MakeClusterSpec(5, spec.CPU(4)),
-		CompatibleClouds:    registry.AllExceptAWS,
+		CompatibleClouds:    registry.OnlyGCE,
 		Suites:              registry.Suites(registry.Nightly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runLeasePreferences(ctx, t, c, leasePreferencesSpec{
@@ -151,7 +151,7 @@ func registerLeasePreferences(r registry.Registry) {
 		Owner:            registry.OwnerKV,
 		Timeout:          30 * time.Minute,
 		Cluster:          r.MakeClusterSpec(5, spec.CPU(4)),
-		CompatibleClouds: registry.AllExceptAWS,
+		CompatibleClouds: registry.OnlyGCE,
 		Suites:           registry.Suites(registry.Nightly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runLeasePreferences(ctx, t, c, leasePreferencesSpec{
@@ -366,11 +366,12 @@ func waitForLeasePreferences(
 	var ret leasePreferencesResult
 	ret.nodes = nodes
 	start := timeutil.Now()
+	maxWaitC := time.After(maxWaitDuration)
 	for {
 		select {
 		case <-ctx.Done():
 			return ret, ctx.Err()
-		case <-time.After(maxWaitDuration):
+		case <-maxWaitC:
 			return ret, errors.Errorf("timed out before lease preferences satisfied")
 		case <-checkTimer.C:
 			checkTimer.Read = true

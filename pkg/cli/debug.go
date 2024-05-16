@@ -921,7 +921,10 @@ func runDebugGCCmd(cmd *cobra.Command, args []string) error {
 }
 
 var debugPebbleOpts = struct {
-	sharedStorageURI string
+	sharedStorageURI   string
+	exciseTenantID     uint64
+	exciseTableID      uint32
+	exciseEntireTenant bool
 }{}
 
 // DebugPebbleCmd is the root of all debug pebble commands.
@@ -1470,6 +1473,7 @@ func init() {
 			return err
 		}),
 		tool.OpenOptions(pebbleOpenOptionLockDir{pebbleToolFS}),
+		tool.WithDBExciseSpanFn(pebbleExciseSpanFn),
 	)
 	DebugPebbleCmd.AddCommand(pebbleTool.Commands...)
 	f := DebugPebbleCmd.PersistentFlags()
@@ -1511,6 +1515,8 @@ func init() {
 
 	f = debugRecoverCollectInfoCmd.Flags()
 	f.VarP(&debugRecoverCollectInfoOpts.Stores, cliflags.RecoverStore.Name, cliflags.RecoverStore.Shorthand, cliflags.RecoverStore.Usage())
+	f.IntVarP(&debugRecoverCollectInfoOpts.maxConcurrency, "max-concurrency", "c", debugRecoverDefaultMaxConcurrency,
+		"maximum concurrency when fanning out RPCs to nodes in the cluster")
 
 	f = debugRecoverPlanCmd.Flags()
 	f.StringVarP(&debugRecoverPlanOpts.outputFileName, "plan", "o", "",
@@ -1524,6 +1530,8 @@ func init() {
 	f.BoolVar(&debugRecoverPlanOpts.force, "force", false,
 		"force creation of plan even when problems were encountered; applying this plan may "+
 			"result in additional problems and should be done only with care and as a last resort")
+	f.IntVarP(&debugRecoverPlanOpts.maxConcurrency, "max-concurrency", "c", debugRecoverDefaultMaxConcurrency,
+		"maximum concurrency when fanning out RPCs to nodes in the cluster")
 	f.UintVar(&formatHelper.maxPrintedKeyLength, cliflags.PrintKeyLength.Name,
 		formatHelper.maxPrintedKeyLength, cliflags.PrintKeyLength.Usage())
 
@@ -1535,6 +1543,12 @@ func init() {
 		formatHelper.maxPrintedKeyLength, cliflags.PrintKeyLength.Usage())
 	f.BoolVar(&debugRecoverExecuteOpts.ignoreInternalVersion, cliflags.RecoverIgnoreInternalVersion.Name,
 		debugRecoverExecuteOpts.ignoreInternalVersion, cliflags.RecoverIgnoreInternalVersion.Usage())
+	f.IntVarP(&debugRecoverExecuteOpts.maxConcurrency, "max-concurrency", "c", debugRecoverDefaultMaxConcurrency,
+		"maximum concurrency when fanning out RPCs to nodes in the cluster")
+
+	f = debugRecoverVerifyCmd.Flags()
+	f.IntVarP(&debugRecoverVerifyOpts.maxConcurrency, "max-concurrency", "c", debugRecoverDefaultMaxConcurrency,
+		"maximum concurrency when fanning out RPCs to nodes in the cluster")
 
 	f = debugMergeLogsCmd.Flags()
 	f.Var(flagutil.Time(&debugMergeLogsOpts.from), "from",
@@ -1588,6 +1602,9 @@ func init() {
 	f.StringVar(&debugTimeSeriesDumpOpts.clusterLabel, "cluster-label",
 		"", "prometheus label for cluster name")
 	f.StringVar(&debugTimeSeriesDumpOpts.yaml, "yaml", debugTimeSeriesDumpOpts.yaml, "full path to create the tsdump.yaml with storeID: nodeID mappings (raw format only). This file is required when loading the raw tsdump for troubleshooting.")
+	f.StringVar(&debugTimeSeriesDumpOpts.targetURL, "target-url", "", "target URL to send openmetrics data over HTTP")
+	f.StringVar(&debugTimeSeriesDumpOpts.ddApiKey, "dd-api-key", "", "Datadog API key to use to send to the datadog formatter")
+	f.StringVar(&debugTimeSeriesDumpOpts.httpToken, "http-token", "", "HTTP header to use with the json export format")
 
 	f = debugSendKVBatchCmd.Flags()
 	f.StringVar(&debugSendKVBatchContext.traceFormat, "trace", debugSendKVBatchContext.traceFormat,
@@ -1631,8 +1648,60 @@ func initPebbleCmds(cmd *cobra.Command, pebbleTool *tool.T) {
 			pebbleCryptoInitializer(cmd.Context())
 			return nil
 		}
+		if c.Name() == "excise" {
+			f := c.Flags()
+			f.Uint64Var(&debugPebbleOpts.exciseTenantID, "tenant-id", 0, "tenant ID for table to excise (must be used in conjunction with --table-id or --entire-tenant)")
+			f.Uint32Var(&debugPebbleOpts.exciseTableID, "table-id", 0, "table ID to excise (must be used in conjunction with --tenant-id)")
+			f.BoolVar(&debugPebbleOpts.exciseEntireTenant, "entire-tenant", false, "excise the entire tenant (must be used in conjunction with --tenant-id)")
+		}
 		initPebbleCmds(c, pebbleTool)
 	}
+}
+
+// pebbleExciseSpanFn implements tool.DBExciseSpanFn. It returns a span
+// for a table if the table/tenant ID flags are used.
+func pebbleExciseSpanFn() (pebble.KeyRange, error) {
+	tenant := debugPebbleOpts.exciseTenantID
+	tableID := debugPebbleOpts.exciseTableID
+
+	if tableID != 0 && debugPebbleOpts.exciseEntireTenant {
+		return pebble.KeyRange{}, errors.Errorf("--table-id and --entire-tenant cannot be used together")
+	}
+
+	if tenant == 0 {
+		if tableID != 0 {
+			return pebble.KeyRange{}, errors.Errorf("--table-id must be used with --tenant-id")
+		}
+		if debugPebbleOpts.exciseEntireTenant {
+			return pebble.KeyRange{}, errors.Errorf("--entire-tenant must be used with --tenant-id")
+		}
+		// Fall back to using the normal flags.
+		return pebble.KeyRange{}, nil
+	}
+
+	if tableID == 0 && !debugPebbleOpts.exciseEntireTenant {
+		return pebble.KeyRange{}, errors.Errorf("--tenant-id must be used with either --table-id or --entire-tenant")
+	}
+	tenantID, err := roachpb.MakeTenantID(tenant)
+	if err != nil {
+		return pebble.KeyRange{}, err
+	}
+	codec := keys.MakeSQLCodec(tenantID)
+	var start, end storage.EngineKey
+	if tableID != 0 {
+		start.Key = codec.TablePrefix(tableID)
+		end.Key = start.Key.PrefixEnd()
+	} else {
+		if codec.ForSystemTenant() {
+			return pebble.KeyRange{}, errors.Errorf("cannot excise the entire system tenant")
+		}
+		start.Key = codec.TenantPrefix()
+		end.Key = codec.TenantEndKey()
+	}
+	return pebble.KeyRange{
+		Start: start.Encode(),
+		End:   end.Encode(),
+	}, nil
 }
 
 func pebbleCryptoInitializer(ctx context.Context) {
