@@ -6,6 +6,7 @@ go_library(
         "login7.go",
         "packet.go",
         "prelogin.go",
+        "token.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/tds/tdswire",
     visibility = ["//visibility:public"],
@@ -15,6 +16,7 @@ go_test(
     name = "tdswire_test",
     srcs = [
         "packet_test.go",
+        "token_test.go",
     ],
     embed = [":tdswire"],
 )
