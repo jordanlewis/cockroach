@@ -13,7 +13,6 @@ import (
 	"net"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
-	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
@@ -191,17 +190,6 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 	}
 
 	log.VEventf(ctx, 2, "CQL QUERY: %s", query)
-
-	// Attempt to parse and intercept system table queries. These
-	// return synthetic results and do not need the SQL executor.
-	stmt, parseErr := parser.Parse(query)
-	if parseErr == nil {
-		if selStmt, ok := stmt.(*parser.SelectStatement); ok &&
-			isSystemQuery(selStmt) {
-			result := handleSystemQuery(selStmt)
-			return c.sendResult(streamID, result)
-		}
-	}
 
 	if s.executor == nil {
 		return c.sendError(
