@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tnswire",
+    srcs = [
+        "doc.go",
+        "encoding.go",
+        "packet.go",
+        "write_buffer.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tns/tnswire",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "tnswire_test",
+    srcs = ["packet_test.go"],
+    embed = [":tnswire"],
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ],
+)
