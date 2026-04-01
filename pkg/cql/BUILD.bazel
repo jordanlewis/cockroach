@@ -33,6 +33,7 @@ go_library(
 go_test(
     name = "cql_test",
     srcs = [
+        "catalog_test.go",
         "executor_test.go",
         "integration_test.go",
         "server_test.go",

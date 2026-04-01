@@ -81,10 +81,14 @@ func (e *Executor) ExecuteQuery(
 		}
 	}
 
-	// Intercept system table queries (system.local, system.peers,
-	// system_schema.*) and return synthetic results.
-	if selStmt, ok := stmt.(*parser.SelectStatement); ok && isSystemQuery(selStmt) {
-		return handleSystemQuery(selStmt)
+	// Intercept system_schema queries. cqlsh and other CQL drivers
+	// query system_schema tables during startup to discover schema
+	// metadata. We return empty result sets for these since CRDB does
+	// not have Cassandra system tables.
+	if sel, ok := stmt.(*parser.SelectStatement); ok {
+		if res, handled := handleSystemSchemaSelect(sel.Keyspace, sel.Table); handled {
+			return res
+		}
 	}
 
 	// Translate the CQL AST to SQL.
