@@ -790,14 +790,14 @@ func TestIntegrationDrainBehavior(t *testing.T) {
 	s.Drain()
 
 	// Existing connections should get closed.
-	conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	_, err := conn1.Read(buf)
 	if err == nil {
 		t.Error("expected conn1 to be closed after drain")
 	}
 
-	conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, err = conn2.Read(buf)
 	if err == nil {
 		t.Error("expected conn2 to be closed after drain")
@@ -811,7 +811,7 @@ func TestIntegrationDrainBehavior(t *testing.T) {
 	}
 	defer newConn.Close()
 
-	newConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = newConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, err = newConn.Read(buf)
 	if err == nil {
 		t.Error("expected new connection to be rejected during drain")
@@ -1055,7 +1055,7 @@ func TestIntegrationMultipleQueriesSameConnection(t *testing.T) {
 		return []ResultColumn{
 				{Name: "seq", TypeID: tdswire.TypeInt4},
 			}, [][]interface{}{
-				{int32(n)},
+				{n},
 			}, nil
 	}
 
