@@ -7,6 +7,7 @@ package cql
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -40,6 +41,10 @@ type conn struct {
 	// frameCh carries request frames from the reader goroutine to
 	// the processor goroutine. It is closed when the reader exits.
 	frameCh chan cqlwire.Frame
+
+	// keyspace is the current CQL keyspace (database) set via USE.
+	// Only accessed by the processor goroutine.
+	keyspace string
 }
 
 func newConn(netConn net.Conn, cancel context.CancelFunc) *conn {
@@ -128,18 +133,14 @@ func (c *conn) processFrames(ctx context.Context, s *Server) {
 }
 
 // handleFrame dispatches a single CQL request frame received during
-// the ready state. Query execution is not yet implemented; this
-// responds with appropriate error frames for unimplemented opcodes.
+// the ready state.
 func (c *conn) handleFrame(ctx context.Context, s *Server, frame cqlwire.Frame) error {
 	streamID := frame.Header.StreamID
 	switch frame.Header.Opcode {
 	case cqlwire.OpOptions:
 		return c.sendSupported(streamID)
 	case cqlwire.OpQuery:
-		return c.sendError(
-			streamID, errCodeServerError,
-			"CQL query processing not yet implemented",
-		)
+		return c.handleQuery(ctx, s, frame)
 	case cqlwire.OpPrepare:
 		return c.sendError(
 			streamID, errCodeServerError,
@@ -166,6 +167,51 @@ func (c *conn) handleFrame(ctx context.Context, s *Server, frame cqlwire.Frame) 
 			"unexpected opcode in ready state",
 		)
 	}
+}
+
+// handleQuery processes a CQL QUERY frame. If the server has an
+// executor configured, the query is parsed, translated to SQL, and
+// executed. Otherwise a stub error is returned.
+func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) error {
+	streamID := frame.Header.StreamID
+
+	if s.executor == nil {
+		return c.sendError(
+			streamID, errCodeServerError,
+			"CQL query processing not yet implemented",
+		)
+	}
+
+	// Parse the QUERY frame body: [long string] query, [short]
+	// consistency, [byte] flags, ...
+	r := bytes.NewReader(frame.Body)
+	query, err := cqlwire.ReadLongString(r)
+	if err != nil {
+		return c.sendError(
+			streamID, errCodeProtocol,
+			"invalid QUERY frame: "+err.Error(),
+		)
+	}
+
+	log.VEventf(ctx, 2, "CQL QUERY: %s", query)
+
+	result := s.executor.ExecuteQuery(ctx, query, c.keyspace)
+
+	// Update keyspace if a USE statement was executed.
+	if result.NewKeyspace != "" {
+		c.keyspace = result.NewKeyspace
+	}
+
+	// Determine the response opcode: ERROR or RESULT.
+	opcode := cqlwire.OpResult
+	if result.IsError {
+		opcode = cqlwire.OpError
+	}
+
+	return c.writeFrame(
+		cqlwire.ProtoV4Response, 0, streamID,
+		opcode, result.Body,
+	)
 }
 
 // writeFrame writes a complete CQL response frame and flushes the
