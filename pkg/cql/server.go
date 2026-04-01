@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/sql/isql"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
@@ -125,8 +126,9 @@ type ServerConfig struct {
 // new connections are rejected immediately, and existing connections
 // are cancelled after a configurable wait period.
 type Server struct {
-	cfg     ServerConfig
-	metrics Metrics
+	cfg      ServerConfig
+	metrics  Metrics
+	executor *Executor
 
 	mu struct {
 		syncutil.Mutex
@@ -145,11 +147,16 @@ type Server struct {
 	}
 }
 
-// MakeServer creates a new CQL protocol server.
-func MakeServer(cfg ServerConfig) *Server {
+// MakeServer creates a new CQL protocol server. If db is non-nil, the
+// server will execute CQL queries via the internal SQL executor;
+// otherwise queries receive an error response.
+func MakeServer(cfg ServerConfig, db ...isql.DB) *Server {
 	s := &Server{
 		cfg:     cfg,
 		metrics: makeMetrics(),
+	}
+	if len(db) > 0 && db[0] != nil {
+		s.executor = NewExecutor(db[0])
 	}
 	s.mu.connCancelMap = make(map[chan struct{}]context.CancelFunc)
 	s.mu.drainCh = make(chan struct{})
