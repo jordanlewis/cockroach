@@ -17,6 +17,7 @@ go_library(
 go_test(
     name = "tds_test",
     srcs = [
+        "integration_test.go",
         "server_test.go",
     ],
     embed = [":tds"],
