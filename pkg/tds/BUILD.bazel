@@ -1,0 +1,2 @@
+# This directory is the top-level package for TDS (Tabular Data Stream)
+# protocol support. Sub-packages provide type mapping and wire encoding.
