@@ -23,6 +23,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/blobs"
 	"github.com/cockroachdb/cockroach/pkg/blobs/blobspb"
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
+	"github.com/cockroachdb/cockroach/pkg/cql"
 	"github.com/cockroachdb/cockroach/pkg/gossip"
 	"github.com/cockroachdb/cockroach/pkg/inspectz"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
@@ -2525,6 +2526,21 @@ func (s *topLevelServer) AcceptClients(ctx context.Context) error {
 		return err
 	}
 
+	// Start the CQL server if enabled via cluster setting.
+	cqlSrv, cqlAddr, err := startCQLServer(
+		ctx,
+		s.cfg.AmbientCtx,
+		s.stopper,
+		s.cfg.Insecure,
+		s.sqlServer.execCfg.InternalDB,
+		&s.ClusterSettings().SV,
+	)
+	if err != nil {
+		return err
+	}
+	s.sqlServer.cqlServer = cqlSrv
+	s.sqlServer.cqlAddr = cqlAddr
+
 	s.sqlServer.isReady.Store(true)
 
 	log.Event(ctx, "server ready")
@@ -2577,6 +2593,18 @@ func (s *topLevelServer) TempDir() string {
 // PGServer exports the pgwire server. Used by tests.
 func (s *topLevelServer) PGServer() *pgwire.Server {
 	return s.sqlServer.pgServer
+}
+
+// CQLServer exports the CQL native protocol server, or nil if CQL is
+// not enabled. Used by tests.
+func (s *topLevelServer) CQLServer() *cql.Server {
+	return s.sqlServer.cqlServer
+}
+
+// CQLAddr returns the address the CQL server is listening on, or the
+// empty string if CQL is not enabled. Used by tests.
+func (s *topLevelServer) CQLAddr() string {
+	return s.sqlServer.cqlAddr
 }
 
 // SpanConfigReporter returns the spanconfig.Reporter. Used by tests.
