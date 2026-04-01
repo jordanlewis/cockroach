@@ -22,9 +22,7 @@ import (
 // startTestServer starts a CQL server on a random TCP port and returns
 // the listener address and a cleanup function. The server runs in the
 // background and is stopped when cleanup is called.
-func startTestServer(
-	t *testing.T, cfg ServerConfig,
-) (addr string, cleanup func()) {
+func startTestServer(t *testing.T, cfg ServerConfig) (addr string, cleanup func()) {
 	t.Helper()
 	stopper := stop.NewStopper()
 	s := MakeServer(cfg)
@@ -205,7 +203,8 @@ func TestIntegrationMultipleConnections(t *testing.T) {
 			cqlwire.ConsistencyOne)
 		frame, err := cqlwire.ReadFrame(c)
 		require.NoError(t, err)
-		require.Equal(t, cqlwire.OpError, frame.Header.Opcode)
+		require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+			"system.local should return a RESULT")
 		require.Equal(t, streamID, frame.Header.StreamID,
 			"stream ID should be echoed back")
 	}
@@ -337,9 +336,10 @@ func TestIntegrationBatchErrorResponse(t *testing.T) {
 	require.Contains(t, msg, "not yet implemented")
 }
 
-// TestIntegrationRegisterErrorResponse tests that REGISTER frames get
-// proper error responses.
-func TestIntegrationRegisterErrorResponse(t *testing.T) {
+// TestIntegrationRegisterReady tests that REGISTER frames get a READY
+// response. cqlsh sends REGISTER after STARTUP to subscribe to
+// schema/topology change events.
+func TestIntegrationRegisterReady(t *testing.T) {
 	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
 	defer cleanup()
 
@@ -348,18 +348,25 @@ func TestIntegrationRegisterErrorResponse(t *testing.T) {
 
 	cqlHandshake(t, conn)
 
-	// Send a REGISTER frame.
+	// Build a REGISTER body with event types that cqlsh typically sends.
+	var body bytes.Buffer
+	require.NoError(t, cqlwire.WriteStringList(&body, []string{
+		"TOPOLOGY_CHANGE", "STATUS_CHANGE", "SCHEMA_CHANGE",
+	}))
 	require.NoError(t, cqlwire.WriteFrame(
 		conn, cqlwire.FrameHeader{
 			Version:  cqlwire.ProtoV4Request,
 			StreamID: 3,
 			Opcode:   cqlwire.OpRegister,
-		}, nil,
+		}, body.Bytes(),
 	))
 
-	code, msg := readError(t, conn)
-	require.Equal(t, errCodeServerError, code)
-	require.Contains(t, msg, "not yet implemented")
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpReady, frame.Header.Opcode,
+		"REGISTER should return READY")
+	require.Equal(t, int16(3), frame.Header.StreamID,
+		"stream ID should be preserved")
 }
 
 // TestIntegrationDrainRejectsNewConnections tests that new TCP
@@ -828,4 +835,83 @@ func TestIntegrationConnectionCloseCleanup(t *testing.T) {
 		"all connections should be cleaned up")
 	require.Equal(t, int64(3), metrics.NewConns.Count(),
 		"should have seen 3 connections total")
+}
+
+// TestIntegrationSystemLocal tests that system.local returns a valid
+// RESULT with the expected cluster metadata.
+func TestIntegrationSystemLocal(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendQuery(t, conn, 1, "SELECT * FROM system.local WHERE key='local'",
+		cqlwire.ConsistencyOne)
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"system.local should return RESULT, not ERROR")
+
+	// Parse the RESULT body to verify it has rows.
+	r := bytes.NewReader(frame.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind,
+		"result should be Rows kind")
+
+	// Read metadata flags and column count.
+	_, err = cqlwire.ReadInt(r) // flags
+	require.NoError(t, err)
+	colCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Greater(t, colCount, int32(0),
+		"system.local should have columns")
+}
+
+// TestIntegrationSystemPeers tests that system.peers returns a valid
+// empty RESULT.
+func TestIntegrationSystemPeers(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendQuery(t, conn, 1, "SELECT * FROM system.peers",
+		cqlwire.ConsistencyOne)
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"system.peers should return RESULT")
+}
+
+// TestIntegrationSystemSchemaTables tests that system_schema tables
+// return valid RESULT responses.
+func TestIntegrationSystemSchemaTables(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	tables := []string{
+		"SELECT * FROM system_schema.keyspaces",
+		"SELECT * FROM system_schema.tables",
+		"SELECT * FROM system_schema.columns",
+	}
+
+	for i, query := range tables {
+		sendQuery(t, conn, int16(i+1), query, cqlwire.ConsistencyOne)
+		frame, err := cqlwire.ReadFrame(conn)
+		require.NoError(t, err)
+		require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+			"query %q should return RESULT", query)
+	}
 }
