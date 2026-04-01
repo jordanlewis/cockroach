@@ -117,8 +117,13 @@ func startCQLServer(t *testing.T) (cqlAddr string, cleanup func()) {
 		DisableElasticCPUAdmission: true,
 	})
 
-	// The CQL address is exposed through the underlying testServer.
-	addr := srv.(interface{ CQLAddr() string }).CQLAddr()
+	// The CQL address is exposed through the underlying testServer
+	// (via StorageLayer).
+	type cqlAddrGetter interface {
+		CQLAddr() string
+	}
+	raw := srv.StorageLayer().(cqlAddrGetter)
+	addr := raw.CQLAddr()
 	require.NotEmpty(t, addr, "CQL server should be running")
 
 	return addr, func() {
@@ -175,7 +180,7 @@ func TestSmokeCreateKeyspaceAndTable(t *testing.T) {
 	// 3. CREATE TABLE.
 	sendQuery(t, conn, 3,
 		"CREATE TABLE users "+
-			"(id uuid PRIMARY KEY, name text, age int)",
+			"(id uuid, name text, age int, PRIMARY KEY (id))",
 		cqlwire.ConsistencyOne,
 	)
 	frame = requireResult(t, conn)
@@ -188,7 +193,7 @@ func TestSmokeCreateKeyspaceAndTable(t *testing.T) {
 	// 4. INSERT a row.
 	sendQuery(t, conn, 4,
 		"INSERT INTO users (id, name, age) VALUES "+
-			"(550e8400-e29b-41d4-a716-446655440000, 'Alice', 30)",
+			"('550e8400-e29b-41d4-a716-446655440000', 'Alice', 30)",
 		cqlwire.ConsistencyOne,
 	)
 	frame = requireResult(t, conn)
@@ -201,7 +206,7 @@ func TestSmokeCreateKeyspaceAndTable(t *testing.T) {
 	// 5. SELECT the row back.
 	sendQuery(t, conn, 5,
 		"SELECT * FROM users WHERE id = "+
-			"550e8400-e29b-41d4-a716-446655440000",
+			"'550e8400-e29b-41d4-a716-446655440000'",
 		cqlwire.ConsistencyOne,
 	)
 	frame = requireResult(t, conn)
