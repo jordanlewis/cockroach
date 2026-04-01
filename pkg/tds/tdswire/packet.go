@@ -217,7 +217,7 @@ func (pw *PacketWriter) WriteMessage(pktType PacketType, payload []byte) error {
 
 		hdr := Header{
 			Type:     pktType,
-			Status:   PacketStatus(status),
+			Status:   status,
 			Length:   uint16(HeaderSize + chunkSize),
 			PacketID: pw.packetID,
 		}
