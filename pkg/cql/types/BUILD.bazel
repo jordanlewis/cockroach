@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "types",
+    srcs = [
+        "encoding.go",
+        "types.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/cql/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/types",
+        "//pkg/util/ipaddr",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "types_test",
+    srcs = ["types_test.go"],
+    embed = [":types"],
+    deps = [
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/types",
+        "//pkg/util/ipaddr",
+        "//pkg/util/timeutil",
+        "//pkg/util/uint128",
+        "//pkg/util/uuid",
+        "@com_github_stretchr_testify//require",
+    ],
+)
