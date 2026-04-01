@@ -121,13 +121,9 @@ func (s *Server) Stop() {
 		s.cancel()
 	}
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
-	s.mu.Lock()
-	for c := range s.conns {
-		c.close()
-	}
-	s.mu.Unlock()
+	s.closeAllConns()
 	s.wg.Wait()
 }
 
@@ -135,11 +131,20 @@ func (s *Server) Stop() {
 // existing connections are closed after completing their current request.
 func (s *Server) Drain() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.draining = true
 	for c := range s.conns {
 		c.close()
 	}
-	s.mu.Unlock()
+}
+
+// closeAllConns closes all active connections under the lock.
+func (s *Server) closeAllConns() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for c := range s.conns {
+		c.close()
+	}
 }
 
 // Metrics returns a snapshot of server metrics.
@@ -175,15 +180,11 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			}
 		}
 
-		s.mu.Lock()
-		if s.draining {
-			s.mu.Unlock()
+		c, ok := s.registerConn(netConn)
+		if !ok {
 			netConn.Close()
 			continue
 		}
-		c := newConn(s, netConn)
-		s.conns[c] = struct{}{}
-		s.mu.Unlock()
 
 		s.connCount.Add(1)
 		s.newConnCount.Add(1)
@@ -191,13 +192,30 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			defer func() {
-				s.connCount.Add(-1)
-				s.mu.Lock()
-				delete(s.conns, c)
-				s.mu.Unlock()
-			}()
+			defer s.unregisterConn(c)
 			c.serve(ctx)
 		}()
 	}
+}
+
+// registerConn adds a new connection to the tracked set under the
+// lock. It returns false if the server is draining.
+func (s *Server) registerConn(netConn net.Conn) (*conn, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.draining {
+		return nil, false
+	}
+	c := newConn(s, netConn)
+	s.conns[c] = struct{}{}
+	return c, true
+}
+
+// unregisterConn removes a connection from the tracked set and
+// decrements the active connection count.
+func (s *Server) unregisterConn(c *conn) {
+	s.connCount.Add(-1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.conns, c)
 }
