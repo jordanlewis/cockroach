@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cql",
+    srcs = [
+        "auth.go",
+        "conn.go",
+        "server.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/cql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/cql/cqlwire",
+        "//pkg/util/log",
+        "//pkg/util/metric",
+        "//pkg/util/stop",
+        "//pkg/util/syncutil",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "cql_test",
+    srcs = ["server_test.go"],
+    embed = [":cql"],
+    deps = [
+        "//pkg/cql/cqlwire",
+        "@com_github_stretchr_testify//require",
+    ],
+)
