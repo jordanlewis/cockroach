@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "types",
+    srcs = ["oracle.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tns/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sql/types",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "types_test",
+    size = "small",
+    srcs = ["oracle_test.go"],
+    embed = [":types"],
+    deps = [
+        "//pkg/sql/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)
