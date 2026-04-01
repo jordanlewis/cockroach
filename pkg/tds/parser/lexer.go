@@ -1,0 +1,357 @@
+// Copyright 2026 The Cockroach Authors.
+//
+// Use of this software is governed by the CockroachDB Software License
+// included in the /LICENSE file.
+
+package parser
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
+
+// tokenType identifies the type of a lexer token.
+type tokenType int
+
+const (
+	// Special tokens.
+	tokenEOF tokenType = iota
+	tokenError
+
+	// Literals.
+	tokenIdent
+	tokenInt
+	tokenFloat
+	tokenString
+
+	// Punctuation.
+	tokenLParen
+	tokenRParen
+	tokenComma
+	tokenDot
+	tokenSemicolon
+	tokenStar
+	tokenPlus
+	tokenMinus
+	tokenSlash
+	tokenPercent
+	tokenEq
+	tokenNeq // <> or !=
+	tokenLT  // <
+	tokenGT  // >
+	tokenLTE // <=
+	tokenGTE // >=
+
+	// Keywords. T-SQL keywords are case-insensitive; the lexer normalizes
+	// them to upper case for comparison.
+	tokenUSE
+	tokenCREATE
+	tokenTABLE
+	tokenINSERT
+	tokenINTO
+	tokenVALUES
+	tokenSELECT
+	tokenFROM
+	tokenWHERE
+	tokenORDER
+	tokenBY
+	tokenTOP
+	tokenAS
+	tokenNOT
+	tokenNULL
+	tokenAND
+	tokenOR
+	tokenASC
+	tokenDESC
+	tokenGO
+	tokenIS
+	tokenIN
+	tokenBETWEEN
+	tokenLIKE
+	tokenISNULL
+	tokenCONVERT
+	tokenGETDATE
+)
+
+var keywords = map[string]tokenType{
+	"USE":     tokenUSE,
+	"CREATE":  tokenCREATE,
+	"TABLE":   tokenTABLE,
+	"INSERT":  tokenINSERT,
+	"INTO":    tokenINTO,
+	"VALUES":  tokenVALUES,
+	"SELECT":  tokenSELECT,
+	"FROM":    tokenFROM,
+	"WHERE":   tokenWHERE,
+	"ORDER":   tokenORDER,
+	"BY":      tokenBY,
+	"TOP":     tokenTOP,
+	"AS":      tokenAS,
+	"NOT":     tokenNOT,
+	"NULL":    tokenNULL,
+	"AND":     tokenAND,
+	"OR":      tokenOR,
+	"ASC":     tokenASC,
+	"DESC":    tokenDESC,
+	"GO":      tokenGO,
+	"IS":      tokenIS,
+	"IN":      tokenIN,
+	"BETWEEN": tokenBETWEEN,
+	"LIKE":    tokenLIKE,
+	"ISNULL":  tokenISNULL,
+	"CONVERT": tokenCONVERT,
+	"GETDATE": tokenGETDATE,
+}
+
+// token represents a single lexical token from T-SQL input.
+type token struct {
+	typ tokenType
+	val string
+	pos int // byte offset in the input
+}
+
+func (t token) String() string {
+	switch t.typ {
+	case tokenEOF:
+		return "EOF"
+	case tokenError:
+		return fmt.Sprintf("error(%s)", t.val)
+	default:
+		return t.val
+	}
+}
+
+// lexer tokenizes T-SQL input. It handles case-insensitive keywords, bracket-
+// quoted identifiers ([name]), single-quoted strings with ” escaping, and the
+// standard T-SQL punctuation.
+type lexer struct {
+	input string
+	pos   int
+	// peeked is non-nil when a token has been peeked but not consumed.
+	peeked *token
+}
+
+func newLexer(input string) *lexer {
+	return &lexer{input: input}
+}
+
+// next returns the next token, consuming it.
+func (l *lexer) next() token {
+	if l.peeked != nil {
+		t := *l.peeked
+		l.peeked = nil
+		return t
+	}
+	return l.scan()
+}
+
+// peek returns the next token without consuming it.
+func (l *lexer) peek() token {
+	if l.peeked != nil {
+		return *l.peeked
+	}
+	t := l.scan()
+	l.peeked = &t
+	return t
+}
+
+// scan reads the next token from the input.
+func (l *lexer) scan() token {
+	l.skipWhitespaceAndComments()
+	if l.pos >= len(l.input) {
+		return token{typ: tokenEOF, pos: l.pos}
+	}
+
+	start := l.pos
+	ch := l.input[l.pos]
+
+	switch {
+	case ch == '(':
+		l.pos++
+		return token{typ: tokenLParen, val: "(", pos: start}
+	case ch == ')':
+		l.pos++
+		return token{typ: tokenRParen, val: ")", pos: start}
+	case ch == ',':
+		l.pos++
+		return token{typ: tokenComma, val: ",", pos: start}
+	case ch == '.':
+		l.pos++
+		return token{typ: tokenDot, val: ".", pos: start}
+	case ch == ';':
+		l.pos++
+		return token{typ: tokenSemicolon, val: ";", pos: start}
+	case ch == '*':
+		l.pos++
+		return token{typ: tokenStar, val: "*", pos: start}
+	case ch == '+':
+		l.pos++
+		return token{typ: tokenPlus, val: "+", pos: start}
+	case ch == '-':
+		l.pos++
+		return token{typ: tokenMinus, val: "-", pos: start}
+	case ch == '/':
+		l.pos++
+		return token{typ: tokenSlash, val: "/", pos: start}
+	case ch == '%':
+		l.pos++
+		return token{typ: tokenPercent, val: "%", pos: start}
+	case ch == '=':
+		l.pos++
+		return token{typ: tokenEq, val: "=", pos: start}
+	case ch == '!':
+		l.pos++
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.pos++
+			return token{typ: tokenNeq, val: "!=", pos: start}
+		}
+		return token{typ: tokenError, val: "unexpected '!'", pos: start}
+	case ch == '<':
+		l.pos++
+		if l.pos < len(l.input) {
+			if l.input[l.pos] == '>' {
+				l.pos++
+				return token{typ: tokenNeq, val: "<>", pos: start}
+			}
+			if l.input[l.pos] == '=' {
+				l.pos++
+				return token{typ: tokenLTE, val: "<=", pos: start}
+			}
+		}
+		return token{typ: tokenLT, val: "<", pos: start}
+	case ch == '>':
+		l.pos++
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.pos++
+			return token{typ: tokenGTE, val: ">=", pos: start}
+		}
+		return token{typ: tokenGT, val: ">", pos: start}
+
+	case ch == '\'':
+		return l.scanString()
+	case ch == '[':
+		return l.scanBracketIdent()
+	case isDigit(ch):
+		return l.scanNumber()
+	case isIdentStart(ch):
+		return l.scanIdent()
+	default:
+		l.pos++
+		return token{typ: tokenError, val: fmt.Sprintf("unexpected character %q", ch), pos: start}
+	}
+}
+
+// scanString scans a single-quoted string literal. T-SQL uses ” to escape
+// embedded single quotes.
+func (l *lexer) scanString() token {
+	start := l.pos
+	l.pos++ // skip opening '
+	var b strings.Builder
+	for l.pos < len(l.input) {
+		ch := l.input[l.pos]
+		if ch == '\'' {
+			l.pos++
+			// Check for escaped quote ('').
+			if l.pos < len(l.input) && l.input[l.pos] == '\'' {
+				b.WriteByte('\'')
+				l.pos++
+				continue
+			}
+			return token{typ: tokenString, val: b.String(), pos: start}
+		}
+		b.WriteByte(ch)
+		l.pos++
+	}
+	return token{typ: tokenError, val: "unterminated string literal", pos: start}
+}
+
+// scanBracketIdent scans a bracket-quoted identifier ([name]).
+func (l *lexer) scanBracketIdent() token {
+	start := l.pos
+	l.pos++ // skip [
+	end := strings.IndexByte(l.input[l.pos:], ']')
+	if end < 0 {
+		return token{typ: tokenError, val: "unterminated bracket identifier", pos: start}
+	}
+	val := l.input[l.pos : l.pos+end]
+	l.pos += end + 1 // skip past ]
+	return token{typ: tokenIdent, val: val, pos: start}
+}
+
+// scanNumber scans an integer or floating-point literal.
+func (l *lexer) scanNumber() token {
+	start := l.pos
+	for l.pos < len(l.input) && isDigit(l.input[l.pos]) {
+		l.pos++
+	}
+	// Check for decimal point.
+	if l.pos < len(l.input) && l.input[l.pos] == '.' {
+		l.pos++
+		for l.pos < len(l.input) && isDigit(l.input[l.pos]) {
+			l.pos++
+		}
+		return token{typ: tokenFloat, val: l.input[start:l.pos], pos: start}
+	}
+	return token{typ: tokenInt, val: l.input[start:l.pos], pos: start}
+}
+
+// scanIdent scans an identifier or keyword. T-SQL identifiers can start with
+// a letter, underscore, #, or @.
+func (l *lexer) scanIdent() token {
+	start := l.pos
+	for l.pos < len(l.input) && isIdentByte(l.input[l.pos]) {
+		l.pos++
+	}
+	val := l.input[start:l.pos]
+	upper := strings.ToUpper(val)
+	if typ, ok := keywords[upper]; ok {
+		return token{typ: typ, val: val, pos: start}
+	}
+	return token{typ: tokenIdent, val: val, pos: start}
+}
+
+// skipWhitespaceAndComments skips whitespace and SQL comments (-- line
+// comments and /* block comments */).
+func (l *lexer) skipWhitespaceAndComments() {
+	for l.pos < len(l.input) {
+		ch := l.input[l.pos]
+		if unicode.IsSpace(rune(ch)) {
+			l.pos++
+			continue
+		}
+		// Line comment: -- until end of line
+		if ch == '-' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '-' {
+			l.pos += 2
+			for l.pos < len(l.input) && l.input[l.pos] != '\n' {
+				l.pos++
+			}
+			continue
+		}
+		// Block comment: /* ... */
+		if ch == '/' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '*' {
+			l.pos += 2
+			for l.pos+1 < len(l.input) {
+				if l.input[l.pos] == '*' && l.input[l.pos+1] == '/' {
+					l.pos += 2
+					break
+				}
+				l.pos++
+			}
+			continue
+		}
+		break
+	}
+}
+
+func isDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
+func isIdentStart(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || ch == '#' || ch == '@'
+}
+
+func isIdentByte(ch byte) bool {
+	return isIdentStart(ch) || isDigit(ch)
+}
