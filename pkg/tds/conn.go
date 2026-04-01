@@ -38,11 +38,16 @@ type conn struct {
 	state    connState
 	database string
 	username string
+	// executor is the per-connection SQL executor bridge, created when
+	// the server is configured with an isql.DB. It tracks per-connection
+	// state like the current database and @@ROWCOUNT.
+	executor *Executor
 }
 
-// newConn creates a new connection handler.
+// newConn creates a new connection handler. If the server is configured
+// with an isql.DB, a per-connection Executor is created.
 func newConn(s *Server, netConn net.Conn) *conn {
-	return &conn{
+	c := &conn{
 		server:   s,
 		netConn:  netConn,
 		reader:   tdswire.NewPacketReader(netConn),
@@ -50,6 +55,10 @@ func newConn(s *Server, netConn net.Conn) *conn {
 		state:    statePreLogin,
 		database: s.cfg.DefaultDatabase,
 	}
+	if s.cfg.DB != nil {
+		c.executor = NewExecutor(s.cfg.DB, s.cfg.DefaultDatabase)
+	}
+	return c
 }
 
 // close closes the underlying network connection.
@@ -157,6 +166,9 @@ func (c *conn) handleLogin7(payload []byte) error {
 	c.username = login.Username
 	if login.Database != "" {
 		c.database = login.Database
+		if c.executor != nil {
+			c.executor.SetDatabase(login.Database)
+		}
 	}
 
 	return c.sendLoginSuccess(login)
@@ -234,8 +246,8 @@ func (c *conn) sendLoginFailed(username string) error {
 }
 
 // handleSQLBatch processes a SQL_BATCH packet containing UTF-16LE encoded
-// SQL text. It extracts the SQL, dispatches it to the query handler, and
-// encodes the results as a TDS token stream.
+// SQL text. It extracts the SQL, dispatches it to the query handler or the
+// internal SQL executor, and encodes the results as a TDS token stream.
 func (c *conn) handleSQLBatch(ctx context.Context, payload []byte) error {
 	if c.state != stateReady {
 		return fmt.Errorf("tds: SQL_BATCH received in state %d", c.state)
@@ -250,6 +262,13 @@ func (c *conn) handleSQLBatch(ctx context.Context, payload []byte) error {
 		return c.sendErrorResult(err)
 	}
 
+	// If we have an Executor (isql.DB-backed), use it for T-SQL parsing,
+	// translation, and execution through CockroachDB's internal executor.
+	if c.executor != nil {
+		return c.handleSQLBatchWithExecutor(ctx, sql)
+	}
+
+	// Legacy path: use the QueryHandler callback.
 	// Handle USE database specially.
 	trimmed := strings.TrimSpace(sql)
 	if len(trimmed) >= 4 && strings.EqualFold(trimmed[:4], "USE ") {
@@ -268,6 +287,21 @@ func (c *conn) handleSQLBatch(ctx context.Context, payload []byte) error {
 	}
 
 	return c.sendResultSet(cols, rows)
+}
+
+// handleSQLBatchWithExecutor processes a SQL batch through the
+// per-connection Executor, which handles T-SQL parsing, translation,
+// and dispatch to CockroachDB's internal SQL executor.
+func (c *conn) handleSQLBatchWithExecutor(ctx context.Context, sql string) error {
+	tokenBytes, err := c.executor.ExecuteBatchToBytes(ctx, sql)
+	if err != nil {
+		return c.sendErrorResult(err)
+	}
+
+	// Keep the connection's database in sync with the executor's.
+	c.database = c.executor.Database()
+
+	return c.writer.WriteMessage(tdswire.PacketTypeTabularResult, tokenBytes)
 }
 
 // handleUseDatabase processes a USE <database> command by changing the

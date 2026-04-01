@@ -5,23 +5,40 @@ go_library(
     srcs = [
         "auth.go",
         "conn.go",
+        "executor.go",
         "server.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/tds",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/security/username",
+        "//pkg/sql/isql",
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/sessiondata",
+        "//pkg/sql/types",
+        "//pkg/tds/catalog",
+        "//pkg/tds/parser",
         "//pkg/tds/tdswire",
+        "//pkg/tds/translate",
+        "//pkg/tds/types",
+        "//pkg/util/timeofday",
+        "@com_github_cockroachdb_redact//:redact",
     ],
 )
 
 go_test(
     name = "tds_test",
     srcs = [
+        "executor_test.go",
         "integration_test.go",
         "server_test.go",
     ],
     embed = [":tds"],
     deps = [
+        "//pkg/sql/catalog/colinfo",
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/types",
+        "//pkg/tds/catalog",
         "//pkg/tds/tdswire",
     ],
 )

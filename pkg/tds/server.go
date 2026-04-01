@@ -17,6 +17,8 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/cockroachdb/cockroach/pkg/sql/isql"
 )
 
 // ServerConfig holds configuration for the TDS server.
@@ -29,15 +31,23 @@ type ServerConfig struct {
 	Password string
 	// DefaultDatabase is the initial database for new connections.
 	DefaultDatabase string
-	// QueryHandler is called for each SQL batch. If nil, a default
-	// handler returning an empty result set is used.
+	// DB is the CockroachDB internal SQL executor interface. When set,
+	// SQL batches are parsed as T-SQL, translated to CRDB SQL, and
+	// executed via the internal executor. If nil, a legacy QueryHandler
+	// can be used instead (for backward compatibility / testing).
+	DB isql.DB
+	// QueryHandler is called for each SQL batch when DB is nil. If both
+	// DB and QueryHandler are nil, a default handler returning an empty
+	// result set is used. This field is deprecated in favor of DB.
 	QueryHandler QueryHandler
 }
 
 // QueryHandler processes a SQL query and returns column metadata and rows.
+// Deprecated: Use ServerConfig.DB with the isql.DB interface instead.
 type QueryHandler func(ctx context.Context, query string, database string) ([]ResultColumn, [][]interface{}, error)
 
 // ResultColumn describes a column in a query result.
+// Deprecated: Used only by the legacy QueryHandler path.
 type ResultColumn struct {
 	Name   string
 	TypeID byte
