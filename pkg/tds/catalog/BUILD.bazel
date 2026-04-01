@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "catalog",
+    srcs = ["catalog.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tds/catalog",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "catalog_test",
+    srcs = ["catalog_test.go"],
+    embed = [":catalog"],
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ],
+)
