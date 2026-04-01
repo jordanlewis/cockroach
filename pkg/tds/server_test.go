@@ -452,7 +452,7 @@ func TestConnectionDrain(t *testing.T) {
 
 	// The existing connection should be closed by drain.
 	// Give a short time for the drain to take effect.
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	_, err := conn.Read(buf)
 	if err == nil {
@@ -468,7 +468,7 @@ func TestConnectionDrain(t *testing.T) {
 	defer newConn.Close()
 
 	// If the connection was accepted, the server should close it immediately.
-	newConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = newConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, err = newConn.Read(buf)
 	if err == nil {
 		t.Error("expected new connection to be rejected during drain")

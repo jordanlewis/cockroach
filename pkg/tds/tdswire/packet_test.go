@@ -14,7 +14,7 @@ import (
 func TestHeaderMarshalUnmarshal(t *testing.T) {
 	original := Header{
 		Type:     PacketTypeLogin7,
-		Status:   PacketStatus(StatusEOM),
+		Status:   StatusEOM,
 		Length:   512,
 		SPID:     1234,
 		PacketID: 7,
@@ -39,7 +39,7 @@ func TestHeaderMarshalUnmarshal(t *testing.T) {
 func TestHeaderBigEndian(t *testing.T) {
 	hdr := Header{
 		Type:     PacketTypePreLogin,
-		Status:   PacketStatus(StatusEOM),
+		Status:   StatusEOM,
 		Length:   0x0102,
 		SPID:     0x0304,
 		PacketID: 5,
