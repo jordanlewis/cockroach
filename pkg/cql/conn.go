@@ -13,6 +13,7 @@ import (
 	"net"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
@@ -157,10 +158,11 @@ func (c *conn) handleFrame(ctx context.Context, s *Server, frame cqlwire.Frame) 
 			"CQL batch not yet implemented",
 		)
 	case cqlwire.OpRegister:
-		return c.sendError(
-			streamID, errCodeServerError,
-			"CQL event registration not yet implemented",
-		)
+		// Accept the REGISTER request and respond with READY.
+		// cqlsh sends REGISTER after STARTUP to subscribe to
+		// schema/topology change events. We acknowledge the
+		// registration but never send events.
+		return c.sendReady(streamID)
 	default:
 		return c.sendError(
 			streamID, errCodeProtocol,
@@ -169,18 +171,13 @@ func (c *conn) handleFrame(ctx context.Context, s *Server, frame cqlwire.Frame) 
 	}
 }
 
-// handleQuery processes a CQL QUERY frame. If the server has an
-// executor configured, the query is parsed, translated to SQL, and
-// executed. Otherwise a stub error is returned.
+// handleQuery processes a CQL QUERY frame. System table queries
+// (system.local, system.peers, system_schema.*) are answered with
+// synthetic results without requiring the SQL executor. All other
+// queries are parsed, translated to SQL, and executed via the
+// internal executor.
 func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) error {
 	streamID := frame.Header.StreamID
-
-	if s.executor == nil {
-		return c.sendError(
-			streamID, errCodeServerError,
-			"CQL query processing not yet implemented",
-		)
-	}
 
 	// Parse the QUERY frame body: [long string] query, [short]
 	// consistency, [byte] flags, ...
@@ -195,6 +192,24 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 
 	log.VEventf(ctx, 2, "CQL QUERY: %s", query)
 
+	// Attempt to parse and intercept system table queries. These
+	// return synthetic results and do not need the SQL executor.
+	stmt, parseErr := parser.Parse(query)
+	if parseErr == nil {
+		if selStmt, ok := stmt.(*parser.SelectStatement); ok &&
+			isSystemQuery(selStmt) {
+			result := handleSystemQuery(selStmt)
+			return c.sendResult(streamID, result)
+		}
+	}
+
+	if s.executor == nil {
+		return c.sendError(
+			streamID, errCodeServerError,
+			"CQL query processing not yet implemented",
+		)
+	}
+
 	result := s.executor.ExecuteQuery(ctx, query, c.keyspace)
 
 	// Update keyspace if a USE statement was executed.
@@ -202,12 +217,16 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 		c.keyspace = result.NewKeyspace
 	}
 
-	// Determine the response opcode: ERROR or RESULT.
+	return c.sendResult(streamID, result)
+}
+
+// sendResult writes a CQL RESULT or ERROR response frame based on
+// the ExecuteResult.
+func (c *conn) sendResult(streamID int16, result ExecuteResult) error {
 	opcode := cqlwire.OpResult
 	if result.IsError {
 		opcode = cqlwire.OpError
 	}
-
 	return c.writeFrame(
 		cqlwire.ProtoV4Response, 0, streamID,
 		opcode, result.Body,

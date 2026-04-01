@@ -81,6 +81,12 @@ func (e *Executor) ExecuteQuery(
 		}
 	}
 
+	// Intercept system table queries (system.local, system.peers,
+	// system_schema.*) and return synthetic results.
+	if selStmt, ok := stmt.(*parser.SelectStatement); ok && isSystemQuery(selStmt) {
+		return handleSystemQuery(selStmt)
+	}
+
 	// Translate the CQL AST to SQL.
 	result, err := translate.Translate(stmt)
 	if err != nil {
@@ -136,9 +142,7 @@ func (e *Executor) executeDDL(
 // executeDML executes a DML statement (INSERT/UPSERT) and returns a
 // Void RESULT.
 func (e *Executor) executeDML(
-	ctx context.Context,
-	result translate.Result,
-	override sessiondata.InternalExecutorOverride,
+	ctx context.Context, result translate.Result, override sessiondata.InternalExecutorOverride,
 ) ExecuteResult {
 	executor := e.db.Executor()
 	_, err := executor.ExecEx(
@@ -160,9 +164,7 @@ func (e *Executor) executeDML(
 // executeSelect executes a SELECT and returns a Rows RESULT with the
 // result data encoded in CQL wire format.
 func (e *Executor) executeSelect(
-	ctx context.Context,
-	result translate.Result,
-	override sessiondata.InternalExecutorOverride,
+	ctx context.Context, result translate.Result, override sessiondata.InternalExecutorOverride,
 ) ExecuteResult {
 	executor := e.db.Executor()
 	rows, cols, err := executor.QueryBufferedExWithCols(

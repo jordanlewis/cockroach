@@ -4,6 +4,7 @@ go_library(
     name = "cql",
     srcs = [
         "auth.go",
+        "catalog.go",
         "conn.go",
         "executor.go",
         "server.go",
