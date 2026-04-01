@@ -562,6 +562,15 @@ func (ts *testServer) PGServer() interface{} {
 	return nil
 }
 
+// CQLAddr returns the address of the CQL server, or the empty string
+// if CQL is not enabled.
+func (ts *testServer) CQLAddr() string {
+	if ts != nil {
+		return ts.sqlServer.cqlAddr
+	}
+	return ""
+}
+
 // PGPreServer exposes the pgwire.PreServeConnHandler instance used by
 // the testServer.
 func (ts *testServer) PGPreServer() interface{} {
