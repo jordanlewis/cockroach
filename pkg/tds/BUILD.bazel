@@ -1,2 +1,26 @@
-# This directory is the top-level package for TDS (Tabular Data Stream)
-# protocol support. Sub-packages provide type mapping and wire encoding.
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tds",
+    srcs = [
+        "auth.go",
+        "conn.go",
+        "server.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tds",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tds/tdswire",
+    ],
+)
+
+go_test(
+    name = "tds_test",
+    srcs = [
+        "server_test.go",
+    ],
+    embed = [":tds"],
+    deps = [
+        "//pkg/tds/tdswire",
+    ],
+)
