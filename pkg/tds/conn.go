@@ -174,11 +174,37 @@ func (c *conn) handleLogin7(payload []byte) error {
 	return c.sendLoginSuccess(login)
 }
 
-// sendLoginSuccess sends the LOGINACK, ENVCHANGE(database), and DONE tokens
-// that indicate a successful login.
+// sendLoginSuccess sends ENVCHANGE, LOGINACK, and DONE tokens that
+// indicate a successful login. The ordering follows the SQL Server
+// convention: ENVCHANGE tokens first, then LOGINACK, then DONE.
 func (c *conn) sendLoginSuccess(login *tdswire.Login7) error {
 	var buf bytes.Buffer
 	tw := tdswire.NewTokenWriter(&buf)
+
+	// Negotiate packet size. Use the client's requested size if
+	// reasonable, otherwise default.
+	packetSize := login.PacketSize
+	if packetSize < 512 || packetSize > 32768 {
+		packetSize = uint32(tdswire.DefaultPacketSize)
+	}
+
+	// ENVCHANGE(database) — must come before LOGINACK.
+	if err := tw.WriteEnvChange(tdswire.EnvChangeToken{
+		Type:     tdswire.EnvDatabase,
+		NewValue: c.database,
+		OldValue: "",
+	}); err != nil {
+		return err
+	}
+
+	// ENVCHANGE(packet size).
+	if err := tw.WriteEnvChange(tdswire.EnvChangeToken{
+		Type:     tdswire.EnvPacketSize,
+		NewValue: fmt.Sprintf("%d", packetSize),
+		OldValue: fmt.Sprintf("%d", tdswire.DefaultPacketSize),
+	}); err != nil {
+		return err
+	}
 
 	// LOGINACK token.
 	if err := tw.WriteLoginAck(tdswire.LoginAckToken{
@@ -186,15 +212,6 @@ func (c *conn) sendLoginSuccess(login *tdswire.Login7) error {
 		TDSVersion:  login.TDSVersion,
 		ProgName:    "CockroachDB",
 		ProgVersion: [4]byte{24, 3, 0, 0},
-	}); err != nil {
-		return err
-	}
-
-	// ENVCHANGE(database).
-	if err := tw.WriteEnvChange(tdswire.EnvChangeToken{
-		Type:     tdswire.EnvDatabase,
-		NewValue: c.database,
-		OldValue: "",
 	}); err != nil {
 		return err
 	}
