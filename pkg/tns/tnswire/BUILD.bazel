@@ -3,6 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "tnswire",
     srcs = [
+        "data.go",
+        "data_encoding.go",
         "doc.go",
         "encoding.go",
         "packet.go",
@@ -17,7 +19,10 @@ go_library(
 
 go_test(
     name = "tnswire_test",
-    srcs = ["packet_test.go"],
+    srcs = [
+        "data_test.go",
+        "packet_test.go",
+    ],
     embed = [":tnswire"],
     deps = [
         "@com_github_stretchr_testify//require",
