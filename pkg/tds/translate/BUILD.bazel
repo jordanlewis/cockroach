@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "translate",
+    srcs = ["translate.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tds/translate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tds/parser",
+    ],
+)
+
+go_test(
+    name = "translate_test",
+    srcs = ["translate_test.go"],
+    embed = [":translate"],
+    deps = [
+        "//pkg/tds/parser",
+        "@com_github_stretchr_testify//require",
+    ],
+)
