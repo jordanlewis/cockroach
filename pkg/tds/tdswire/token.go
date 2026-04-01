@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"unicode/utf16"
 )
 
 // TDS token type constants as defined by the TDS protocol specification.
@@ -257,28 +258,60 @@ func (tw *TokenWriter) writeBytes(b []byte) error {
 	return err
 }
 
-// writeBVarchar writes a string using the B_VARCHAR format: a 1-byte
-// length prefix followed by the string bytes.
+// writeBVarchar writes a string using the TDS 7.x B_VARCHAR format:
+// a 1-byte length prefix (in UCS-2 characters) followed by UTF-16LE
+// encoded string data.
 func (tw *TokenWriter) writeBVarchar(s string) error {
-	if len(s) > math.MaxUint8 {
-		return fmt.Errorf("BVarchar string too long: %d bytes", len(s))
+	u16 := utf16.Encode([]rune(s))
+	if len(u16) > math.MaxUint8 {
+		return fmt.Errorf("BVarchar string too long: %d chars", len(u16))
 	}
-	if err := tw.writeU8(byte(len(s))); err != nil {
+	if err := tw.writeU8(byte(len(u16))); err != nil {
 		return err
 	}
-	return tw.writeBytes([]byte(s))
+	return tw.writeUTF16LE(u16)
 }
 
-// writeUsVarchar writes a string using the US_VARCHAR format: a 2-byte
-// length prefix followed by the string bytes.
+// writeUsVarchar writes a string using the TDS 7.x US_VARCHAR format:
+// a 2-byte length prefix (in UCS-2 characters) followed by UTF-16LE
+// encoded string data.
 func (tw *TokenWriter) writeUsVarchar(s string) error {
-	if len(s) > math.MaxUint16 {
-		return fmt.Errorf("UsVarchar string too long: %d bytes", len(s))
+	u16 := utf16.Encode([]rune(s))
+	if len(u16) > math.MaxUint16 {
+		return fmt.Errorf("UsVarchar string too long: %d chars", len(u16))
 	}
-	if err := tw.writeU16(uint16(len(s))); err != nil {
+	if err := tw.writeU16(uint16(len(u16))); err != nil {
 		return err
 	}
-	return tw.writeBytes([]byte(s))
+	return tw.writeUTF16LE(u16)
+}
+
+// writeUTF16LE writes a slice of UTF-16 code units as little-endian bytes.
+func (tw *TokenWriter) writeUTF16LE(u16 []uint16) error {
+	b := make([]byte, len(u16)*2)
+	for i, v := range u16 {
+		binary.LittleEndian.PutUint16(b[i*2:i*2+2], v)
+	}
+	return tw.writeBytes(b)
+}
+
+// collationSize is the size of the collation field appended after the
+// max-length for string types in COLMETADATA (5 bytes: LCID + sort flags).
+const collationSize = 5
+
+// defaultCollation is the default SQL collation bytes: LCID 0x0409
+// (us_english) with no sort flags, sort ID 52 (binary sort).
+var defaultCollation = [collationSize]byte{0x09, 0x04, 0x00, 0x00, 0x34}
+
+// isStringType reports whether typeID is a character-based type that
+// requires collation data in COLMETADATA.
+func isStringType(typeID byte) bool {
+	switch typeID {
+	case TypeBigVarChar, TypeBigChar, TypeNVarChar, TypeNChar:
+		return true
+	default:
+		return false
+	}
 }
 
 // writeTypeInfo encodes a TypeInfo to the wire.
@@ -291,14 +324,17 @@ func (tw *TokenWriter) writeTypeInfo(ti TypeInfo) error {
 		return nil
 	}
 	if isByteLenType(ti.TypeID) {
-		if err := tw.writeU8(ti.ByteLen); err != nil {
-			return err
-		}
-		return nil
+		return tw.writeU8(ti.ByteLen)
 	}
 	if isVariableLenType(ti.TypeID) {
 		if err := tw.writeU16(ti.MaxLen); err != nil {
 			return err
+		}
+		// String types require 5 bytes of collation data.
+		if isStringType(ti.TypeID) {
+			if err := tw.writeBytes(defaultCollation[:]); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -418,14 +454,19 @@ func (tw *TokenWriter) WriteDone(d DoneToken) error {
 	return tw.writeU64(d.RowCount)
 }
 
-// WriteError writes an ERROR or INFO token.
+// WriteError writes an ERROR or INFO token. In TDS 7.x, all string
+// fields are UTF-16LE encoded with character-count length prefixes.
 func (tw *TokenWriter) WriteError(e ErrorToken) error {
-	// Compute the payload length: number(4) + state(1) + class(1) +
-	// message(2+len) + server(1+len) + proc(1+len) + line(4).
-	msgLen := len(e.Message)
-	srvLen := len(e.Server)
-	procLen := len(e.Proc)
-	totalLen := 4 + 1 + 1 + (2 + msgLen) + (1 + srvLen) + (1 + procLen) + 4
+	// Compute the payload length in bytes:
+	// number(4) + state(1) + class(1) +
+	// message: US_VARCHAR(2-byte charcount + chars*2) +
+	// server: B_VARCHAR(1-byte charcount + chars*2) +
+	// proc: B_VARCHAR(1-byte charcount + chars*2) +
+	// line(4).
+	msgChars := len(utf16.Encode([]rune(e.Message)))
+	srvChars := len(utf16.Encode([]rune(e.Server)))
+	procChars := len(utf16.Encode([]rune(e.Proc)))
+	totalLen := 4 + 1 + 1 + (2 + msgChars*2) + (1 + srvChars*2) + (1 + procChars*2) + 4
 
 	if err := tw.writeU8(e.TokenType); err != nil {
 		return err
@@ -454,10 +495,14 @@ func (tw *TokenWriter) WriteError(e ErrorToken) error {
 	return tw.writeI32(e.Line)
 }
 
-// WriteEnvChange writes an ENVCHANGE token.
+// WriteEnvChange writes an ENVCHANGE token. In TDS 7.x, string values
+// are UTF-16LE encoded with character-count length prefixes.
 func (tw *TokenWriter) WriteEnvChange(ec EnvChangeToken) error {
-	// Payload: type(1) + newValue(1+len) + oldValue(1+len).
-	totalLen := 1 + (1 + len(ec.NewValue)) + (1 + len(ec.OldValue))
+	// Payload: type(1) + newValue B_VARCHAR(1 + chars*2) +
+	// oldValue B_VARCHAR(1 + chars*2).
+	newChars := len(utf16.Encode([]rune(ec.NewValue)))
+	oldChars := len(utf16.Encode([]rune(ec.OldValue)))
+	totalLen := 1 + (1 + newChars*2) + (1 + oldChars*2)
 
 	if err := tw.writeU8(TokenEnvChange); err != nil {
 		return err
@@ -474,11 +519,13 @@ func (tw *TokenWriter) WriteEnvChange(ec EnvChangeToken) error {
 	return tw.writeBVarchar(ec.OldValue)
 }
 
-// WriteLoginAck writes a LOGINACK token.
+// WriteLoginAck writes a LOGINACK token. In TDS 7.x, the program name
+// is UTF-16LE encoded with a character-count length prefix.
 func (tw *TokenWriter) WriteLoginAck(la LoginAckToken) error {
-	// Payload: interface(1) + tdsVersion(4) + progName(1+len) +
-	// progVersion(4).
-	totalLen := 1 + 4 + (1 + len(la.ProgName)) + 4
+	// Payload: interface(1) + tdsVersion(4) +
+	// progName B_VARCHAR(1 + chars*2) + progVersion(4).
+	nameChars := len(utf16.Encode([]rune(la.ProgName)))
+	totalLen := 1 + 4 + (1 + nameChars*2) + 4
 
 	if err := tw.writeU8(TokenLoginAck); err != nil {
 		return err
@@ -565,24 +612,45 @@ func (tr *TokenReader) readBytes(n int) ([]byte, error) {
 	return b, err
 }
 
-// readBVarchar reads a B_VARCHAR: 1-byte length prefix + string.
+// readBVarchar reads a TDS 7.x B_VARCHAR: 1-byte character count +
+// UTF-16LE encoded string data.
 func (tr *TokenReader) readBVarchar() (string, error) {
 	n, err := tr.readU8()
 	if err != nil {
 		return "", err
 	}
-	b, err := tr.readBytes(int(n))
-	return string(b), err
+	b, err := tr.readBytes(int(n) * 2) // n is in UCS-2 chars
+	if err != nil {
+		return "", err
+	}
+	return decodeUTF16LEBytes(b), nil
 }
 
-// readUsVarchar reads a US_VARCHAR: 2-byte length prefix + string.
+// readUsVarchar reads a TDS 7.x US_VARCHAR: 2-byte character count +
+// UTF-16LE encoded string data.
 func (tr *TokenReader) readUsVarchar() (string, error) {
 	n, err := tr.readU16()
 	if err != nil {
 		return "", err
 	}
-	b, err := tr.readBytes(int(n))
-	return string(b), err
+	b, err := tr.readBytes(int(n) * 2) // n is in UCS-2 chars
+	if err != nil {
+		return "", err
+	}
+	return decodeUTF16LEBytes(b), nil
+}
+
+// decodeUTF16LEBytes decodes a little-endian UTF-16 byte slice into a
+// Go string.
+func decodeUTF16LEBytes(b []byte) string {
+	if len(b)%2 != 0 {
+		b = b[:len(b)-1]
+	}
+	u16 := make([]uint16, len(b)/2)
+	for i := range u16 {
+		u16[i] = binary.LittleEndian.Uint16(b[i*2 : i*2+2])
+	}
+	return string(utf16.Decode(u16))
 }
 
 // readTypeInfo decodes a TypeInfo from the wire.
@@ -602,7 +670,17 @@ func (tr *TokenReader) readTypeInfo() (TypeInfo, error) {
 	}
 	if isVariableLenType(ti.TypeID) {
 		ti.MaxLen, err = tr.readU16()
-		return ti, err
+		if err != nil {
+			return ti, err
+		}
+		// String types have 5 bytes of collation data after max-length.
+		if isStringType(ti.TypeID) {
+			_, err = tr.readBytes(collationSize)
+			if err != nil {
+				return ti, err
+			}
+		}
+		return ti, nil
 	}
 	if isPrecisionScaleType(ti.TypeID) {
 		ti.ByteLen, err = tr.readU8()

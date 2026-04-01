@@ -305,8 +305,11 @@ func TestLogin7Success(t *testing.T) {
 	resp := doLogin7(t, conn, "sa", "secret", "testdb")
 
 	tokens := parseTokenTypes(resp)
-	// Expect LOGINACK, ENVCHANGE, DONE.
-	expected := []byte{tdswire.TokenLoginAck, tdswire.TokenEnvChange, tdswire.TokenDone}
+	// Expect ENVCHANGE(database), ENVCHANGE(packet size), LOGINACK, DONE.
+	expected := []byte{
+		tdswire.TokenEnvChange, tdswire.TokenEnvChange,
+		tdswire.TokenLoginAck, tdswire.TokenDone,
+	}
 	if !bytes.Equal(tokens, expected) {
 		t.Errorf("expected tokens %v, got %v", expected, tokens)
 	}
