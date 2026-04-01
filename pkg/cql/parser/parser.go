@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cockroachdb/errors"
 )
 
 // Parse parses a single CQL statement and returns the corresponding AST node.
@@ -535,14 +537,14 @@ func (p *parser) parseExpr() (Expr, error) {
 		p.lex.next()
 		v, err := strconv.ParseInt(t.val, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("at position %d: invalid integer %q: %v", t.pos, t.val, err)
+			return nil, errors.Wrapf(err, "at position %d: invalid integer %q", t.pos, t.val)
 		}
 		return &IntegerLiteral{Value: v}, nil
 	case tokFloat:
 		p.lex.next()
 		v, err := strconv.ParseFloat(t.val, 64)
 		if err != nil {
-			return nil, fmt.Errorf("at position %d: invalid float %q: %v", t.pos, t.val, err)
+			return nil, errors.Wrapf(err, "at position %d: invalid float %q", t.pos, t.val)
 		}
 		return &FloatLiteral{Value: v}, nil
 	case tokQMark:
