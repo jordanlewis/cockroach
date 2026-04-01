@@ -311,6 +311,7 @@ go_library(
         "//pkg/storage/storageconfig",
         "//pkg/testutils/pgurlutils",
         "//pkg/testutils/serverutils",
+        "//pkg/tds",
         "//pkg/ts",
         "//pkg/ts/catalog",
         "//pkg/ts/tsdumpmeta",

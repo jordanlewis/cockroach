@@ -7,6 +7,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -115,6 +116,7 @@ import (
 	tablemetadatacacheutil "github.com/cockroachdb/cockroach/pkg/sql/tablemetadatacache/util"
 	"github.com/cockroachdb/cockroach/pkg/sql/vecindex"
 	"github.com/cockroachdb/cockroach/pkg/storage"
+	"github.com/cockroachdb/cockroach/pkg/tds"
 	"github.com/cockroachdb/cockroach/pkg/ts"
 	"github.com/cockroachdb/cockroach/pkg/upgrade"
 	"github.com/cockroachdb/cockroach/pkg/upgrade/upgradebase"
@@ -146,6 +148,25 @@ import (
 	"github.com/nightlyone/lockfile"
 	"google.golang.org/grpc"
 	"storj.io/drpc"
+)
+
+// tdsEnabled controls whether the TDS (Tabular Data Stream) protocol
+// frontend is active. When enabled, CockroachDB listens on a separate
+// TCP port for Sybase/SQL Server wire-protocol connections.
+var tdsEnabled = settings.RegisterBoolSetting(
+	settings.ApplicationLevel,
+	"server.tds.enabled",
+	"if true, the server listens for TDS (Sybase/SQL Server) protocol connections",
+	false,
+)
+
+// tdsPort is the TCP port on which the TDS server listens when enabled.
+var tdsPort = settings.RegisterIntSetting(
+	settings.ApplicationLevel,
+	"server.tds.port",
+	"the TCP port on which the TDS (Sybase/SQL Server) protocol server listens",
+	1433,
+	settings.NonNegativeInt,
 )
 
 // SQLServer encapsulates the part of a CRDB server that is dedicated to SQL
@@ -188,6 +209,12 @@ type SQLServer struct {
 	spanconfigSQLTranslatorFactory *spanconfigsqltranslator.Factory
 	spanconfigSQLWatcher           *spanconfigsqlwatcher.SQLWatcher
 	settingsWatcher                *settingswatcher.SettingsWatcher
+
+	// tdsServer is the optional TDS (Tabular Data Stream) protocol server.
+	// When server.tds.enabled is true, this accepts Sybase/SQL Server
+	// wire-protocol connections and translates them to internal SQL
+	// execution. It is nil when TDS is disabled.
+	tdsServer *tds.Server
 
 	systemConfigWatcher *systemconfigwatcher.Cache
 
@@ -1685,6 +1712,13 @@ func (s *SQLServer) preStart(
 	s.distSQLServer.Start()
 	s.pgServer.Start(ctx, stopper)
 
+	// Start the TDS server if enabled. The TDS server provides
+	// Sybase/SQL Server wire-protocol compatibility by translating
+	// TDS commands to internal SQL execution.
+	if err := s.maybeStartTDS(ctx, stopper); err != nil {
+		return err
+	}
+
 	// NB: While the pgServer is started at this point, the
 	// permanent migrations have not run. We should take extreme
 	// care about what uses the SQL server before those migrations
@@ -2222,6 +2256,45 @@ func (s *SQLServer) InternalExecutor() isql.Executor {
 
 func (s *SQLServer) PGServer() *pgwire.Server {
 	return s.pgServer
+}
+
+// TDSServer returns the TDS server, or nil if TDS is not enabled.
+func (s *SQLServer) TDSServer() *tds.Server {
+	return s.tdsServer
+}
+
+// maybeStartTDS starts the TDS server if the server.tds.enabled cluster
+// setting is true. The TDS server listens on the port specified by
+// server.tds.port and translates Sybase/SQL Server wire-protocol
+// connections to internal SQL execution via the execCfg.InternalDB.
+func (s *SQLServer) maybeStartTDS(ctx context.Context, stopper *stop.Stopper) error {
+	if !tdsEnabled.Get(&s.execCfg.Settings.SV) {
+		return nil
+	}
+
+	port := tdsPort.Get(&s.execCfg.Settings.SV)
+	listenAddr := fmt.Sprintf(":%d", port)
+
+	tdsServer := tds.NewServer(tds.ServerConfig{
+		ListenAddr:      listenAddr,
+		DefaultDatabase: "defaultdb",
+		DB:              s.execCfg.InternalDB,
+	})
+
+	if err := tdsServer.Start(ctx); err != nil {
+		return errors.Wrap(err, "starting TDS server")
+	}
+
+	s.tdsServer = tdsServer
+
+	log.Ops.Infof(ctx, "TDS server listening on %s", tdsServer.Addr())
+
+	// Register a closer to stop the TDS server on shutdown.
+	stopper.AddCloser(stop.CloserFn(func() {
+		tdsServer.Stop()
+	}))
+
+	return nil
 }
 
 // MetricsRegistry returns the application-level metrics registry.
