@@ -19,6 +19,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cloud"
 	"github.com/cockroachdb/cockroach/pkg/cloud/externalconn"
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
+	"github.com/cockroachdb/cockroach/pkg/cql"
 	"github.com/cockroachdb/cockroach/pkg/featureflag"
 	"github.com/cockroachdb/cockroach/pkg/gossip"
 	"github.com/cockroachdb/cockroach/pkg/inspectz/inspectzpb"
@@ -159,6 +160,8 @@ type SQLServer struct {
 	stopTrigger       *stopTrigger
 	sqlIDContainer    *base.SQLIDContainer
 	pgServer          *pgwire.Server
+	cqlServer         *cql.Server
+	cqlAddr           string
 	distSQLServer     *distsql.ServerImpl
 	execCfg           *sql.ExecutorConfig
 	cfg               *BaseConfig
@@ -2222,6 +2225,18 @@ func (s *SQLServer) InternalExecutor() isql.Executor {
 
 func (s *SQLServer) PGServer() *pgwire.Server {
 	return s.pgServer
+}
+
+// CQLServer returns the CQL native protocol server, or nil if CQL is
+// not enabled.
+func (s *SQLServer) CQLServer() *cql.Server {
+	return s.cqlServer
+}
+
+// CQLAddr returns the address the CQL server is listening on, or the
+// empty string if CQL is not enabled.
+func (s *SQLServer) CQLAddr() string {
+	return s.cqlAddr
 }
 
 // MetricsRegistry returns the application-level metrics registry.
