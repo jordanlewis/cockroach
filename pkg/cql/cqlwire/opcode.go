@@ -61,22 +61,26 @@ func (o Opcode) SafeValue() {}
 
 // Request opcodes.
 const (
-	OpStartup  Opcode = 0x01
-	OpOptions  Opcode = 0x05
-	OpQuery    Opcode = 0x07
-	OpPrepare  Opcode = 0x09
-	OpExecute  Opcode = 0x0A
-	OpRegister Opcode = 0x0B
+	OpStartup      Opcode = 0x01
+	OpOptions      Opcode = 0x05
+	OpQuery        Opcode = 0x07
+	OpPrepare      Opcode = 0x09
+	OpExecute      Opcode = 0x0A
+	OpRegister     Opcode = 0x0B
+	OpBatch        Opcode = 0x0D
+	OpAuthResponse Opcode = 0x0F
 )
 
 // Response opcodes.
 const (
-	OpError        Opcode = 0x00
-	OpReady        Opcode = 0x02
-	OpAuthenticate Opcode = 0x03
-	OpSupported    Opcode = 0x06
-	OpResult       Opcode = 0x08
-	OpEvent        Opcode = 0x0C
+	OpError         Opcode = 0x00
+	OpReady         Opcode = 0x02
+	OpAuthenticate  Opcode = 0x03
+	OpSupported     Opcode = 0x06
+	OpResult        Opcode = 0x08
+	OpEvent         Opcode = 0x0C
+	OpAuthChallenge Opcode = 0x0E
+	OpAuthSuccess   Opcode = 0x10
 )
 
 // String returns a human-readable name for the opcode.
@@ -106,6 +110,14 @@ func (o Opcode) String() string {
 		return "RESULT"
 	case OpEvent:
 		return "EVENT"
+	case OpBatch:
+		return "BATCH"
+	case OpAuthChallenge:
+		return "AUTH_CHALLENGE"
+	case OpAuthResponse:
+		return "AUTH_RESPONSE"
+	case OpAuthSuccess:
+		return "AUTH_SUCCESS"
 	default:
 		return "UNKNOWN"
 	}
@@ -114,7 +126,8 @@ func (o Opcode) String() string {
 // IsRequest returns true if the opcode is a request opcode.
 func (o Opcode) IsRequest() bool {
 	switch o {
-	case OpStartup, OpOptions, OpQuery, OpPrepare, OpExecute, OpRegister:
+	case OpStartup, OpOptions, OpQuery, OpPrepare, OpExecute, OpRegister,
+		OpBatch, OpAuthResponse:
 		return true
 	default:
 		return false

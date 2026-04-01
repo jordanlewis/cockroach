@@ -202,6 +202,12 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
 						"IndexDescriptorVersion":       {},
 						"MutationID":                   {},
 					},
+					"github.com/cockroachdb/cockroach/pkg/cql/cqlwire": {
+						"Consistency":     {},
+						"HeaderFlag":      {},
+						"Opcode":          {},
+						"ProtocolVersion": {},
+					},
 					"github.com/cockroachdb/cockroach/pkg/sql/clusterunique": {
 						"ID": {},
 					},
