@@ -21,10 +21,15 @@ go_library(
 
 go_test(
     name = "cql_test",
-    srcs = ["server_test.go"],
+    srcs = [
+        "integration_test.go",
+        "server_test.go",
+    ],
     embed = [":cql"],
     deps = [
         "//pkg/cql/cqlwire",
+        "//pkg/util/stop",
+        "@com_github_gocql_gocql//:gocql",
         "@com_github_stretchr_testify//require",
     ],
 )
