@@ -100,17 +100,17 @@ func DecodeLogin7(buf []byte) (*Login7, error) {
 	}
 
 	l := &Login7{
-		TDSVersion:   binary.LittleEndian.Uint32(buf[4:8]),
-		PacketSize:   binary.LittleEndian.Uint32(buf[8:12]),
+		TDSVersion:    binary.LittleEndian.Uint32(buf[4:8]),
+		PacketSize:    binary.LittleEndian.Uint32(buf[8:12]),
 		ClientVersion: binary.LittleEndian.Uint32(buf[12:16]),
-		ClientPID:    binary.LittleEndian.Uint32(buf[16:20]),
-		ConnectionID: binary.LittleEndian.Uint32(buf[20:24]),
-		OptionFlags1: buf[24],
-		OptionFlags2: buf[25],
-		TypeFlags:    buf[26],
-		OptionFlags3: buf[27],
-		Timezone:     int32(binary.LittleEndian.Uint32(buf[28:32])),
-		Collation:    binary.LittleEndian.Uint32(buf[32:36]),
+		ClientPID:     binary.LittleEndian.Uint32(buf[16:20]),
+		ConnectionID:  binary.LittleEndian.Uint32(buf[20:24]),
+		OptionFlags1:  buf[24],
+		OptionFlags2:  buf[25],
+		TypeFlags:     buf[26],
+		OptionFlags3:  buf[27],
+		Timezone:      int32(binary.LittleEndian.Uint32(buf[28:32])),
+		Collation:     binary.LittleEndian.Uint32(buf[32:36]),
 	}
 
 	// Parse variable-length fields.
