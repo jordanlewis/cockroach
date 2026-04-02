@@ -1,0 +1,48 @@
+# User-Defined Types (UDTs): CREATE TYPE, ALTER TYPE, UDT columns,
+# nested UDTs, and field access.
+#
+# All UDT operations are currently unsupported and produce parse
+# errors. These tests document the expected errors and serve as a
+# roadmap for future implementation.
+
+exec
+USE defaultdb
+----
+
+# CREATE TYPE is not yet supported.
+error
+CREATE TYPE address (street text, city text, zip text)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "TYPE"
+
+# ALTER TYPE is not yet supported.
+error
+ALTER TYPE address ADD state text
+----
+at position 0: unsupported statement "ALTER"
+
+# UDT as a column type is not supported (unknown type name).
+error
+CREATE TABLE udt_table (id int PRIMARY KEY, addr address)
+----
+at position 49: unsupported CQL type "address"
+
+# Frozen UDT column type.
+error
+CREATE TABLE frozen_udt_table (id int PRIMARY KEY, addr frozen<address>)
+----
+at position 56: unsupported CQL type "frozen"
+
+# Nested UDTs (a UDT containing another UDT).
+error
+CREATE TYPE full_address (base address, country text)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "TYPE"
+
+# UDT field access in SELECT (column.field syntax).
+# The parser reads "addr" as a column, then fails on "." when
+# expecting FROM.
+error
+SELECT addr.street FROM udt_table
+----
+at position 11: expected FROM, got "."
