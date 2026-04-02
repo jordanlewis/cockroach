@@ -1,0 +1,246 @@
+# DDL tests for CQL ALTER TABLE operations.
+#
+# CQL ALTER TABLE supports ADD, DROP, RENAME, and ALTER (type change)
+# on columns, as well as table-level property changes via WITH. None
+# of these are implemented in the parser — ALTER is not a recognized
+# statement keyword.
+
+exec
+USE defaultdb
+----
+
+# Create tables to use as targets for ALTER TABLE operations.
+exec
+CREATE TABLE IF NOT EXISTS lt_alt_basic (id int, name text, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_alt_basic (id, name) VALUES (1, 'alice')
+----
+
+exec
+INSERT INTO lt_alt_basic (id, name) VALUES (2, 'bob')
+----
+
+# Verify the base table.
+query rowsort
+SELECT id, name FROM lt_alt_basic
+----
+id name
+1 alice
+2 bob
+
+exec
+CREATE TABLE IF NOT EXISTS lt_alt_compound (tenant text, user_id int, email text, age int, PRIMARY KEY ((tenant), user_id))
+----
+
+exec
+INSERT INTO lt_alt_compound (tenant, user_id, email, age) VALUES ('acme', 1, 'alice@acme.com', 30)
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE ADD column (unsupported)
+#
+# In Cassandra, ALTER TABLE t ADD col type adds a new column. The
+# parser does not recognize ALTER as a statement keyword.
+# ---------------------------------------------------------------
+
+# Add a single text column.
+error
+ALTER TABLE lt_alt_basic ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a single integer column.
+error
+ALTER TABLE lt_alt_basic ADD age int
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a column with a different type (boolean).
+error
+ALTER TABLE lt_alt_basic ADD active boolean
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a column with type uuid.
+error
+ALTER TABLE lt_alt_basic ADD ref_id uuid
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a column with type timestamp.
+error
+ALTER TABLE lt_alt_basic ADD created_at timestamp
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a column with type blob.
+error
+ALTER TABLE lt_alt_basic ADD data blob
+----
+at position 0: unsupported statement "ALTER"
+
+# Add to a table with compound primary key.
+error
+ALTER TABLE lt_alt_compound ADD phone text
+----
+at position 0: unsupported statement "ALTER"
+
+# Add with qualified table name (keyspace.table).
+error
+ALTER TABLE defaultdb.lt_alt_basic ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# ALTER TABLE DROP column (unsupported)
+#
+# In Cassandra, ALTER TABLE t DROP col removes a non-key column.
+# Dropping primary key columns is not allowed in Cassandra.
+# ---------------------------------------------------------------
+
+# Drop a non-key column.
+error
+ALTER TABLE lt_alt_basic DROP name
+----
+at position 0: unsupported statement "ALTER"
+
+# Drop from a table with clustering keys.
+error
+ALTER TABLE lt_alt_compound DROP email
+----
+at position 0: unsupported statement "ALTER"
+
+# Drop a different column.
+error
+ALTER TABLE lt_alt_compound DROP age
+----
+at position 0: unsupported statement "ALTER"
+
+# Drop with qualified table name.
+error
+ALTER TABLE defaultdb.lt_alt_basic DROP name
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# ALTER TABLE RENAME column (unsupported)
+#
+# In Cassandra, RENAME is restricted to primary key columns. The
+# syntax is: ALTER TABLE t RENAME old_name TO new_name.
+# ---------------------------------------------------------------
+
+# Rename a non-key column.
+error
+ALTER TABLE lt_alt_basic RENAME name TO full_name
+----
+at position 0: unsupported statement "ALTER"
+
+# Rename the partition key column.
+error
+ALTER TABLE lt_alt_basic RENAME id TO user_id
+----
+at position 0: unsupported statement "ALTER"
+
+# Rename a clustering key column.
+error
+ALTER TABLE lt_alt_compound RENAME user_id TO uid
+----
+at position 0: unsupported statement "ALTER"
+
+# Rename with qualified table name.
+error
+ALTER TABLE defaultdb.lt_alt_basic RENAME name TO full_name
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# ALTER TABLE ALTER column type (unsupported)
+#
+# In Cassandra, ALTER TABLE t ALTER col TYPE new_type changes a
+# column's data type. Only compatible type changes are allowed
+# (e.g. text to varchar).
+# ---------------------------------------------------------------
+
+# Change text to varchar (compatible in Cassandra).
+error
+ALTER TABLE lt_alt_basic ALTER name TYPE varchar
+----
+at position 0: unsupported statement "ALTER"
+
+# Change int to bigint (widening in Cassandra).
+error
+ALTER TABLE lt_alt_compound ALTER age TYPE bigint
+----
+at position 0: unsupported statement "ALTER"
+
+# Change int to text (incompatible in Cassandra, but parser-level
+# rejection here).
+error
+ALTER TABLE lt_alt_basic ALTER id TYPE text
+----
+at position 0: unsupported statement "ALTER"
+
+# Change text to blob.
+error
+ALTER TABLE lt_alt_compound ALTER email TYPE blob
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# ALTER TABLE WITH properties (unsupported)
+#
+# In Cassandra, ALTER TABLE ... WITH allows changing table-level
+# options like compaction, gc_grace_seconds, and comments.
+# ---------------------------------------------------------------
+
+# Change compaction strategy.
+error
+ALTER TABLE lt_alt_basic WITH compaction = {'class': 'LeveledCompactionStrategy'}
+----
+at position 0: unsupported statement "ALTER"
+
+# Change gc_grace_seconds.
+error
+ALTER TABLE lt_alt_basic WITH gc_grace_seconds = 86400
+----
+at position 0: unsupported statement "ALTER"
+
+# Change default_time_to_live.
+error
+ALTER TABLE lt_alt_basic WITH default_time_to_live = 3600
+----
+at position 0: unsupported statement "ALTER"
+
+# Add a comment to the table.
+error
+ALTER TABLE lt_alt_basic WITH comment = 'A test table with metadata'
+----
+at position 0: unsupported statement "ALTER"
+
+# Multiple property changes with AND.
+error
+ALTER TABLE lt_alt_basic WITH gc_grace_seconds = 86400 AND compaction = {'class': 'SizeTieredCompactionStrategy'}
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# Verify base tables are unaffected by error operations.
+#
+# Since all ALTER TABLE operations above produced parse errors,
+# the original tables should remain unchanged.
+# ---------------------------------------------------------------
+
+query rowsort
+SELECT id, name FROM lt_alt_basic
+----
+id name
+1 alice
+2 bob
+
+query
+SELECT tenant, user_id, email, age FROM lt_alt_compound WHERE tenant = 'acme' AND user_id = 1
+----
+tenant user_id email age
+acme 1 alice@acme.com 30
