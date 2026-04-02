@@ -49,3 +49,58 @@ SELECT name, score + 10 AS boosted FROM test_dml WHERE id = 1
 ----
 name  boosted
 alice  100
+
+# UPDATE a single row.
+exec
+UPDATE test_dml SET score = 99 WHERE id = 1
+----
+
+query colnames
+SELECT name, score FROM test_dml WHERE id = 1
+----
+name  score
+alice  99
+
+# UPDATE multiple columns.
+exec
+UPDATE test_dml SET name = 'bobby', score = 100 WHERE id = 2
+----
+
+query colnames
+SELECT name, score FROM test_dml WHERE id = 2
+----
+name  score
+bobby  100
+
+# DELETE a row.
+exec
+DELETE FROM test_dml WHERE id = 3
+----
+
+query colnames
+SELECT id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+2  bobby
+
+# DELETE without FROM (T-SQL allows this).
+exec
+DELETE test_dml WHERE id = 2
+----
+
+query colnames
+SELECT id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+
+# DELETE all remaining rows.
+exec
+DELETE FROM test_dml
+----
+
+query
+SELECT CONVERT(INT, COUNT(*)) FROM test_dml
+----
+0

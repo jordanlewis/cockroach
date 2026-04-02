@@ -130,6 +130,52 @@ func (s *InsertStmt) String() string {
 	return b.String()
 }
 
+// DeleteStmt represents DELETE [FROM] <table> [WHERE <expr>].
+type DeleteStmt struct {
+	Table string
+	Where Expr
+}
+
+func (*DeleteStmt) statementNode() {}
+
+func (s *DeleteStmt) String() string {
+	result := fmt.Sprintf("DELETE FROM %s", formatIdent(s.Table))
+	if s.Where != nil {
+		result += fmt.Sprintf(" WHERE %s", s.Where)
+	}
+	return result
+}
+
+// UpdateStmt represents UPDATE <table> SET <assignments> [WHERE <expr>].
+type UpdateStmt struct {
+	Table       string
+	Assignments []Assignment
+	Where       Expr
+}
+
+func (*UpdateStmt) statementNode() {}
+
+func (s *UpdateStmt) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "UPDATE %s SET ", formatIdent(s.Table))
+	for i, a := range s.Assignments {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s = %s", formatIdent(a.Column), a.Value)
+	}
+	if s.Where != nil {
+		fmt.Fprintf(&b, " WHERE %s", s.Where)
+	}
+	return b.String()
+}
+
+// Assignment represents a column = value pair in an UPDATE SET clause.
+type Assignment struct {
+	Column string
+	Value  Expr
+}
+
 // SelectStmt represents SELECT [TOP n] <columns> [FROM <table>]
 // [WHERE <expr>] [ORDER BY <exprs>].
 type SelectStmt struct {
