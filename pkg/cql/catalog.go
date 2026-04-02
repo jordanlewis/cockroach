@@ -198,13 +198,13 @@ func handleSystemSelect(
 			}
 			return ExecuteResult{Body: body}, true
 		case "tables":
-			body, err := buildSystemSchemaTablesBody()
+			body, err := buildSystemSchemaTablesBody(ctx, db)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
 			return ExecuteResult{Body: body}, true
 		case "columns":
-			body, err := buildSystemSchemaColumnsBody()
+			body, err := buildSystemSchemaColumnsBody(ctx, db)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -351,8 +351,8 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 	}
 
 	for _, name := range keyspaceNames {
-		writeText(name)                         // keyspace_name
-		writeBool(true)                         // durable_writes
+		writeText(name)                          // keyspace_name
+		writeBool(true)                          // durable_writes
 		writeText("{'class': 'SimpleStrategy'}") // replication
 	}
 
@@ -361,9 +361,11 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 
 // buildSystemSchemaTablesBody builds a CQL RESULT Rows frame body for
 // system_schema.tables listing the system.local and system.peers
-// virtual tables. cqlsh uses this to resolve table names when
-// formatting query results.
-func buildSystemSchemaTablesBody() ([]byte, error) {
+// virtual tables plus any user-created tables discovered via CRDB's
+// information_schema. cqlsh uses this to resolve table names when
+// formatting query results and rejects queries for tables not in its
+// schema cache.
+func buildSystemSchemaTablesBody(ctx context.Context, db isql.DB) ([]byte, error) {
 	cols := systemSchemaTables["tables"].columns
 	var buf bytes.Buffer
 
@@ -385,6 +387,35 @@ func buildSystemSchemaTablesBody() ([]byte, error) {
 		{"system", "local"},
 		{"system", "peers"},
 		{"system", "peers_v2"},
+	}
+
+	// Query CRDB for user-created tables.
+	if db != nil {
+		executor := db.Executor()
+		rows, err := executor.QueryBufferedEx(
+			ctx,
+			redact.Sprint("cql-list-tables"),
+			nil,
+			sessiondata.InternalExecutorOverride{
+				User: username.RootUserName(),
+			},
+			`SELECT table_catalog, table_name
+			   FROM "".information_schema.tables
+			  WHERE table_schema = 'public'
+			    AND table_type = 'BASE TABLE'`,
+		)
+		if err == nil {
+			for _, row := range rows {
+				if len(row) >= 2 {
+					dbName := string(*row[0].(*tree.DString))
+					tblName := string(*row[1].(*tree.DString))
+					tables = append(tables, tableRow{
+						keyspaceName: dbName,
+						tableName:    tblName,
+					})
+				}
+			}
+		}
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(tables)))
@@ -421,9 +452,11 @@ func buildSystemSchemaTablesBody() ([]byte, error) {
 }
 
 // buildSystemSchemaColumnsBody builds a CQL RESULT Rows frame body
-// for system_schema.columns listing columns for system.local and
-// system.peers.
-func buildSystemSchemaColumnsBody() ([]byte, error) {
+// for system_schema.columns listing columns for system.local,
+// system.peers, and any user-created tables discovered via CRDB's
+// information_schema. cqlsh uses this to resolve column names and
+// types when formatting query results.
+func buildSystemSchemaColumnsBody(ctx context.Context, db isql.DB) ([]byte, error) {
 	cols := systemSchemaTables["columns"].columns
 	var buf bytes.Buffer
 
@@ -485,6 +518,44 @@ func buildSystemSchemaColumnsBody() ([]byte, error) {
 		})
 	}
 
+	// Query CRDB for user-created table columns.
+	if db != nil {
+		executor := db.Executor()
+		rows, err := executor.QueryBufferedEx(
+			ctx,
+			redact.Sprint("cql-list-columns"),
+			nil,
+			sessiondata.InternalExecutorOverride{
+				User: username.RootUserName(),
+			},
+			`SELECT table_catalog, table_name, column_name,
+			        ordinal_position, data_type, is_nullable
+			   FROM "".information_schema.columns
+			  WHERE table_schema = 'public'
+			  ORDER BY table_catalog, table_name, ordinal_position`,
+		)
+		if err == nil {
+			for _, row := range rows {
+				if len(row) >= 5 {
+					dbName := string(*row[0].(*tree.DString))
+					tblName := string(*row[1].(*tree.DString))
+					colName := string(*row[2].(*tree.DString))
+					dataType := string(*row[4].(*tree.DString))
+					cqlTypeName := crdbTypeToCQLName(dataType)
+					columnRows = append(columnRows, colRow{
+						keyspaceName:    dbName,
+						tableName:       tblName,
+						columnName:      colName,
+						clusteringOrder: "none",
+						kind:            "regular",
+						position:        0,
+						colType:         cqlTypeName,
+					})
+				}
+			}
+		}
+	}
+
 	_ = cqlwire.WriteInt(&buf, int32(len(columnRows)))
 
 	writeText := func(s string) {
@@ -507,6 +578,38 @@ func buildSystemSchemaColumnsBody() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// crdbTypeToCQLName maps CRDB data_type strings from information_schema
+// to CQL type names for system_schema.columns responses.
+func crdbTypeToCQLName(crdbType string) string {
+	switch strings.ToUpper(crdbType) {
+	case "UUID":
+		return "uuid"
+	case "STRING", "TEXT", "VARCHAR", "CHARACTER VARYING", "CHAR", "CHARACTER":
+		return "text"
+	case "INT4", "INT2", "INTEGER", "SMALLINT":
+		return "int"
+	case "INT8", "INT", "BIGINT":
+		return "bigint"
+	case "FLOAT4", "REAL":
+		return "float"
+	case "FLOAT8", "FLOAT", "DOUBLE PRECISION":
+		return "double"
+	case "BOOL", "BOOLEAN":
+		return "boolean"
+	case "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE",
+		"TIMESTAMP", "TIMESTAMP WITHOUT TIME ZONE":
+		return "timestamp"
+	case "BYTES", "BYTEA":
+		return "blob"
+	case "INET":
+		return "inet"
+	case "DECIMAL", "NUMERIC":
+		return "decimal"
+	default:
+		return "text"
+	}
 }
 
 // fixedHostID is a deterministic UUID used as the host_id for the
@@ -573,20 +676,20 @@ func buildSystemLocalBody() ([]byte, error) {
 		buf.Write(u[:])
 	}
 
-	writeText("local")                                                   // key
-	writeText("COMPLETED")                                               // bootstrapped
-	writeInet(localhost)                                                  // broadcast_address
-	writeText("cockroachdb")                                             // cluster_name
-	writeText("3.4.5")                                                   // cql_version
-	writeText("datacenter1")                                             // data_center
-	writeUUID(fixedHostID)                                               // host_id
-	writeInet(localhost)                                                  // listen_address
-	writeText("4")                                                       // native_protocol_version
-	writeText("org.apache.cassandra.dht.Murmur3Partitioner")             // partitioner
-	writeText("rack1")                                                   // rack
-	writeText("4.0.0")                                                   // release_version
-	writeInet(localhost)                                                  // rpc_address
-	writeUUID(fixedSchemaVersion) // schema_version
+	writeText("local")                                       // key
+	writeText("COMPLETED")                                   // bootstrapped
+	writeInet(localhost)                                     // broadcast_address
+	writeText("cockroachdb")                                 // cluster_name
+	writeText("3.4.5")                                       // cql_version
+	writeText("datacenter1")                                 // data_center
+	writeUUID(fixedHostID)                                   // host_id
+	writeInet(localhost)                                     // listen_address
+	writeText("4")                                           // native_protocol_version
+	writeText("org.apache.cassandra.dht.Murmur3Partitioner") // partitioner
+	writeText("rack1")                                       // rack
+	writeText("4.0.0")                                       // release_version
+	writeInet(localhost)                                     // rpc_address
+	writeUUID(fixedSchemaVersion)                            // schema_version
 
 	return buf.Bytes(), nil
 }
