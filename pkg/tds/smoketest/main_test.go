@@ -475,39 +475,47 @@ func parseTokenStream(t *testing.T, data []byte) parsedResult {
 	return result
 }
 
-// TestTDSBuiltinStartup verifies that the TDS server is wired into
-// CockroachDB's real server startup path (maybeStartTDS in server_sql.go),
-// not just manually instantiated in a test harness. This test:
-//  1. Overrides the server.tds.enabled and server.tds.port cluster settings
-//  2. Starts a CockroachDB test server with those settings
-//  3. Connects to the TDS port that the server started automatically
-//  4. Runs a full PRELOGIN → LOGIN7 → SQL_BATCH flow
+// lookupTDSSettings returns the server.tds.enabled and server.tds.port
+// cluster settings.
+func lookupTDSSettings(t *testing.T) (*settings.BoolSetting, *settings.IntSetting) {
+	t.Helper()
+	enabledSetting, ok, _ := settings.LookupForLocalAccess(
+		"server.tds.enabled", true, /* forSystemTenant */
+	)
+	require.True(t, ok, "server.tds.enabled setting not found")
+	portSetting, ok, _ := settings.LookupForLocalAccess(
+		"server.tds.port", true, /* forSystemTenant */
+	)
+	require.True(t, ok, "server.tds.port setting not found")
+	return enabledSetting.(*settings.BoolSetting),
+		portSetting.(*settings.IntSetting)
+}
+
+// pickFreePort returns a free TCP port on localhost.
+func pickFreePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+	return port
+}
+
+// TestTDSBuiltinStartup verifies that the TDS server starts via the
+// real watchTDS code path in server_sql.go when server.tds.enabled is
+// true at boot time.
 func TestTDSBuiltinStartup(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
 	ctx := context.Background()
-
-	// Find a free port for the TDS server to use.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	tdsPort := ln.Addr().(*net.TCPAddr).Port
-	require.NoError(t, ln.Close())
+	tdsPort := pickFreePort(t)
 
 	// Create cluster settings with TDS enabled on the chosen port.
 	st := cluster.MakeTestingClusterSettings()
-
-	enabledSetting, ok, _ := settings.LookupForLocalAccess(
-		"server.tds.enabled", true, /* forSystemTenant */
-	)
-	require.True(t, ok, "server.tds.enabled setting not found")
-	enabledSetting.(*settings.BoolSetting).Override(ctx, &st.SV, true)
-
-	portSetting, ok, _ := settings.LookupForLocalAccess(
-		"server.tds.port", true, /* forSystemTenant */
-	)
-	require.True(t, ok, "server.tds.port setting not found")
-	portSetting.(*settings.IntSetting).Override(ctx, &st.SV, int64(tdsPort))
+	enabledSetting, portSetting := lookupTDSSettings(t)
+	enabledSetting.Override(ctx, &st.SV, true)
+	portSetting.Override(ctx, &st.SV, int64(tdsPort))
 
 	// Start a CockroachDB server — this exercises the real maybeStartTDS
 	// code path in server_sql.go, not a test-only TDS server.
@@ -582,4 +590,87 @@ func TestTDSBuiltinStartup(t *testing.T) {
 	require.Contains(t, versionStr, "CockroachDB",
 		"@@VERSION from builtin TDS server should contain CockroachDB")
 	t.Logf("builtin TDS startup verified: @@VERSION = %s", versionStr)
+}
+
+// TestTDSDynamicEnable starts CockroachDB with TDS disabled (the
+// default), then flips server.tds.enabled to true at runtime and
+// verifies that the TDS server starts accepting connections without
+// a node restart.
+func TestTDSDynamicEnable(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	tdsPortNum := pickFreePort(t)
+
+	// Start CRDB with TDS disabled (default) but pre-set the port so
+	// we know where to connect once TDS is enabled.
+	st := cluster.MakeTestingClusterSettings()
+	_, portSetting := lookupTDSSettings(t)
+	portSetting.Override(ctx, &st.SV, int64(tdsPortNum))
+
+	srv := serverutils.StartServerOnly(t, base.TestServerArgs{
+		Settings: st,
+	})
+	defer srv.Stopper().Stop(ctx)
+
+	tdsAddr := fmt.Sprintf("127.0.0.1:%d", tdsPortNum)
+
+	// Verify TDS is NOT listening before we enable it.
+	_, err := net.DialTimeout("tcp", tdsAddr, 500*time.Millisecond)
+	require.Error(t, err, "TDS should not be listening before enabled")
+
+	// Enable TDS at runtime via the cluster setting.
+	enabledSetting, _ := lookupTDSSettings(t)
+	enabledSetting.Override(ctx, &st.SV, true)
+
+	// The SetOnChange callback starts TDS synchronously, so the port
+	// should be available immediately.
+	conn, err := net.DialTimeout("tcp", tdsAddr, 5*time.Second)
+	require.NoError(t, err, "TDS should be listening after dynamic enable")
+	defer conn.Close()
+
+	pr := tdswire.NewPacketReader(conn)
+	pw := tdswire.NewPacketWriter(conn, tdswire.DefaultPacketSize)
+
+	// PRELOGIN handshake.
+	preLogin := &tdswire.PreLoginMsg{
+		Options: []tdswire.PreLoginOption{
+			{
+				Token: tdswire.PreLoginVersion,
+				Data: tdswire.EncodeVersionData(tdswire.PreLoginVersionData{
+					Major: 16, Minor: 0, Build: 0, SubBuild: 0,
+				}),
+			},
+			{
+				Token: tdswire.PreLoginEncryption,
+				Data:  []byte{byte(tdswire.EncryptNotSup)},
+			},
+		},
+	}
+	require.NoError(t,
+		pw.WriteMessage(tdswire.PacketTypePreLogin, tdswire.EncodePreLogin(preLogin)))
+
+	pktType, _, err := pr.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, tdswire.PacketTypeTabularResult, pktType)
+
+	// LOGIN7.
+	login7Payload := buildLogin7("", "", "defaultdb")
+	require.NoError(t, pw.WriteMessage(tdswire.PacketTypeLogin7, login7Payload))
+
+	pktType, payload, err := pr.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, tdswire.PacketTypeTabularResult, pktType)
+
+	loginResult := parseTokenStream(t, payload)
+	require.NotNil(t, loginResult.LoginAck, "LOGIN7 should produce a LOGINACK token")
+
+	// SELECT 1 to confirm queries work.
+	resp := sendBatch(t, pr, pw, "SELECT 1 AS val")
+	result := parseTokenStream(t, resp)
+	require.Nil(t, result.Error, "SELECT 1 should succeed")
+	require.Len(t, result.Rows, 1)
+
+	t.Logf("dynamic TDS enable verified: connected after setting change")
 }

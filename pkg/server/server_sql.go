@@ -137,6 +137,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/startup"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
+	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing/collector"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing/service"
@@ -216,7 +217,10 @@ type SQLServer struct {
 	// tdsServer is the optional TDS (Tabular Data Stream) protocol server.
 	// When server.tds.enabled is true, this accepts Sybase/SQL Server
 	// wire-protocol connections and translates them to internal SQL
-	// execution. It is nil when TDS is disabled.
+	// execution. It is nil when TDS is disabled. Protected by tdsMu
+	// because the server can be started/stopped dynamically via the
+	// server.tds.enabled cluster setting.
+	tdsMu     syncutil.Mutex
 	tdsServer *tds.Server
 
 	systemConfigWatcher *systemconfigwatcher.Cache
@@ -1715,10 +1719,10 @@ func (s *SQLServer) preStart(
 	s.distSQLServer.Start()
 	s.pgServer.Start(ctx, stopper)
 
-	// Start the TDS server if enabled. The TDS server provides
-	// Sybase/SQL Server wire-protocol compatibility by translating
-	// TDS commands to internal SQL execution.
-	if err := s.maybeStartTDS(ctx, stopper); err != nil {
+	// Set up dynamic TDS server management. The TDS server is started
+	// and stopped in response to the server.tds.enabled cluster setting,
+	// allowing operators to enable TDS on a running server without restart.
+	if err := s.watchTDS(ctx, stopper); err != nil {
 		return err
 	}
 
@@ -2275,40 +2279,81 @@ func (s *SQLServer) CQLAddr() string {
 
 // TDSServer returns the TDS server, or nil if TDS is not enabled.
 func (s *SQLServer) TDSServer() *tds.Server {
+	s.tdsMu.Lock()
+	defer s.tdsMu.Unlock()
 	return s.tdsServer
 }
 
-// maybeStartTDS starts the TDS server if the server.tds.enabled cluster
-// setting is true. The TDS server listens on the port specified by
-// server.tds.port and translates Sybase/SQL Server wire-protocol
-// connections to internal SQL execution via the execCfg.InternalDB.
-func (s *SQLServer) maybeStartTDS(ctx context.Context, stopper *stop.Stopper) error {
-	if !tdsEnabled.Get(&s.execCfg.Settings.SV) {
-		return nil
+// watchTDS sets up dynamic TDS server lifecycle management driven by the
+// server.tds.enabled cluster setting. If the setting is already true at
+// startup, the TDS server starts immediately. A SetOnChange callback
+// starts or stops the server when the setting is toggled at runtime,
+// so operators can enable TDS on a running node without a restart.
+func (s *SQLServer) watchTDS(ctx context.Context, stopper *stop.Stopper) error {
+	// Register a stopper closer to shut down TDS on server shutdown,
+	// regardless of when or whether TDS was started.
+	stopper.AddCloser(stop.CloserFn(func() {
+		s.tdsMu.Lock()
+		defer s.tdsMu.Unlock()
+		if s.tdsServer != nil {
+			s.tdsServer.Stop()
+			s.tdsServer = nil
+		}
+	}))
+
+	// Start TDS immediately if already enabled at boot.
+	if tdsEnabled.Get(&s.execCfg.Settings.SV) {
+		if err := s.startTDS(ctx); err != nil {
+			return err
+		}
 	}
 
+	// React to runtime changes of the enabled setting.
+	tdsEnabled.SetOnChange(&s.execCfg.Settings.SV, func(ctx context.Context) {
+		if tdsEnabled.Get(&s.execCfg.Settings.SV) {
+			s.tdsMu.Lock()
+			alreadyRunning := s.tdsServer != nil
+			s.tdsMu.Unlock()
+			if alreadyRunning {
+				return
+			}
+			if err := s.startTDS(ctx); err != nil {
+				log.Ops.Errorf(ctx, "failed to start TDS server: %v", err)
+			}
+		} else {
+			s.tdsMu.Lock()
+			defer s.tdsMu.Unlock()
+			if s.tdsServer != nil {
+				s.tdsServer.Stop()
+				s.tdsServer = nil
+				log.Ops.Infof(ctx, "TDS server stopped")
+			}
+		}
+	})
+
+	return nil
+}
+
+// startTDS creates and starts the TDS server on the configured port.
+func (s *SQLServer) startTDS(ctx context.Context) error {
 	port := tdsPort.Get(&s.execCfg.Settings.SV)
 	listenAddr := fmt.Sprintf(":%d", port)
 
-	tdsServer := tds.NewServer(tds.ServerConfig{
+	srv := tds.NewServer(tds.ServerConfig{
 		ListenAddr:      listenAddr,
 		DefaultDatabase: "defaultdb",
 		DB:              s.execCfg.InternalDB,
 	})
 
-	if err := tdsServer.Start(ctx); err != nil {
+	if err := srv.Start(ctx); err != nil {
 		return errors.Wrap(err, "starting TDS server")
 	}
 
-	s.tdsServer = tdsServer
+	s.tdsMu.Lock()
+	s.tdsServer = srv
+	s.tdsMu.Unlock()
 
-	log.Ops.Infof(ctx, "TDS server listening on %s", tdsServer.Addr())
-
-	// Register a closer to stop the TDS server on shutdown.
-	stopper.AddCloser(stop.CloserFn(func() {
-		tdsServer.Stop()
-	}))
-
+	log.Ops.Infof(ctx, "TDS server listening on %s", srv.Addr())
 	return nil
 }
 // MetricsRegistry returns the application-level metrics registry.
