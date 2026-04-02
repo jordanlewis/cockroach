@@ -1,0 +1,148 @@
+# DML tests: INSERT operations.
+#
+# Tests cover: INSERT with all columns, INSERT with partial columns,
+# INSERT IF NOT EXISTS, upsert semantics (last-write-wins), various
+# data types, and unsupported USING TTL / USING TIMESTAMP syntax.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_insert (id int, name text, age int, active boolean, PRIMARY KEY (id))
+----
+
+# INSERT with all columns specified.
+
+exec
+INSERT INTO lt_insert (id, name, age, active) VALUES (1, 'alice', 30, true)
+----
+
+query
+SELECT id, name, age, active FROM lt_insert WHERE id = 1
+----
+id name age active
+1 alice 30 true
+
+# INSERT with partial columns: unspecified columns should be NULL.
+
+exec
+INSERT INTO lt_insert (id, name) VALUES (2, 'bob')
+----
+
+query
+SELECT id, name, age, active FROM lt_insert WHERE id = 2
+----
+id name age active
+2 bob NULL NULL
+
+# Upsert semantics: CQL INSERT without IF NOT EXISTS is last-write-wins.
+# Inserting the same primary key overwrites the entire row.
+
+exec
+INSERT INTO lt_insert (id, name, age, active) VALUES (1, 'alice_v2', 31, false)
+----
+
+query
+SELECT id, name, age, active FROM lt_insert WHERE id = 1
+----
+id name age active
+1 alice_v2 31 false
+
+# Upsert with partial columns overwrites specified columns. Unspecified
+# columns retain their existing values because CRDB UPSERT preserves
+# them. Note: real Cassandra would tombstone unspecified columns.
+
+exec
+INSERT INTO lt_insert (id, name) VALUES (1, 'alice_v3')
+----
+
+query
+SELECT id, name, age, active FROM lt_insert WHERE id = 1
+----
+id name age active
+1 alice_v3 31 false
+
+# INSERT with IF NOT EXISTS on a new row succeeds.
+
+exec
+INSERT INTO lt_insert (id, name, age, active) VALUES (3, 'charlie', 25, true) IF NOT EXISTS
+----
+
+query
+SELECT id, name, age, active FROM lt_insert WHERE id = 3
+----
+id name age active
+3 charlie 25 true
+
+# INSERT with IF NOT EXISTS on an existing row should fail with a
+# duplicate key violation since the row already exists.
+
+error
+INSERT INTO lt_insert (id, name, age, active) VALUES (3, 'charlie_dup', 26, false) IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lt_insert_pkey"
+
+# Various data types: bigint, float, double, boolean.
+
+exec
+CREATE TABLE IF NOT EXISTS lt_insert_types (id int, big bigint, fl float, dbl double, flag boolean, label text, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_insert_types (id, big, fl, dbl, flag, label) VALUES (1, 9999999999, 3.14, 2.718281828, true, 'hello')
+----
+
+query
+SELECT id, big, fl, dbl, flag, label FROM lt_insert_types WHERE id = 1
+----
+id big fl dbl flag label
+1 9999999999 3.14 2.718281828 true hello
+
+# Negative values and zero.
+
+exec
+INSERT INTO lt_insert_types (id, big, fl, dbl, flag, label) VALUES (2, -42, -1.5, 0, false, 'zero')
+----
+
+query
+SELECT id, big, fl, dbl, flag, label FROM lt_insert_types WHERE id = 2
+----
+id big fl dbl flag label
+2 -42 -1.5 0 false zero
+
+# NULL values in INSERT.
+
+exec
+INSERT INTO lt_insert_types (id, big, fl, dbl, flag, label) VALUES (3, null, null, null, null, null)
+----
+
+query
+SELECT id, big, fl, dbl, flag, label FROM lt_insert_types WHERE id = 3
+----
+id big fl dbl flag label
+3 NULL NULL NULL NULL NULL
+
+# USING TTL is not supported (parse error).
+
+error
+INSERT INTO lt_insert (id, name) VALUES (10, 'ttl_test') USING TTL 3600
+----
+at position 57: unexpected token "USING" after statement
+
+# USING TIMESTAMP is not supported (parse error).
+
+error
+INSERT INTO lt_insert (id, name) VALUES (11, 'ts_test') USING TIMESTAMP 1234567890
+----
+at position 56: unexpected token "USING" after statement
+
+# Verify final state of the main table.
+
+query rowsort
+SELECT id, name FROM lt_insert
+----
+id name
+1 alice_v3
+2 bob
+3 charlie

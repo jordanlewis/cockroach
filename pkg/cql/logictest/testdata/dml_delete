@@ -1,0 +1,65 @@
+# DML tests: DELETE operations.
+#
+# DELETE is not yet implemented in the CQL frontend. All DELETE
+# statements produce a parse error. These tests document the current
+# behavior and will serve as a regression baseline when DELETE support
+# is added.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_delete (id int, name text, age int, active boolean, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_delete (id, name, age, active) VALUES (1, 'alice', 30, true)
+----
+
+exec
+INSERT INTO lt_delete (id, name, age, active) VALUES (2, 'bob', 25, false)
+----
+
+exec
+INSERT INTO lt_delete (id, name, age, active) VALUES (3, 'charlie', 35, true)
+----
+
+# DELETE entire row.
+
+error
+DELETE FROM lt_delete WHERE id = 1
+----
+at position 0: unsupported statement "DELETE"
+
+# DELETE specific columns (column-level tombstone).
+
+error
+DELETE name FROM lt_delete WHERE id = 2
+----
+at position 0: unsupported statement "DELETE"
+
+# DELETE with IF EXISTS (lightweight transaction).
+
+error
+DELETE FROM lt_delete WHERE id = 3 IF EXISTS
+----
+at position 0: unsupported statement "DELETE"
+
+# DELETE with IN clause (multi-row delete).
+
+error
+DELETE FROM lt_delete WHERE id IN (1, 2, 3)
+----
+at position 0: unsupported statement "DELETE"
+
+# Verify rows are unchanged since all DELETEs failed (tombstone
+# behavior cannot be tested until DELETE is implemented).
+
+query rowsort
+SELECT id, name FROM lt_delete
+----
+id name
+1 alice
+2 bob
+3 charlie

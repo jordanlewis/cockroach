@@ -1,0 +1,83 @@
+# DML tests: UPDATE operations.
+#
+# UPDATE is not yet implemented in the CQL frontend. All UPDATE
+# statements produce a parse error. These tests document the current
+# behavior and will serve as a regression baseline when UPDATE support
+# is added.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_update (id int, name text, age int, active boolean, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_update (id, name, age, active) VALUES (1, 'alice', 30, true)
+----
+
+exec
+INSERT INTO lt_update (id, name, age, active) VALUES (2, 'bob', 25, false)
+----
+
+# UPDATE single column.
+
+error
+UPDATE lt_update SET name = 'alice_updated' WHERE id = 1
+----
+at position 0: unsupported statement "UPDATE"
+
+# UPDATE multiple columns.
+
+error
+UPDATE lt_update SET name = 'bob_updated', age = 26 WHERE id = 2
+----
+at position 0: unsupported statement "UPDATE"
+
+# UPDATE with IF condition (lightweight transaction).
+
+error
+UPDATE lt_update SET name = 'alice_lwt' WHERE id = 1 IF name = 'alice'
+----
+at position 0: unsupported statement "UPDATE"
+
+# UPDATE with IF EXISTS.
+
+error
+UPDATE lt_update SET age = 99 WHERE id = 1 IF EXISTS
+----
+at position 0: unsupported statement "UPDATE"
+
+# Counter operations: counter columns are parsed as INT8 but UPDATE
+# (including counter increment/decrement) is not supported.
+
+exec
+CREATE TABLE IF NOT EXISTS lt_counter (id int, views counter, PRIMARY KEY (id))
+----
+
+# Counter increment. The '+' operator is not supported by the lexer,
+# so the error is a lexer error rather than a parser error.
+
+error
+UPDATE lt_counter SET views = views + 1 WHERE id = 1
+----
+unexpected character '+' at position 36
+
+# Counter decrement. Same as increment: '-' between identifiers is
+# not recognized by the lexer (it only handles '-' as a negative
+# number prefix).
+
+error
+UPDATE lt_counter SET views = views - 1 WHERE id = 1
+----
+unexpected character '-' at position 36
+
+# Verify rows are unchanged since all UPDATEs failed.
+
+query rowsort
+SELECT id, name, age, active FROM lt_update
+----
+id name age active
+1 alice 30 true
+2 bob 25 false
