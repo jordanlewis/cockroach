@@ -52,6 +52,10 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateUse(s), nil
 	case *parser.CreateDatabaseStmt:
 		return translateCreateDatabase(s), nil
+	case *parser.DropTableStmt:
+		return fmt.Sprintf("DROP TABLE %s", quoteIdent(s.Table)), nil
+	case *parser.DropDatabaseStmt:
+		return fmt.Sprintf("DROP DATABASE %s", quoteIdent(s.Database)), nil
 	case *parser.CreateTableStmt:
 		return translateCreateTable(s), nil
 	case *parser.InsertStmt:

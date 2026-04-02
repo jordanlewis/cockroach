@@ -62,6 +62,8 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseUse()
 	case tokenCREATE:
 		return p.parseCreate()
+	case tokenDROP:
+		return p.parseDrop()
 	case tokenINSERT:
 		return p.parseInsert()
 	case tokenDELETE:
@@ -98,6 +100,31 @@ func (p *parser) parseCreate() (Statement, error) {
 	default:
 		return nil, p.error(fmt.Sprintf(
 			"expected TABLE or DATABASE after CREATE, got %q at position %d",
+			p.lex.peek().val, p.lex.peek().pos))
+	}
+}
+
+// parseDrop dispatches DROP TABLE or DROP DATABASE.
+func (p *parser) parseDrop() (Statement, error) {
+	p.lex.next() // consume DROP
+	switch p.lex.peek().typ {
+	case tokenTABLE:
+		p.lex.next() // consume TABLE
+		name, err := p.parseTableName()
+		if err != nil {
+			return nil, err
+		}
+		return &DropTableStmt{Table: name}, nil
+	case tokenDATABASE:
+		p.lex.next() // consume DATABASE
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		return &DropDatabaseStmt{Database: name}, nil
+	default:
+		return nil, p.error(fmt.Sprintf(
+			"expected TABLE or DATABASE after DROP, got %q at position %d",
 			p.lex.peek().val, p.lex.peek().pos))
 	}
 }
@@ -954,7 +981,7 @@ func isKeywordToken(typ tokenType) bool {
 		tokenORDER, tokenBY, tokenTOP, tokenAS, tokenNOT, tokenNULL,
 		tokenAND, tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
 		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
-		tokenISNULL, tokenCONVERT, tokenGETDATE:
+		tokenDROP, tokenISNULL, tokenCONVERT, tokenGETDATE:
 		return true
 	}
 	return false

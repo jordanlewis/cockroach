@@ -78,6 +78,28 @@ func (s *CreateDatabaseStmt) String() string {
 	return fmt.Sprintf("CREATE DATABASE %s", formatIdent(s.Database))
 }
 
+// DropTableStmt represents DROP TABLE <name>.
+type DropTableStmt struct {
+	Table string
+}
+
+func (*DropTableStmt) statementNode() {}
+
+func (s *DropTableStmt) String() string {
+	return fmt.Sprintf("DROP TABLE %s", formatIdent(s.Table))
+}
+
+// DropDatabaseStmt represents DROP DATABASE <name>.
+type DropDatabaseStmt struct {
+	Database string
+}
+
+func (*DropDatabaseStmt) statementNode() {}
+
+func (s *DropDatabaseStmt) String() string {
+	return fmt.Sprintf("DROP DATABASE %s", formatIdent(s.Database))
+}
+
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).
 type CreateTableStmt struct {
 	Table   string
