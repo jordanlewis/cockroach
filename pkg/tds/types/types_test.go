@@ -145,6 +145,36 @@ func TestIsFixedLength(t *testing.T) {
 	require.False(t, IsFixedLength(GUIDType))
 }
 
+// frameForDecode wraps raw EncodeValue output with the per-row framing
+// that writeRowValue (in tdswire) adds on the wire. EncodeValue produces
+// raw value bytes; DecodeValue expects wire-format data that includes
+// length prefixes for nullable types. This helper bridges the gap for
+// roundtrip tests.
+func frameForDecode(ti TypeInfo, encoded []byte) []byte {
+	if IsFixedLength(ti.TDSType) {
+		return encoded
+	}
+	switch ti.TDSType {
+	case IntNType, FloatNType, BitNType, DateTimeNType, MoneyNType,
+		GUIDType, NumericNType, DecimalNType, DateNType, TimeNType:
+		// Byte-length-prefix types: 1-byte length, 0 = NULL.
+		if encoded == nil {
+			return []byte{0x00}
+		}
+		return append([]byte{byte(len(encoded))}, encoded...)
+	case BigVarCharType, BigCharType, TextType,
+		NVarCharType, NCharType, NTextType,
+		BigVarBinType, BigBinaryType, ImageType:
+		// Variable-length types: 2-byte length prefix, 0xFFFF = NULL.
+		if encoded == nil {
+			return []byte{0xFF, 0xFF}
+		}
+		return append(appendUint16LE(nil, uint16(len(encoded))), encoded...)
+	default:
+		return encoded
+	}
+}
+
 func TestEncodeDecodeInt(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -162,9 +192,10 @@ func TestEncodeDecodeInt(t *testing.T) {
 			encoded, err := EncodeValue(nil, tt.ti, tt.value)
 			require.NoError(t, err)
 
-			decoded, n, err := DecodeValue(encoded, tt.ti)
+			framed := frameForDecode(tt.ti, encoded)
+			decoded, n, err := DecodeValue(framed, tt.ti)
 			require.NoError(t, err)
-			require.Equal(t, len(encoded), n)
+			require.Equal(t, len(framed), n)
 			require.Equal(t, tt.value, decoded.(int64))
 		})
 	}
@@ -187,7 +218,8 @@ func TestEncodeDecodeNull(t *testing.T) {
 			encoded, err := EncodeValue(nil, tt.ti, nil)
 			require.NoError(t, err)
 
-			decoded, _, err := DecodeValue(encoded, tt.ti)
+			framed := frameForDecode(tt.ti, encoded)
+			decoded, _, err := DecodeValue(framed, tt.ti)
 			require.NoError(t, err)
 			require.Nil(t, decoded)
 		})
@@ -198,17 +230,19 @@ func TestEncodeDecodeFloat(t *testing.T) {
 	ti8 := TypeInfo{TDSType: FloatNType, MaxLength: 8}
 	encoded, err := EncodeValue(nil, ti8, 3.14)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti8)
+	framed := frameForDecode(ti8, encoded)
+	decoded, n, err := DecodeValue(framed, ti8)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.InDelta(t, 3.14, decoded.(float64), 1e-10)
 
 	ti4 := TypeInfo{TDSType: FloatNType, MaxLength: 4}
 	encoded, err = EncodeValue(nil, ti4, 2.5)
 	require.NoError(t, err)
-	decoded, n, err = DecodeValue(encoded, ti4)
+	framed = frameForDecode(ti4, encoded)
+	decoded, n, err = DecodeValue(framed, ti4)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.InDelta(t, 2.5, decoded.(float64), 1e-6)
 }
 
@@ -217,9 +251,10 @@ func TestEncodeDecodeBool(t *testing.T) {
 	for _, v := range []bool{true, false} {
 		encoded, err := EncodeValue(nil, ti, v)
 		require.NoError(t, err)
-		decoded, n, err := DecodeValue(encoded, ti)
+		framed := frameForDecode(ti, encoded)
+		decoded, n, err := DecodeValue(framed, ti)
 		require.NoError(t, err)
-		require.Equal(t, len(encoded), n)
+		require.Equal(t, len(framed), n)
 		require.Equal(t, v, decoded.(bool))
 	}
 }
@@ -229,9 +264,10 @@ func TestEncodeDecodeVarChar(t *testing.T) {
 	input := "hello, world!"
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.Equal(t, input, decoded.(string))
 }
 
@@ -240,9 +276,10 @@ func TestEncodeDecodeNVarChar(t *testing.T) {
 	input := "hello"
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.Equal(t, input, decoded.(string))
 }
 
@@ -251,9 +288,10 @@ func TestEncodeDecodeVarBin(t *testing.T) {
 	input := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.Equal(t, input, decoded.([]byte))
 }
 
@@ -262,9 +300,10 @@ func TestEncodeDecodeDateTime(t *testing.T) {
 	input := time.Date(2024, 6, 15, 10, 30, 45, 0, time.UTC)
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	// TDS DATETIME has ~3.33ms precision.
 	got := decoded.(time.Time)
 	require.WithinDuration(t, input, got, 4*time.Millisecond)
@@ -275,9 +314,10 @@ func TestEncodeDecodeDate(t *testing.T) {
 	input := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	got := decoded.(time.Time)
 	require.Equal(t, input.Year(), got.Year())
 	require.Equal(t, input.Month(), got.Month())
@@ -289,9 +329,10 @@ func TestEncodeDecodeGUID(t *testing.T) {
 	u := uuid.MakeV4()
 	encoded, err := EncodeValue(nil, ti, u)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	require.Equal(t, u, decoded.(uuid.UUID))
 }
 
@@ -302,9 +343,10 @@ func TestEncodeDecodeMoney(t *testing.T) {
 	input.SetFinite(12345678, -4)
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	got := decoded.(*apd.Decimal)
 	require.Equal(t, 0, input.Cmp(got))
 }
@@ -318,9 +360,10 @@ func TestEncodeDecodeDecimalType(t *testing.T) {
 	input.SetFinite(1234567, -2)
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	got := decoded.(*apd.Decimal)
 	require.Equal(t, 0, input.Cmp(got))
 }
@@ -334,9 +377,10 @@ func TestEncodeDecodeDecimalNegative(t *testing.T) {
 	input.SetFinite(-99999, -2)
 	encoded, err := EncodeValue(nil, ti, input)
 	require.NoError(t, err)
-	decoded, n, err := DecodeValue(encoded, ti)
+	framed := frameForDecode(ti, encoded)
+	decoded, n, err := DecodeValue(framed, ti)
 	require.NoError(t, err)
-	require.Equal(t, len(encoded), n)
+	require.Equal(t, len(framed), n)
 	got := decoded.(*apd.Decimal)
 	require.Equal(t, 0, input.Cmp(got))
 }

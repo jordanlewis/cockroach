@@ -50,6 +50,8 @@ func Statement(stmt parser.Statement) (string, error) {
 	switch s := stmt.(type) {
 	case *parser.UseStmt:
 		return translateUse(s), nil
+	case *parser.CreateDatabaseStmt:
+		return translateCreateDatabase(s), nil
 	case *parser.CreateTableStmt:
 		return translateCreateTable(s), nil
 	case *parser.InsertStmt:
@@ -59,6 +61,12 @@ func Statement(stmt parser.Statement) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+}
+
+// translateCreateDatabase converts CREATE DATABASE to CRDB syntax.
+// CockroachDB supports CREATE DATABASE natively.
+func translateCreateDatabase(s *parser.CreateDatabaseStmt) string {
+	return fmt.Sprintf("CREATE DATABASE %s", quoteIdent(s.Database))
 }
 
 // translateUse converts USE <database> into SET database = '<database>'.

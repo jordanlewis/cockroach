@@ -94,7 +94,9 @@ type queryCall struct {
 // fullLogin performs a PRELOGIN + LOGIN7 handshake and returns the
 // PacketReader and PacketWriter for subsequent use, along with the
 // LOGIN7 response bytes for optional inspection.
-func fullLogin(t *testing.T, conn net.Conn, username, password, database string) (*tdswire.PacketReader, *tdswire.PacketWriter, []byte) {
+func fullLogin(
+	t *testing.T, conn net.Conn, username, password, database string,
+) (*tdswire.PacketReader, *tdswire.PacketWriter, []byte) {
 	t.Helper()
 	doPreLogin(t, conn)
 	resp := doLogin7(t, conn, username, password, database)
@@ -105,7 +107,9 @@ func fullLogin(t *testing.T, conn net.Conn, username, password, database string)
 
 // sendSQLBatchRaw sends a SQL_BATCH and returns the raw response payload.
 // It uses the provided PacketReader/PacketWriter to avoid creating new ones.
-func sendSQLBatchRaw(t *testing.T, pr *tdswire.PacketReader, pw *tdswire.PacketWriter, sql string) []byte {
+func sendSQLBatchRaw(
+	t *testing.T, pr *tdswire.PacketReader, pw *tdswire.PacketWriter, sql string,
+) []byte {
 	t.Helper()
 
 	sqlBytes := encodeUTF16LETest(sql)
@@ -284,8 +288,13 @@ func TestIntegrationLogin7SuccessTokens(t *testing.T) {
 
 	result := parseResult(t, resp)
 
-	// Token sequence: LOGINACK, ENVCHANGE, DONE.
-	expectedTokens := []byte{tdswire.TokenLoginAck, tdswire.TokenEnvChange, tdswire.TokenDone}
+	// Token sequence: ENVCHANGE(database), ENVCHANGE(packet size),
+	// LOGINACK, DONE — following the SQL Server convention where
+	// ENVCHANGE tokens precede LOGINACK.
+	expectedTokens := []byte{
+		tdswire.TokenEnvChange, tdswire.TokenEnvChange,
+		tdswire.TokenLoginAck, tdswire.TokenDone,
+	}
 	if !bytes.Equal(result.Tokens, expectedTokens) {
 		t.Errorf("expected token sequence %v, got %v", expectedTokens, result.Tokens)
 	}
@@ -301,9 +310,9 @@ func TestIntegrationLogin7SuccessTokens(t *testing.T) {
 		t.Errorf("expected Interface 1 (TSQL), got %d", result.LoginAck.Interface)
 	}
 
-	// ENVCHANGE: database should be "myappdb" (from the LOGIN7 request).
-	if len(result.EnvChanges) != 1 {
-		t.Fatalf("expected 1 ENVCHANGE, got %d", len(result.EnvChanges))
+	// ENVCHANGE: first is database, second is packet size.
+	if len(result.EnvChanges) != 2 {
+		t.Fatalf("expected 2 ENVCHANGEs, got %d", len(result.EnvChanges))
 	}
 	ec := result.EnvChanges[0]
 	if ec.Type != tdswire.EnvDatabase {
@@ -311,6 +320,10 @@ func TestIntegrationLogin7SuccessTokens(t *testing.T) {
 	}
 	if ec.NewValue != "myappdb" {
 		t.Errorf("expected new database 'myappdb', got %q", ec.NewValue)
+	}
+	ec2 := result.EnvChanges[1]
+	if ec2.Type != tdswire.EnvPacketSize {
+		t.Errorf("expected EnvPacketSize type, got %d", ec2.Type)
 	}
 
 	// DONE: must be final.
@@ -1098,9 +1111,10 @@ func TestIntegrationLogin7DefaultDatabase(t *testing.T) {
 	_, _, loginResp := fullLogin(t, conn, "", "", "")
 
 	// Verify ENVCHANGE in login response shows the default database.
+	// Login sends 2 ENVCHANGEs: database then packet size.
 	loginResult := parseResult(t, loginResp)
-	if len(loginResult.EnvChanges) != 1 {
-		t.Fatalf("expected 1 ENVCHANGE in login, got %d", len(loginResult.EnvChanges))
+	if len(loginResult.EnvChanges) != 2 {
+		t.Fatalf("expected 2 ENVCHANGEs in login, got %d", len(loginResult.EnvChanges))
 	}
 	if loginResult.EnvChanges[0].NewValue != "defaultdb" {
 		t.Errorf("expected default database 'defaultdb', got %q", loginResult.EnvChanges[0].NewValue)
