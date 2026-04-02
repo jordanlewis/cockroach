@@ -73,6 +73,7 @@ const (
 	tokenDELETE
 	tokenUPDATE
 	tokenSET
+	tokenDROP
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
@@ -107,6 +108,7 @@ var keywords = map[string]tokenType{
 	"DELETE":   tokenDELETE,
 	"UPDATE":   tokenUPDATE,
 	"SET":      tokenSET,
+	"DROP":     tokenDROP,
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
 	"GETDATE":  tokenGETDATE,

@@ -1,0 +1,34 @@
+# DROP TABLE and DROP DATABASE tests.
+
+# Create and drop a table.
+exec
+CREATE TABLE drop_test (id INT, name VARCHAR(50))
+----
+
+exec
+INSERT INTO drop_test (id, name) VALUES (1, 'test')
+----
+
+query colnames
+SELECT id, name FROM drop_test
+----
+id  name
+1  test
+
+exec
+DROP TABLE drop_test
+----
+
+# Selecting from a dropped table should error.
+query error=(does not exist)
+SELECT * FROM drop_test
+----
+
+# Create and drop a database.
+exec
+CREATE DATABASE drop_test_db
+----
+
+exec
+DROP DATABASE drop_test_db
+----
