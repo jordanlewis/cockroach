@@ -1,0 +1,38 @@
+# ORDER BY clause.
+#
+# CQL ORDER BY is limited to clustering columns and only reverses the
+# clustering order (ASC/DESC). The parser does not handle ORDER BY, so
+# it appears as an unexpected token after the parsed statement.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_ob (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+# ORDER BY on clustering column.
+error
+SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck
+----
+at position 34: unexpected token "ORDER" after statement
+
+# ORDER BY with ASC.
+error
+SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck ASC
+----
+at position 34: unexpected token "ORDER" after statement
+
+# ORDER BY with DESC.
+error
+SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck DESC
+----
+at position 34: unexpected token "ORDER" after statement
+
+# ORDER BY on non-clustering column (would be invalid even in
+# Cassandra, but the parser rejects it at the syntax level).
+error
+SELECT * FROM sel_ob ORDER BY val
+----
+at position 21: unexpected token "ORDER" after statement

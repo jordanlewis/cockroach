@@ -1,0 +1,93 @@
+# WHERE clauses on partition key columns.
+#
+# Partition keys define how data is distributed across nodes.
+# Equality filters on partition keys target a specific partition.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_pk (pk int, val text, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO sel_pk (pk, val) VALUES (1, 'one')
+----
+
+exec
+INSERT INTO sel_pk (pk, val) VALUES (2, 'two')
+----
+
+exec
+INSERT INTO sel_pk (pk, val) VALUES (3, 'three')
+----
+
+# Equality on partition key returns a single row.
+query
+SELECT pk, val FROM sel_pk WHERE pk = 1
+----
+pk val
+1 one
+
+# Equality on partition key with no match returns header only.
+query
+SELECT pk, val FROM sel_pk WHERE pk = 999
+----
+pk val
+
+# Range comparison on partition key.
+query rowsort
+SELECT pk, val FROM sel_pk WHERE pk > 1
+----
+pk val
+2 two
+3 three
+
+# Less-than on partition key.
+query rowsort
+SELECT pk, val FROM sel_pk WHERE pk < 3
+----
+pk val
+1 one
+2 two
+
+# Not-equal on partition key.
+query rowsort
+SELECT pk, val FROM sel_pk WHERE pk != 2
+----
+pk val
+1 one
+3 three
+
+# Composite partition key table: both columns form the partition key.
+exec
+CREATE TABLE IF NOT EXISTS sel_cpk (pk1 int, pk2 text, val text, PRIMARY KEY ((pk1, pk2)))
+----
+
+exec
+INSERT INTO sel_cpk (pk1, pk2, val) VALUES (1, 'a', 'first')
+----
+
+exec
+INSERT INTO sel_cpk (pk1, pk2, val) VALUES (1, 'b', 'second')
+----
+
+exec
+INSERT INTO sel_cpk (pk1, pk2, val) VALUES (2, 'a', 'third')
+----
+
+# Equality on both partition key columns targets a single partition.
+query
+SELECT pk1, pk2, val FROM sel_cpk WHERE pk1 = 1 AND pk2 = 'a'
+----
+pk1 pk2 val
+1 a first
+
+# Equality on first partition key column only (scans multiple partitions).
+query rowsort
+SELECT pk1, pk2, val FROM sel_cpk WHERE pk1 = 1
+----
+pk1 pk2 val
+1 a first
+1 b second

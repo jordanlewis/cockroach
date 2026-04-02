@@ -1,0 +1,68 @@
+# LIMIT and PER PARTITION LIMIT.
+#
+# LIMIT restricts the total number of rows returned. PER PARTITION
+# LIMIT restricts rows per partition. LIMIT is supported; PER
+# PARTITION LIMIT is not.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_lim (pk int, val text, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO sel_lim (pk, val) VALUES (1, 'one')
+----
+
+exec
+INSERT INTO sel_lim (pk, val) VALUES (2, 'two')
+----
+
+exec
+INSERT INTO sel_lim (pk, val) VALUES (3, 'three')
+----
+
+exec
+INSERT INTO sel_lim (pk, val) VALUES (4, 'four')
+----
+
+# LIMIT 1 returns a single row.
+query
+SELECT pk, val FROM sel_lim WHERE pk = 1 LIMIT 1
+----
+pk val
+1 one
+
+# LIMIT 2 returns up to two rows.
+query rowsort
+SELECT pk, val FROM sel_lim LIMIT 2
+----
+pk val
+1 one
+2 two
+
+# LIMIT larger than row count returns all rows.
+query rowsort
+SELECT pk, val FROM sel_lim LIMIT 100
+----
+pk val
+1 one
+2 two
+3 three
+4 four
+
+# LIMIT with WHERE clause.
+query rowsort
+SELECT pk, val FROM sel_lim WHERE pk > 1 LIMIT 2
+----
+pk val
+2 two
+3 three
+
+# PER PARTITION LIMIT is not supported by the parser.
+error
+SELECT * FROM sel_lim PER PARTITION LIMIT 1
+----
+at position 22: unexpected token "PER" after statement
