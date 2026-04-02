@@ -1,0 +1,115 @@
+# Multi-row and ordering tests.
+
+# Set up a table with data.
+exec
+CREATE TABLE students (id INT, name VARCHAR(50), grade INT)
+----
+
+exec
+INSERT INTO students (id, name, grade) VALUES (1, 'alice', 90)
+----
+
+exec
+INSERT INTO students (id, name, grade) VALUES (2, 'bob', 85)
+----
+
+exec
+INSERT INTO students (id, name, grade) VALUES (3, 'carol', 95)
+----
+
+exec
+INSERT INTO students (id, name, grade) VALUES (4, 'dave', 88)
+----
+
+exec
+INSERT INTO students (id, name, grade) VALUES (5, 'eve', 92)
+----
+
+# SELECT all rows ordered.
+query colnames
+SELECT id, name, grade FROM students ORDER BY id
+----
+id  name  grade
+1  alice  90
+2  bob  85
+3  carol  95
+4  dave  88
+5  eve  92
+
+# ORDER BY DESC.
+query colnames
+SELECT name, grade FROM students ORDER BY grade DESC
+----
+name  grade
+carol  95
+eve  92
+alice  90
+dave  88
+bob  85
+
+# TOP with ORDER BY.
+query colnames
+SELECT TOP 3 name, grade FROM students ORDER BY grade DESC
+----
+name  grade
+carol  95
+eve  92
+alice  90
+
+# WHERE with multiple conditions.
+query colnames
+SELECT name, grade FROM students WHERE grade >= 90 AND grade <= 95 ORDER BY name
+----
+name  grade
+alice  90
+carol  95
+eve  92
+
+# WHERE with OR.
+query colnames
+SELECT name FROM students WHERE name = 'alice' OR name = 'carol' ORDER BY name
+----
+name
+alice
+carol
+
+# WHERE with LIKE.
+query colnames
+SELECT name FROM students WHERE name LIKE '%e' ORDER BY name
+----
+name
+alice
+dave
+eve
+
+# WHERE with IN.
+query colnames
+SELECT name, grade FROM students WHERE id IN (1, 3, 5) ORDER BY id
+----
+name  grade
+alice  90
+carol  95
+eve  92
+
+# WHERE with BETWEEN.
+query colnames
+SELECT name, grade FROM students WHERE grade BETWEEN 88 AND 92 ORDER BY grade
+----
+name  grade
+dave  88
+alice  90
+eve  92
+
+# Computed columns.
+query colnames
+SELECT name, grade, grade + 5 AS curved FROM students WHERE id = 1
+----
+name  grade  curved
+alice  90  95
+
+# TOP 1.
+query colnames
+SELECT TOP 1 name FROM students ORDER BY grade DESC
+----
+name
+carol

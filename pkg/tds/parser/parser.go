@@ -552,8 +552,29 @@ func (p *parser) parseComparison() (Expr, error) {
 			return nil, err
 		}
 		return &BinaryExpr{Left: left, Op: "LIKE", Right: right}, nil
+	case tokenIN:
+		p.lex.next()
+		values, err := p.parseInList()
+		if err != nil {
+			return nil, err
+		}
+		return &InExpr{Expr: left, Values: values, Not: false}, nil
+	case tokenBETWEEN:
+		p.lex.next()
+		low, err := p.parseAddition()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenAND); err != nil {
+			return nil, err
+		}
+		high, err := p.parseAddition()
+		if err != nil {
+			return nil, err
+		}
+		return &BetweenExpr{Expr: left, Low: low, High: high, Not: false}, nil
 	case tokenNOT:
-		// Handle NOT LIKE, NOT IN, NOT BETWEEN
+		// Handle NOT LIKE, NOT IN, NOT BETWEEN.
 		p.lex.next()
 		switch p.lex.peek().typ {
 		case tokenLIKE:
@@ -563,11 +584,56 @@ func (p *parser) parseComparison() (Expr, error) {
 				return nil, err
 			}
 			return &BinaryExpr{Left: left, Op: "NOT LIKE", Right: right}, nil
+		case tokenIN:
+			p.lex.next()
+			values, err := p.parseInList()
+			if err != nil {
+				return nil, err
+			}
+			return &InExpr{Expr: left, Values: values, Not: true}, nil
+		case tokenBETWEEN:
+			p.lex.next()
+			low, err := p.parseAddition()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenAND); err != nil {
+				return nil, err
+			}
+			high, err := p.parseAddition()
+			if err != nil {
+				return nil, err
+			}
+			return &BetweenExpr{Expr: left, Low: low, High: high, Not: true}, nil
 		default:
 			return nil, p.error("expected LIKE, IN, or BETWEEN after NOT")
 		}
 	}
 	return left, nil
+}
+
+// parseInList parses a parenthesized, comma-separated list of expressions
+// for use with the IN operator: (expr, expr, ...).
+func (p *parser) parseInList() ([]Expr, error) {
+	if err := p.expect(tokenLParen); err != nil {
+		return nil, err
+	}
+	var values []Expr
+	for {
+		val, err := p.parseAddition()
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, val)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (p *parser) parseAddition() (Expr, error) {
