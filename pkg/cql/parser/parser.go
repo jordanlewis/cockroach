@@ -58,6 +58,10 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseInsert()
 	case "SELECT":
 		return p.parseSelect()
+	case "UPDATE":
+		return p.parseUpdate()
+	case "DELETE":
+		return p.parseDelete()
 	default:
 		return nil, p.errorf("unsupported statement %q", t.val)
 	}
@@ -332,6 +336,137 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 	}
 
 	return stmt, nil
+}
+
+// parseUpdate parses:
+//
+//	UPDATE [<ks>.]<table> SET <col> = <val>, ... WHERE <conds>
+//	  [IF EXISTS | IF <conds>]
+func (p *parser) parseUpdate() (*UpdateStatement, error) {
+	p.lex.next() // consume UPDATE
+	stmt := &UpdateStatement{}
+
+	ks, tbl, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.Table = tbl
+
+	if err := p.expectKeyword("SET"); err != nil {
+		return nil, err
+	}
+
+	// Parse SET assignments: col = val [, col = val, ...]
+	assignments, err := p.parseAssignments()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Assignments = assignments
+
+	// WHERE clause.
+	if err := p.expectKeyword("WHERE"); err != nil {
+		return nil, err
+	}
+	where, err := p.parseWhereClauses()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Where = where
+
+	// Optional IF EXISTS or IF conditions.
+	if isKeyword(p.lex.peek(), "IF") {
+		p.lex.next() // consume IF
+		if isKeyword(p.lex.peek(), "EXISTS") {
+			p.lex.next() // consume EXISTS
+			stmt.IfExists = true
+		} else {
+			conds, err := p.parseIfConditions()
+			if err != nil {
+				return nil, err
+			}
+			stmt.IfConds = conds
+		}
+	}
+
+	return stmt, nil
+}
+
+// parseDelete parses:
+//
+//	DELETE FROM [<ks>.]<table> WHERE <conds> [IF EXISTS | IF <conds>]
+func (p *parser) parseDelete() (*DeleteStatement, error) {
+	p.lex.next() // consume DELETE
+
+	if err := p.expectKeyword("FROM"); err != nil {
+		return nil, err
+	}
+	stmt := &DeleteStatement{}
+
+	ks, tbl, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.Table = tbl
+
+	// WHERE clause.
+	if err := p.expectKeyword("WHERE"); err != nil {
+		return nil, err
+	}
+	where, err := p.parseWhereClauses()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Where = where
+
+	// Optional IF EXISTS or IF conditions.
+	if isKeyword(p.lex.peek(), "IF") {
+		p.lex.next() // consume IF
+		if isKeyword(p.lex.peek(), "EXISTS") {
+			p.lex.next() // consume EXISTS
+			stmt.IfExists = true
+		} else {
+			conds, err := p.parseIfConditions()
+			if err != nil {
+				return nil, err
+			}
+			stmt.IfConds = conds
+		}
+	}
+
+	return stmt, nil
+}
+
+// parseAssignments parses SET <col> = <val> [, <col> = <val>, ...].
+func (p *parser) parseAssignments() ([]Assignment, error) {
+	var assignments []Assignment
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(tokEq); err != nil {
+			return nil, err
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		assignments = append(assignments, Assignment{Column: col, Value: val})
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	return assignments, nil
+}
+
+// parseIfConditions parses IF <col> <op> <val> [AND <col> <op> <val>, ...].
+// This reuses the WHERE clause parser since CQL IF conditions have the same
+// syntax as WHERE conditions.
+func (p *parser) parseIfConditions() ([]WhereClause, error) {
+	return p.parseWhereClauses()
 }
 
 // ---------------------------------------------------------------------------

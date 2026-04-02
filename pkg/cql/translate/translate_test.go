@@ -238,6 +238,82 @@ func TestTranslateSelect(t *testing.T) {
 	}
 }
 
+func TestTranslateUpdate(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "simple update",
+			cql:  "UPDATE users SET name = 'bob' WHERE id = 1",
+			want: `UPDATE "users" SET "name" = 'bob' WHERE "id" = 1`,
+		},
+		{
+			name: "multiple assignments",
+			cql:  "UPDATE users SET name = 'alice', val = 42 WHERE id = 1",
+			want: `UPDATE "users" SET "name" = 'alice', "val" = 42 WHERE "id" = 1`,
+		},
+		{
+			name: "with keyspace",
+			cql:  "UPDATE ks.users SET name = 'x' WHERE id = 1",
+			want: `UPDATE "ks"."users" SET "name" = 'x' WHERE "id" = 1`,
+		},
+		{
+			name: "if exists ignored",
+			cql:  "UPDATE users SET val = 1 WHERE id = 1 IF EXISTS",
+			want: `UPDATE "users" SET "val" = 1 WHERE "id" = 1`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestTranslateDelete(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "simple delete",
+			cql:  "DELETE FROM users WHERE id = 1",
+			want: `DELETE FROM "users" WHERE "id" = 1`,
+		},
+		{
+			name: "with keyspace",
+			cql:  "DELETE FROM ks.users WHERE id = 1",
+			want: `DELETE FROM "ks"."users" WHERE "id" = 1`,
+		},
+		{
+			name: "if exists ignored",
+			cql:  "DELETE FROM users WHERE id = 1 IF EXISTS",
+			want: `DELETE FROM "users" WHERE "id" = 1`,
+		},
+		{
+			name: "multiple where clauses",
+			cql:  "DELETE FROM t WHERE pk = 1 AND ck = 2",
+			want: `DELETE FROM "t" WHERE "pk" = 1 AND "ck" = 2`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
 func TestConsistencyToIsolation(t *testing.T) {
 	tests := []struct {
 		consistency string
@@ -289,6 +365,8 @@ func TestTranslateRoundTrip(t *testing.T) {
 		"SELECT * FROM t WHERE id IN (1, 2, 3)",
 		"SELECT * FROM t WHERE a = 1 ALLOW FILTERING",
 		"SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk LIMIT 5 ALLOW FILTERING",
+		"UPDATE t SET name = 'x' WHERE id = 1",
+		"DELETE FROM t WHERE id = 1",
 	}
 	for _, cql := range cqlStatements {
 		t.Run(cql, func(t *testing.T) {

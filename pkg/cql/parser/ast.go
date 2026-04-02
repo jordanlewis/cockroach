@@ -83,6 +83,38 @@ type InsertStatement struct {
 
 func (*InsertStatement) statementNode() {}
 
+// UpdateStatement represents
+// UPDATE [<ks>.]<table> SET <col> = <val>, ... WHERE <conds> [IF <conds>|IF EXISTS].
+type UpdateStatement struct {
+	Table    string
+	Keyspace string // empty when unqualified
+	// Assignments is the list of SET assignments: col = val.
+	Assignments []Assignment
+	Where       []WhereClause
+	IfExists    bool
+	IfConds     []WhereClause // IF col = val conditions (empty when not conditional)
+}
+
+func (*UpdateStatement) statementNode() {}
+
+// Assignment represents a SET assignment: <col> = <val>.
+type Assignment struct {
+	Column string
+	Value  Expr
+}
+
+// DeleteStatement represents
+// DELETE FROM [<ks>.]<table> WHERE <conds> [IF <conds>|IF EXISTS].
+type DeleteStatement struct {
+	Table    string
+	Keyspace string // empty when unqualified
+	Where    []WhereClause
+	IfExists bool
+	IfConds  []WhereClause // IF col = val conditions (empty when not conditional)
+}
+
+func (*DeleteStatement) statementNode() {}
+
 // SelectStatement represents
 // SELECT [DISTINCT] <cols> FROM <table> [WHERE <conds>]
 // [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>] [ALLOW FILTERING].
