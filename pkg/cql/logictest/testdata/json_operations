@@ -1,0 +1,156 @@
+# Tests for CQL JSON operations and CAST expressions.
+#
+# CQL provides INSERT JSON and SELECT JSON syntax for working with
+# JSON-encoded rows, plus toJson() and fromJson() functions for
+# per-column JSON conversion. CAST() provides type conversion.
+# None of these are supported by the parser.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS json_tbl (id int, name text, val int, PRIMARY KEY (id))
+----
+
+# Seed data for reference.
+exec
+INSERT INTO json_tbl (id, name, val) VALUES (1, 'alice', 100)
+----
+
+# ---------------------------------------------------------------
+# INSERT JSON (unsupported).
+#
+# CQL: INSERT INTO t JSON '<json_string>'
+# After parsing the table name, the parser expects '(' to begin
+# the column list, but encounters the JSON keyword instead.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO json_tbl JSON '{"id": 2, "name": "bob", "val": 200}'
+----
+at position 21: expected '(', got "JSON"
+
+# INSERT JSON with IF NOT EXISTS.
+error
+INSERT INTO json_tbl JSON '{"id": 3}' IF NOT EXISTS
+----
+at position 21: expected '(', got "JSON"
+
+# INSERT JSON with DEFAULT UNSET.
+error
+INSERT INTO json_tbl JSON '{"id": 4}' DEFAULT UNSET
+----
+at position 21: expected '(', got "JSON"
+
+# ---------------------------------------------------------------
+# SELECT JSON (unsupported).
+#
+# CQL: SELECT JSON * FROM t
+# CQL: SELECT JSON col1, col2 FROM t
+# The parser reads JSON as a column name in the selector list,
+# then encounters an unexpected token where FROM is expected.
+# ---------------------------------------------------------------
+
+# SELECT JSON with *.
+error
+SELECT JSON * FROM json_tbl
+----
+at position 12: expected FROM, got "*"
+
+# SELECT JSON with column names.
+error
+SELECT JSON id, name FROM json_tbl
+----
+at position 12: expected FROM, got "id"
+
+# SELECT JSON with WHERE clause.
+error
+SELECT JSON * FROM json_tbl WHERE id = 1
+----
+at position 12: expected FROM, got "*"
+
+# ---------------------------------------------------------------
+# toJson() function (unsupported).
+#
+# CQL: SELECT toJson(col) FROM t
+# The parser reads toJson as a column name, then encounters '('
+# where FROM is expected.
+# ---------------------------------------------------------------
+
+error
+SELECT toJson(id) FROM json_tbl WHERE id = 1
+----
+at position 13: expected FROM, got "("
+
+error
+SELECT toJson(name) FROM json_tbl WHERE id = 1
+----
+at position 13: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# fromJson() function (unsupported).
+#
+# CQL: INSERT INTO t (col) VALUES (fromJson('<json>'))
+# In an INSERT VALUES context, fromJson is parsed as an identifier
+# expression, which is not a valid expression type.
+# ---------------------------------------------------------------
+
+error
+SELECT fromJson('{"id": 1}') FROM json_tbl
+----
+at position 15: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# toJson() combined with regular columns.
+# ---------------------------------------------------------------
+
+error
+SELECT id, toJson(name) FROM json_tbl WHERE id = 1
+----
+at position 17: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# CAST expressions (unsupported).
+#
+# CQL: SELECT CAST(col AS type) FROM t
+# The parser reads CAST as a column name, then encounters '('
+# where FROM is expected.
+# ---------------------------------------------------------------
+
+error
+SELECT CAST(id AS bigint) FROM json_tbl WHERE id = 1
+----
+at position 11: expected FROM, got "("
+
+error
+SELECT CAST(val AS text) FROM json_tbl WHERE id = 1
+----
+at position 11: expected FROM, got "("
+
+# CAST in a multi-column SELECT.
+error
+SELECT id, CAST(val AS text) FROM json_tbl WHERE id = 1
+----
+at position 15: expected FROM, got "("
+
+# CAST with qualified type name.
+error
+SELECT CAST(id AS varchar) FROM json_tbl
+----
+at position 11: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# Verify the table still works with normal operations after all
+# the error tests above.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO json_tbl (id, name, val) VALUES (10, 'verify', 999)
+----
+
+query
+SELECT id, name, val FROM json_tbl WHERE id = 10
+----
+id name val
+10 verify 999

@@ -1,0 +1,160 @@
+# Tests for USING TTL and USING TIMESTAMP on individual DML statements.
+#
+# CQL supports per-row TTL (time-to-live) and explicit write timestamps
+# via USING TTL <seconds> and USING TIMESTAMP <microseconds> clauses on
+# INSERT, UPDATE, and DELETE. Neither clause is supported by the parser.
+# For INSERT and DELETE-after-WHERE, USING appears as an unexpected
+# trailing token. For UPDATE, USING appears where SET is expected.
+# The TTL() and writetime() pseudo-functions in SELECT are also
+# unsupported because the parser does not handle function-call syntax
+# in the selector list.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS ttl_ts (id int, ck int, val text, PRIMARY KEY (id, ck))
+----
+
+# Seed data for context (not used by error tests, but establishes the
+# table is functional).
+exec
+INSERT INTO ttl_ts (id, ck, val) VALUES (1, 1, 'seed')
+----
+
+# ---------------------------------------------------------------
+# INSERT with USING TTL.
+#
+# CQL: INSERT INTO t (...) VALUES (...) USING TTL <seconds>
+# The parser finishes the INSERT and then encounters the unexpected
+# USING token.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO ttl_ts (id, ck, val) VALUES (1, 1, 'a') USING TTL 3600
+----
+at position 52: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# INSERT with USING TIMESTAMP.
+#
+# CQL: INSERT INTO t (...) VALUES (...) USING TIMESTAMP <micros>
+# ---------------------------------------------------------------
+
+error
+INSERT INTO ttl_ts (id, ck, val) VALUES (2, 1, 'b') USING TIMESTAMP 1234567890
+----
+at position 52: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# INSERT with both USING TTL AND TIMESTAMP.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO ttl_ts (id, ck, val) VALUES (3, 1, 'c') USING TTL 3600 AND TIMESTAMP 1234567890
+----
+at position 52: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS with USING TTL.
+#
+# When IF NOT EXISTS is present, USING follows it. The parser
+# consumes IF NOT EXISTS, then encounters USING.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO ttl_ts (id, ck, val) VALUES (4, 1, 'd') IF NOT EXISTS USING TTL 3600
+----
+at position 66: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# UPDATE with USING TTL (before SET).
+#
+# CQL: UPDATE t USING TTL <seconds> SET ...
+# The parser expects SET after the table name, but gets USING.
+# ---------------------------------------------------------------
+
+error
+UPDATE ttl_ts USING TTL 3600 SET val = 'x' WHERE id = 1 AND ck = 1
+----
+at position 14: expected SET, got "USING"
+
+# ---------------------------------------------------------------
+# UPDATE with USING TIMESTAMP (before SET).
+# ---------------------------------------------------------------
+
+error
+UPDATE ttl_ts USING TIMESTAMP 1234567890 SET val = 'x' WHERE id = 1 AND ck = 1
+----
+at position 14: expected SET, got "USING"
+
+# ---------------------------------------------------------------
+# UPDATE with both USING TTL AND TIMESTAMP.
+# ---------------------------------------------------------------
+
+error
+UPDATE ttl_ts USING TTL 3600 AND TIMESTAMP 1234567890 SET val = 'x' WHERE id = 1 AND ck = 1
+----
+at position 14: expected SET, got "USING"
+
+# ---------------------------------------------------------------
+# DELETE with USING TIMESTAMP (before WHERE).
+#
+# CQL: DELETE FROM t USING TIMESTAMP <micros> WHERE ...
+# The parser expects WHERE after the table name, but gets USING.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM ttl_ts USING TIMESTAMP 1234567890 WHERE id = 1 AND ck = 1
+----
+at position 19: expected WHERE, got "USING"
+
+# ---------------------------------------------------------------
+# DELETE with USING TTL (non-standard, but test parser behavior).
+# ---------------------------------------------------------------
+
+error
+DELETE FROM ttl_ts USING TTL 3600 WHERE id = 1 AND ck = 1
+----
+at position 19: expected WHERE, got "USING"
+
+# ---------------------------------------------------------------
+# TTL() pseudo-function in SELECT.
+#
+# CQL: SELECT TTL(col) FROM t
+# The parser reads TTL as a column name and then encounters the
+# opening parenthesis where FROM is expected.
+# ---------------------------------------------------------------
+
+error
+SELECT TTL(val) FROM ttl_ts WHERE id = 1 AND ck = 1
+----
+at position 10: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# writetime() pseudo-function in SELECT.
+#
+# CQL: SELECT writetime(col) FROM t
+# Same failure mode: writetime is parsed as a column name, then
+# the parenthesis is unexpected.
+# ---------------------------------------------------------------
+
+error
+SELECT writetime(val) FROM ttl_ts WHERE id = 1 AND ck = 1
+----
+at position 16: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# Combined TTL() and writetime() in SELECT.
+# ---------------------------------------------------------------
+
+error
+SELECT TTL(val), writetime(val) FROM ttl_ts WHERE id = 1 AND ck = 1
+----
+at position 10: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# USING TTL on BATCH statements is tested separately in
+# batch_ttl_timestamp.
+# ---------------------------------------------------------------

@@ -1,0 +1,160 @@
+# Tests for TRUNCATE TABLE, IF EXISTS/IF NOT EXISTS on DDL statements.
+#
+# TRUNCATE TABLE is a standard CQL DDL statement for removing all rows
+# from a table. It is not supported by the parser (TRUNCATE is not a
+# recognized statement keyword). DROP TABLE/KEYSPACE IF EXISTS and
+# ALTER TABLE are likewise unsupported.
+#
+# IF NOT EXISTS is supported on CREATE TABLE and CREATE KEYSPACE.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS trunc_tbl (id int, name text, PRIMARY KEY (id))
+----
+
+# Seed data.
+exec
+INSERT INTO trunc_tbl (id, name) VALUES (1, 'alice')
+----
+
+exec
+INSERT INTO trunc_tbl (id, name) VALUES (2, 'bob')
+----
+
+# Verify seed data exists.
+query rowsort
+SELECT id, name FROM trunc_tbl
+----
+id name
+1 alice
+2 bob
+
+# ---------------------------------------------------------------
+# TRUNCATE TABLE (unsupported).
+#
+# The parser does not recognize TRUNCATE as a statement keyword.
+# ---------------------------------------------------------------
+
+error
+TRUNCATE TABLE trunc_tbl
+----
+at position 0: unsupported statement "TRUNCATE"
+
+# TRUNCATE without TABLE keyword (also valid CQL syntax).
+error
+TRUNCATE trunc_tbl
+----
+at position 0: unsupported statement "TRUNCATE"
+
+# ---------------------------------------------------------------
+# DROP TABLE (unsupported).
+# ---------------------------------------------------------------
+
+error
+DROP TABLE trunc_tbl
+----
+at position 0: unsupported statement "DROP"
+
+# DROP TABLE IF EXISTS.
+error
+DROP TABLE IF EXISTS trunc_tbl
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# DROP KEYSPACE (unsupported).
+# ---------------------------------------------------------------
+
+error
+DROP KEYSPACE defaultdb
+----
+at position 0: unsupported statement "DROP"
+
+# DROP KEYSPACE IF EXISTS.
+error
+DROP KEYSPACE IF EXISTS defaultdb
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# ALTER TABLE (unsupported).
+# ---------------------------------------------------------------
+
+# Add column.
+error
+ALTER TABLE trunc_tbl ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+# Drop column.
+error
+ALTER TABLE trunc_tbl DROP name
+----
+at position 0: unsupported statement "ALTER"
+
+# Rename column.
+error
+ALTER TABLE trunc_tbl RENAME name TO full_name
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# CREATE TABLE IF NOT EXISTS: idempotent creation.
+#
+# IF NOT EXISTS is parsed and translated. Creating a table that
+# already exists succeeds silently.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS trunc_tbl (id int, name text, PRIMARY KEY (id))
+----
+
+# Verify data is preserved (IF NOT EXISTS does not truncate).
+query rowsort
+SELECT id, name FROM trunc_tbl
+----
+id name
+1 alice
+2 bob
+
+# ---------------------------------------------------------------
+# CREATE TABLE without IF NOT EXISTS on an existing table.
+#
+# Without IF NOT EXISTS, creating a table that already exists
+# produces an error from CockroachDB's SQL layer.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE trunc_tbl (id int, name text, PRIMARY KEY (id))
+----
+cql-ddl: relation "defaultdb.public.trunc_tbl" already exists
+
+# ---------------------------------------------------------------
+# CREATE KEYSPACE IF NOT EXISTS: idempotent creation.
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS defaultdb WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE IF NOT EXISTS with different schema.
+#
+# IF NOT EXISTS is idempotent: even if the column definitions
+# differ, the existing table is kept unchanged. No error is
+# raised and no schema modification occurs.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS trunc_tbl (id int, completely_different text, PRIMARY KEY (id))
+----
+
+# Original schema is preserved.
+query
+SELECT id, name FROM trunc_tbl WHERE id = 1
+----
+id name
+1 alice
