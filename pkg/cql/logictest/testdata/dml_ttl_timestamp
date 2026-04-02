@@ -2,13 +2,9 @@
 #
 # CQL supports per-row TTL (time-to-live) and explicit write timestamps
 # via USING TTL and USING TIMESTAMP clauses on INSERT, UPDATE, and
-# DELETE. Neither clause is supported by the parser.
-#
-# On INSERT: the parser completes the statement and encounters the
-# unexpected USING token after the closing paren (or after IF NOT
-# EXISTS). On UPDATE: the parser expects SET immediately after the
-# table name, but USING appears instead. On DELETE: the parser
-# expects WHERE after the table name, but USING appears instead.
+# DELETE. The parser accepts these clauses for compatibility, but they
+# are silently ignored during translation — CockroachDB does not
+# support per-row TTL or write timestamps.
 #
 # See also: batch_ttl_timestamp (USING in BATCH context).
 
@@ -24,98 +20,86 @@ CREATE TABLE IF NOT EXISTS ttl_t (id int, ck int, val text, PRIMARY KEY (id, ck)
 # INSERT with USING TTL
 # ---------------------------------------------------------------
 
-# USING TTL sets a per-row time-to-live in seconds. The parser
-# finishes the INSERT and then encounters the unexpected USING token.
-error
+# USING TTL sets a per-row time-to-live in seconds. Parsed but ignored.
+exec
 INSERT INTO ttl_t (id, ck, val) VALUES (1, 1, 'ephemeral') USING TTL 3600
 ----
-at position 59: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
 # INSERT with USING TIMESTAMP
 # ---------------------------------------------------------------
 
 # USING TIMESTAMP sets an explicit write timestamp in microseconds.
-error
+# Parsed but ignored.
+exec
 INSERT INTO ttl_t (id, ck, val) VALUES (2, 1, 'timed') USING TIMESTAMP 1234567890
 ----
-at position 55: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
 # INSERT with both USING TTL and TIMESTAMP
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO ttl_t (id, ck, val) VALUES (3, 1, 'both') USING TTL 3600 AND TIMESTAMP 1234567890
 ----
-at position 54: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
 # INSERT IF NOT EXISTS with USING TTL
 #
-# In CQL, USING can follow IF NOT EXISTS. The parser consumes the
-# IF NOT EXISTS clause, then encounters USING at the top-level check.
+# In CQL, USING can follow IF NOT EXISTS. Parsed but ignored.
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO ttl_t (id, ck, val) VALUES (4, 1, 'guarded') IF NOT EXISTS USING TTL 3600
 ----
-at position 71: unexpected token "USING" after statement
 
 # INSERT IF NOT EXISTS with both USING TTL AND TIMESTAMP.
-error
+exec
 INSERT INTO ttl_t (id, ck, val) VALUES (5, 1, 'both_guards') IF NOT EXISTS USING TTL 3600 AND TIMESTAMP 1234567890
 ----
-at position 75: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
 # UPDATE with USING TTL
 #
 # In CQL, USING TTL appears between the table name and SET:
 #   UPDATE t USING TTL n SET col = val WHERE ...
-# The parser expects SET immediately after the table name.
+# Parsed but ignored.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE ttl_t USING TTL 3600 SET val = 'updated' WHERE id = 1 AND ck = 1
 ----
-at position 13: expected SET, got "USING"
 
 # ---------------------------------------------------------------
 # UPDATE with USING TIMESTAMP
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE ttl_t USING TIMESTAMP 1234567890 SET val = 'ts' WHERE id = 1 AND ck = 1
 ----
-at position 13: expected SET, got "USING"
 
 # UPDATE with both USING TTL AND TIMESTAMP.
-error
+exec
 UPDATE ttl_t USING TTL 3600 AND TIMESTAMP 1234567890 SET val = 'both' WHERE id = 1 AND ck = 1
 ----
-at position 13: expected SET, got "USING"
 
 # ---------------------------------------------------------------
 # DELETE with USING TIMESTAMP
 #
 # In CQL, USING TIMESTAMP appears between the table name and WHERE:
 #   DELETE FROM t USING TIMESTAMP n WHERE ...
-# This is the only USING clause valid on DELETE (TTL on DELETE is
-# meaningless). The parser expects WHERE after the table name.
+# Parsed but ignored.
 # ---------------------------------------------------------------
 
-error
+exec
 DELETE FROM ttl_t USING TIMESTAMP 1234567890 WHERE id = 1 AND ck = 1
 ----
-at position 18: expected WHERE, got "USING"
 
-# DELETE with USING TTL (not valid even in Cassandra, but tests
-# parser behavior for unexpected USING token).
-error
+# DELETE with USING TTL (not valid in Cassandra, but the parser
+# accepts it for generality — the clause is silently ignored).
+exec
 DELETE FROM ttl_t USING TTL 3600 WHERE id = 1 AND ck = 1
 ----
-at position 18: expected WHERE, got "USING"
 
 # ---------------------------------------------------------------
 # Verify normal operations still work (no USING).

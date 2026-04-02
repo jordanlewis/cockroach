@@ -1,9 +1,10 @@
 # Primary key tests: clustering order.
 #
 # In Cassandra, WITH CLUSTERING ORDER BY controls the default sort order
-# of rows within a partition. This is not yet supported in the CQL parser
-# (table-level WITH clauses are not parsed). This file tests:
-#   1. Error cases for WITH CLUSTERING ORDER BY
+# of rows within a partition. The parser accepts this clause for
+# compatibility but it is silently ignored — CockroachDB uses the
+# column order in the PRIMARY KEY definition. This file tests:
+#   1. WITH CLUSTERING ORDER BY (parsed, silently ignored)
 #   2. Default clustering order (ASC) behavior
 #   3. Explicit ORDER BY to reverse clustering order
 #   4. Multi-column clustering order verification
@@ -13,32 +14,28 @@ USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# WITH CLUSTERING ORDER BY: unsupported (error cases)
+# WITH CLUSTERING ORDER BY (parsed, silently ignored)
 # ---------------------------------------------------------------
 
 # Single clustering column, DESC.
-error
+exec
 CREATE TABLE keys_co_desc (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)
 ----
-at position 75: unexpected token "WITH" after statement
 
 # Single clustering column, ASC (explicit, same as default).
-error
+exec
 CREATE TABLE keys_co_asc (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck ASC)
 ----
-at position 74: unexpected token "WITH" after statement
 
 # Multiple clustering columns with mixed order.
-error
+exec
 CREATE TABLE keys_co_mixed (pk int, ck1 int, ck2 text, val text, PRIMARY KEY (pk, ck1, ck2)) WITH CLUSTERING ORDER BY (ck1 ASC, ck2 DESC)
 ----
-at position 93: unexpected token "WITH" after statement
 
 # WITH CLUSTERING ORDER BY combined with other table options.
-error
+exec
 CREATE TABLE keys_co_opts (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC) AND gc_grace_seconds = 86400
 ----
-at position 75: unexpected token "WITH" after statement
 
 # ---------------------------------------------------------------
 # Default clustering order: ASC on integers

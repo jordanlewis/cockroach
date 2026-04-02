@@ -156,33 +156,26 @@ pk ck name val
 100 3 row3 3
 
 # ---------------------------------------------------------------
-# INSERT with USING TTL (unsupported).
-#
-# CQL USING TTL sets a per-row time-to-live. The parser finishes
-# parsing the INSERT and then encounters the unexpected USING token.
+# INSERT with USING TTL (parsed but silently ignored).
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (30, 1, 'ttl', 1) USING TTL 3600
 ----
-at position 65: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
-# INSERT with USING TIMESTAMP (unsupported).
-#
-# CQL USING TIMESTAMP sets an explicit write timestamp (microseconds).
+# INSERT with USING TIMESTAMP (parsed but silently ignored).
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (31, 1, 'ts', 1) USING TIMESTAMP 1234567890
 ----
-at position 64: unexpected token "USING" after statement
 
 # ---------------------------------------------------------------
-# INSERT with both USING TTL and TIMESTAMP (unsupported).
+# INSERT with both USING TTL and TIMESTAMP (parsed but silently
+# ignored).
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (32, 1, 'both', 1) USING TTL 3600 AND TIMESTAMP 1234567890
 ----
-at position 66: unexpected token "USING" after statement

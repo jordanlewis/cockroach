@@ -159,22 +159,17 @@ UPDATE dml_upd_counter SET c = c - 1 WHERE id = 1
 unexpected character '-' at position 33
 
 # ---------------------------------------------------------------
-# UPDATE with USING TTL (unsupported).
-#
-# CQL allows USING TTL before SET to apply a TTL to the update.
-# The parser expects SET immediately after the table name.
+# UPDATE with USING TTL (parsed but silently ignored).
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE dml_upd USING TTL 7200 SET val = 1 WHERE pk = 1 AND ck = 10
 ----
-at position 15: expected SET, got "USING"
 
 # ---------------------------------------------------------------
-# UPDATE with USING TIMESTAMP (unsupported).
+# UPDATE with USING TIMESTAMP (parsed but silently ignored).
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE dml_upd USING TIMESTAMP 1234567890 SET val = 1 WHERE pk = 1 AND ck = 10
 ----
-at position 15: expected SET, got "USING"

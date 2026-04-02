@@ -183,38 +183,33 @@ ALTER TABLE lt_ddl_basic ALTER name TYPE varchar
 at position 0: unsupported statement "ALTER"
 
 # ---------------------------------------------------------------
-# Table options (unsupported — WITH clause not parsed)
+# Table options (parsed but silently ignored)
 # ---------------------------------------------------------------
 
 # Table with compaction option.
-error
+exec
 CREATE TABLE lt_ddl_compact (id int PRIMARY KEY, val text) WITH compaction = {'class': 'LeveledCompactionStrategy'}
 ----
-at position 59: unexpected token "WITH" after statement
 
 # Table with gc_grace_seconds.
-error
+exec
 CREATE TABLE lt_ddl_gc (id int PRIMARY KEY, val text) WITH gc_grace_seconds = 86400
 ----
-at position 54: unexpected token "WITH" after statement
 
 # Table with comment.
-error
+exec
 CREATE TABLE lt_ddl_comment (id int PRIMARY KEY, val text) WITH comment = 'A test table'
 ----
-at position 59: unexpected token "WITH" after statement
 
 # Table with default_time_to_live.
-error
+exec
 CREATE TABLE lt_ddl_ttl (id int PRIMARY KEY, val text) WITH default_time_to_live = 3600
 ----
-at position 55: unexpected token "WITH" after statement
 
 # Table with multiple options combined with AND.
-error
+exec
 CREATE TABLE lt_ddl_multi_opts (id int PRIMARY KEY, val text) WITH gc_grace_seconds = 86400 AND compaction = {'class': 'SizeTieredCompactionStrategy'}
 ----
-at position 62: unexpected token "WITH" after statement
 
 # ---------------------------------------------------------------
 # CREATE INDEX (unsupported)

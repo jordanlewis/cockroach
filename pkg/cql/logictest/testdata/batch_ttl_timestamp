@@ -2,7 +2,8 @@
 #
 # CQL supports per-row TTL (time-to-live) and explicit write
 # timestamps. These are specified via USING TTL and USING TIMESTAMP
-# clauses. Neither is supported by the parser.
+# clauses. The parser accepts these for compatibility but they are
+# silently ignored during translation.
 
 exec
 USE defaultdb
@@ -12,24 +13,20 @@ exec
 CREATE TABLE IF NOT EXISTS ttl_test (id int PRIMARY KEY, val text)
 ----
 
-# INSERT with USING TTL. The parser finishes the INSERT and then
-# encounters the unexpected USING token.
-error
+# INSERT with USING TTL. Parsed but ignored.
+exec
 INSERT INTO ttl_test (id, val) VALUES (1, 'ephemeral') USING TTL 3600
 ----
-at position 55: unexpected token "USING" after statement
 
-# INSERT with USING TIMESTAMP for explicit write timestamp.
-error
+# INSERT with USING TIMESTAMP for explicit write timestamp. Parsed but ignored.
+exec
 INSERT INTO ttl_test (id, val) VALUES (2, 'timed') USING TIMESTAMP 1234567890
 ----
-at position 51: unexpected token "USING" after statement
 
-# INSERT with both USING TTL and TIMESTAMP.
-error
+# INSERT with both USING TTL and TIMESTAMP. Parsed but ignored.
+exec
 INSERT INTO ttl_test (id, val) VALUES (3, 'both') USING TTL 3600 AND TIMESTAMP 1234567890
 ----
-at position 50: unexpected token "USING" after statement
 
 # TTL() function in SELECT is not supported (function call syntax).
 # The parser reads TTL as a column name and fails on the parenthesis.
@@ -44,9 +41,7 @@ SELECT writetime(val) FROM ttl_test
 ----
 at position 16: expected FROM, got "("
 
-# UPDATE with USING TTL to change TTL on existing rows.
-# The parser enters UPDATE parsing but expects SET, not USING.
-error
+# UPDATE with USING TTL to change TTL on existing rows. Parsed but ignored.
+exec
 UPDATE ttl_test USING TTL 7200 SET val = 'updated' WHERE id = 1
 ----
-at position 16: expected SET, got "USING"

@@ -206,6 +206,14 @@ func (p *parser) parseCreateTable() (*CreateTableStatement, error) {
 	if err := p.expectToken(tokRParen); err != nil {
 		return nil, err
 	}
+
+	// Optional WITH clause: table properties and/or CLUSTERING ORDER BY.
+	if isKeyword(p.lex.peek(), "WITH") {
+		if err := p.parseTableWithClause(stmt); err != nil {
+			return nil, err
+		}
+	}
+
 	return stmt, nil
 }
 
@@ -257,6 +265,13 @@ func (p *parser) parseInsert() (*InsertStatement, error) {
 
 	// Optional IF NOT EXISTS.
 	stmt.IfNotExists = p.tryIfNotExists()
+
+	// Optional USING TTL/TIMESTAMP.
+	using, err := p.parseUsingClause()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Using = using
 
 	return stmt, nil
 }
@@ -353,6 +368,13 @@ func (p *parser) parseUpdate() (*UpdateStatement, error) {
 	stmt.Keyspace = ks
 	stmt.Table = tbl
 
+	// Optional USING TTL/TIMESTAMP (appears between table name and SET).
+	using, err := p.parseUsingClause()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Using = using
+
 	if err := p.expectKeyword("SET"); err != nil {
 		return nil, err
 	}
@@ -409,6 +431,13 @@ func (p *parser) parseDelete() (*DeleteStatement, error) {
 	}
 	stmt.Keyspace = ks
 	stmt.Table = tbl
+
+	// Optional USING TIMESTAMP (appears between table name and WHERE).
+	using, err := p.parseUsingClause()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Using = using
 
 	// WHERE clause.
 	if err := p.expectKeyword("WHERE"); err != nil {
@@ -467,6 +496,151 @@ func (p *parser) parseAssignments() ([]Assignment, error) {
 // syntax as WHERE conditions.
 func (p *parser) parseIfConditions() ([]WhereClause, error) {
 	return p.parseWhereClauses()
+}
+
+// parseUsingClause parses an optional USING TTL/TIMESTAMP clause:
+//
+//	USING TTL <n> [AND TIMESTAMP <n>]
+//	USING TIMESTAMP <n> [AND TTL <n>]
+//
+// Returns nil if no USING keyword is present.
+func (p *parser) parseUsingClause() (*UsingClause, error) {
+	if !isKeyword(p.lex.peek(), "USING") {
+		return nil, nil
+	}
+	p.lex.next() // consume USING
+	uc := &UsingClause{}
+	if err := p.parseUsingOption(uc); err != nil {
+		return nil, err
+	}
+	// Optional AND for a second option.
+	if isKeyword(p.lex.peek(), "AND") {
+		p.lex.next() // consume AND
+		if err := p.parseUsingOption(uc); err != nil {
+			return nil, err
+		}
+	}
+	return uc, nil
+}
+
+// parseUsingOption parses a single TTL <n> or TIMESTAMP <n> within a
+// USING clause and stores the value in uc.
+func (p *parser) parseUsingOption(uc *UsingClause) error {
+	t := p.lex.peek()
+	switch strings.ToUpper(t.val) {
+	case "TTL":
+		p.lex.next() // consume TTL
+		val, err := p.parseExpr()
+		if err != nil {
+			return err
+		}
+		uc.TTL = val
+	case "TIMESTAMP":
+		p.lex.next() // consume TIMESTAMP
+		val, err := p.parseExpr()
+		if err != nil {
+			return err
+		}
+		uc.Timestamp = val
+	default:
+		return p.errorf("expected TTL or TIMESTAMP after USING, got %q", t.val)
+	}
+	return nil
+}
+
+// parseTableWithClause parses the WITH clause after a CREATE TABLE
+// definition. It handles both regular properties (key = value) and the
+// special CLUSTERING ORDER BY (...) syntax:
+//
+//	WITH CLUSTERING ORDER BY (col1 ASC, col2 DESC)
+//	WITH gc_grace_seconds = 86400
+//	WITH compaction = {'class': 'LeveledCompactionStrategy'}
+//	WITH CLUSTERING ORDER BY (...) AND gc_grace_seconds = 86400
+func (p *parser) parseTableWithClause(stmt *CreateTableStatement) error {
+	p.lex.next() // consume WITH
+
+	for {
+		if isKeyword(p.lex.peek(), "CLUSTERING") {
+			if err := p.parseClusteringOrderBy(stmt); err != nil {
+				return err
+			}
+		} else {
+			prop, err := p.parseTableProperty()
+			if err != nil {
+				return err
+			}
+			stmt.WithProperties = append(stmt.WithProperties, prop)
+		}
+		if !isKeyword(p.lex.peek(), "AND") {
+			break
+		}
+		p.lex.next() // consume AND
+	}
+	return nil
+}
+
+// parseClusteringOrderBy parses:
+//
+//	CLUSTERING ORDER BY (col1 ASC, col2 DESC, ...)
+func (p *parser) parseClusteringOrderBy(stmt *CreateTableStatement) error {
+	if err := p.expectKeyword("CLUSTERING"); err != nil {
+		return err
+	}
+	if err := p.expectKeyword("ORDER"); err != nil {
+		return err
+	}
+	if err := p.expectKeyword("BY"); err != nil {
+		return err
+	}
+	if err := p.expectToken(tokLParen); err != nil {
+		return err
+	}
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return err
+		}
+		entry := ClusteringOrderEntry{Column: col}
+		if isKeyword(p.lex.peek(), "DESC") {
+			p.lex.next()
+			entry.Desc = true
+		} else if isKeyword(p.lex.peek(), "ASC") {
+			p.lex.next()
+		}
+		stmt.ClusteringOrder = append(stmt.ClusteringOrder, entry)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	return p.expectToken(tokRParen)
+}
+
+// parseTableProperty parses a single key = value table option. The value
+// may be a scalar (integer, string) or a map literal ({...}).
+func (p *parser) parseTableProperty() (TableProperty, error) {
+	key, err := p.expectIdent()
+	if err != nil {
+		return TableProperty{}, err
+	}
+	if err := p.expectToken(tokEq); err != nil {
+		return TableProperty{}, err
+	}
+	prop := TableProperty{Key: key}
+	if p.lex.peek().kind == tokLBrace {
+		m, err := p.parseMapLiteral()
+		if err != nil {
+			return TableProperty{}, err
+		}
+		prop.MapValue = m
+	} else {
+		val, err := p.parseExpr()
+		if err != nil {
+			return TableProperty{}, err
+		}
+		prop.Value = val
+	}
+	return prop, nil
 }
 
 // ---------------------------------------------------------------------------

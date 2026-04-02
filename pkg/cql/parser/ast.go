@@ -60,34 +60,65 @@ type PrimaryKey struct {
 }
 
 // CreateTableStatement represents
-// CREATE TABLE [IF NOT EXISTS] <table> ( <cols> PRIMARY KEY (...) ).
+// CREATE TABLE [IF NOT EXISTS] <table> ( <cols> PRIMARY KEY (...) )
+// [WITH <properties> | CLUSTERING ORDER BY (...)].
 type CreateTableStatement struct {
-	Table       string
-	Keyspace    string // empty when unqualified
-	IfNotExists bool
-	Columns     []ColumnDef
-	PrimaryKey  PrimaryKey
+	Table           string
+	Keyspace        string // empty when unqualified
+	IfNotExists     bool
+	Columns         []ColumnDef
+	PrimaryKey      PrimaryKey
+	WithProperties  []TableProperty        // WITH key = value [AND ...]
+	ClusteringOrder []ClusteringOrderEntry // WITH CLUSTERING ORDER BY (...)
+}
+
+// TableProperty is a single key = value option in a CREATE TABLE WITH clause.
+// These are parsed for CQL compatibility but silently ignored during
+// translation to CockroachDB SQL.
+type TableProperty struct {
+	Key      string
+	Value    Expr              // non-nil for scalar values (int, string)
+	MapValue map[string]string // non-nil for map values ({...})
+}
+
+// ClusteringOrderEntry specifies the storage sort order for a single
+// clustering column. Parsed from WITH CLUSTERING ORDER BY (...).
+type ClusteringOrderEntry struct {
+	Column string
+	Desc   bool
 }
 
 func (*CreateTableStatement) statementNode() {}
 
+// UsingClause holds optional USING TTL and/or USING TIMESTAMP modifiers
+// on DML statements (INSERT, UPDATE, DELETE). These are accepted by the
+// parser for CQL compatibility but silently ignored during translation —
+// CockroachDB does not support per-row TTL or write timestamps.
+type UsingClause struct {
+	TTL       Expr // USING TTL <seconds>, nil if absent
+	Timestamp Expr // USING TIMESTAMP <microseconds>, nil if absent
+}
+
 // InsertStatement represents
-// INSERT INTO <table> (<cols>) VALUES (<vals>) [IF NOT EXISTS].
+// INSERT INTO <table> (<cols>) VALUES (<vals>) [IF NOT EXISTS] [USING ...].
 type InsertStatement struct {
 	Table       string
 	Keyspace    string // empty when unqualified
 	Columns     []string
 	Values      []Expr
 	IfNotExists bool
+	Using       *UsingClause // USING TTL/TIMESTAMP, nil if absent
 }
 
 func (*InsertStatement) statementNode() {}
 
 // UpdateStatement represents
-// UPDATE [<ks>.]<table> SET <col> = <val>, ... WHERE <conds> [IF <conds>|IF EXISTS].
+// UPDATE [<ks>.]<table> [USING ...] SET <col> = <val>, ... WHERE <conds>
+// [IF <conds>|IF EXISTS].
 type UpdateStatement struct {
 	Table    string
-	Keyspace string // empty when unqualified
+	Keyspace string       // empty when unqualified
+	Using    *UsingClause // USING TTL/TIMESTAMP, nil if absent
 	// Assignments is the list of SET assignments: col = val.
 	Assignments []Assignment
 	Where       []WhereClause
@@ -104,10 +135,12 @@ type Assignment struct {
 }
 
 // DeleteStatement represents
-// DELETE FROM [<ks>.]<table> WHERE <conds> [IF <conds>|IF EXISTS].
+// DELETE FROM [<ks>.]<table> [USING TIMESTAMP ...] WHERE <conds>
+// [IF <conds>|IF EXISTS].
 type DeleteStatement struct {
 	Table    string
-	Keyspace string // empty when unqualified
+	Keyspace string       // empty when unqualified
+	Using    *UsingClause // USING TIMESTAMP, nil if absent
 	Where    []WhereClause
 	IfExists bool
 	IfConds  []WhereClause // IF col = val conditions (empty when not conditional)
