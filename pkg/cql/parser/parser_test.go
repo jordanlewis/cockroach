@@ -294,7 +294,7 @@ func TestParseErrors(t *testing.T) {
 	}{
 		{"", "expected statement keyword"},
 		{"GRANT ALL ON t", "unsupported statement"},
-		{"CREATE INDEX foo", "expected KEYSPACE or TABLE"},
+		{"CREATE INDEX foo ON", "expected identifier"},
 		{"USE", "expected identifier"},
 		{"SELECT * FROM", "expected identifier"},
 		{"INSERT INTO t (a) VALUES ('x'", "expected ')'"},

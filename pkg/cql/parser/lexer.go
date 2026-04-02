@@ -25,6 +25,8 @@ const (
 	tokRParen    // )
 	tokLBrace    // {
 	tokRBrace    // }
+	tokLBracket  // [
+	tokRBracket  // ]
 	tokComma     // ,
 	tokDot       // .
 	tokSemicolon // ;
@@ -35,10 +37,10 @@ const (
 	tokLTEq      // <=
 	tokGTEq      // >=
 	tokNE        // !=
-	tokColon     // :
-	tokQMark     // ?
 	tokPlus      // +
 	tokMinus     // -
+	tokColon     // :
+	tokQMark     // ?
 )
 
 // token is a single lexer token.
@@ -114,6 +116,18 @@ func (l *lexer) tokenize() error {
 			l.emit(tokSemicolon, ";")
 		case '*':
 			l.emit(tokStar, "*")
+		case '[':
+			l.emit(tokLBracket, "[")
+		case ']':
+			l.emit(tokRBracket, "]")
+		case '+':
+			l.emit(tokPlus, "+")
+		case '-':
+			if l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1]) {
+				l.lexNumber()
+				continue // lexNumber already advanced pos
+			}
+			l.emit(tokMinus, "-")
 		case '?':
 			l.emit(tokQMark, "?")
 		case ':':
@@ -141,15 +155,6 @@ func (l *lexer) tokenize() error {
 			} else {
 				return fmt.Errorf("unexpected character '!' at position %d", l.pos)
 			}
-		case '+':
-			l.emit(tokPlus, "+")
-		case '-':
-			// Negative number literal: - immediately followed by a digit.
-			if l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1]) {
-				l.lexNumber()
-				continue
-			}
-			l.emit(tokMinus, "-")
 		case '\'':
 			if err := l.lexString(); err != nil {
 				return err

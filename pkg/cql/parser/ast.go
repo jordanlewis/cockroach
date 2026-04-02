@@ -39,11 +39,17 @@ type ColumnDef struct {
 	DataType DataType
 }
 
-// DataType represents a CQL data type.
+// DataType represents a CQL data type. Scalar types have an empty Params
+// slice; parameterized types (list<T>, map<K,V>, frozen<T>, tuple<...>)
+// carry their element types in Params.
 type DataType struct {
 	// Name is the canonical lowercase type name
-	// (e.g. "text", "int", "bigint", "uuid", "timestamp").
+	// (e.g. "text", "int", "list", "map", "frozen", "tuple").
 	Name string
+	// Params holds type parameters for parameterized types.
+	// For example, list<text> has Params: [{Name: "text"}],
+	// map<text, int> has Params: [{Name: "text"}, {Name: "int"}].
+	Params []DataType
 }
 
 // PrimaryKey describes the primary key of a table. PartitionKeys form the
@@ -265,6 +271,34 @@ type TupleLiteral struct {
 
 func (*TupleLiteral) exprNode() {}
 
+// ListLiteral is a square-bracket-delimited list of values: [val1, val2, ...].
+type ListLiteral struct {
+	Values []Expr
+}
+
+func (*ListLiteral) exprNode() {}
+
+// SetLiteral is a brace-delimited set of values: {val1, val2, ...}.
+type SetLiteral struct {
+	Values []Expr
+}
+
+func (*SetLiteral) exprNode() {}
+
+// MapExprLiteral is a brace-delimited map of key-value pairs:
+// {key1: val1, key2: val2, ...}.
+type MapExprLiteral struct {
+	Entries []MapEntry
+}
+
+func (*MapExprLiteral) exprNode() {}
+
+// MapEntry is a single key-value pair in a MapExprLiteral.
+type MapEntry struct {
+	Key   Expr
+	Value Expr
+}
+
 // CounterExpr represents a counter increment/decrement expression:
 // col + val or col - val.
 type CounterExpr struct {
@@ -361,6 +395,26 @@ type AlterTableWith struct {
 
 func (*AlterTableWith) alterTableOp() {}
 
+// CreateIndexStatement represents CREATE [CUSTOM] INDEX on a table column.
+type CreateIndexStatement struct {
+	IndexName   string
+	IfNotExists bool
+	Table       string
+	Keyspace    string
+	Columns     []IndexColumn
+	IsCustom    bool
+	UsingClass  string // for CUSTOM INDEX ... USING '<class>'
+}
+
+func (*CreateIndexStatement) statementNode() {}
+
+// IndexColumn describes a column reference in a CREATE INDEX statement,
+// optionally wrapped in a collection indexing function (KEYS, VALUES,
+// ENTRIES, or FULL).
+type IndexColumn struct {
+	Name     string
+	Function string // "KEYS", "VALUES", "ENTRIES", "FULL", or ""
+}
 // DropStatement represents DROP TABLE/KEYSPACE/INDEX [IF EXISTS] <name>.
 type DropStatement struct {
 	ObjectType string // "TABLE", "KEYSPACE", "INDEX"
@@ -388,3 +442,13 @@ type BatchStatement struct {
 }
 
 func (*BatchStatement) statementNode() {}
+
+// CreateTypeStatement represents CREATE TYPE for user-defined types.
+type CreateTypeStatement struct {
+	TypeName    string
+	Keyspace    string
+	IfNotExists bool
+	Fields      []ColumnDef
+}
+
+func (*CreateTypeStatement) statementNode() {}

@@ -85,7 +85,8 @@ func (p *parser) parseUse() (*UseStatement, error) {
 	return &UseStatement{Keyspace: name}, nil
 }
 
-// parseCreate dispatches CREATE KEYSPACE and CREATE TABLE.
+// parseCreate dispatches CREATE KEYSPACE, CREATE TABLE, CREATE INDEX,
+// CREATE CUSTOM INDEX, and CREATE TYPE.
 func (p *parser) parseCreate() (Statement, error) {
 	p.lex.next() // consume CREATE
 	t := p.lex.peek()
@@ -94,8 +95,20 @@ func (p *parser) parseCreate() (Statement, error) {
 		return p.parseCreateKeyspace()
 	case "TABLE":
 		return p.parseCreateTable()
+	case "INDEX":
+		return p.parseCreateIndex(false /* isCustom */)
+	case "CUSTOM":
+		p.lex.next() // consume CUSTOM
+		if err := p.expectKeyword("INDEX"); err != nil {
+			return nil, err
+		}
+		return p.parseCreateIndex(true /* isCustom */)
+	case "TYPE":
+		return p.parseCreateType()
 	default:
-		return nil, p.errorf("expected KEYSPACE or TABLE after CREATE, got %q", t.val)
+		return nil, p.errorf(
+			"expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got %q",
+			t.val)
 	}
 }
 
@@ -1110,21 +1123,107 @@ func (p *parser) parseColumnDef() (ColumnDef, bool, error) {
 	return ColumnDef{Name: name, DataType: dt}, isPK, nil
 }
 
-// parseDataType parses a CQL type name.
+// parseDataType parses a CQL data type, including parameterized types like
+// list<text>, set<int>, map<text, int>, frozen<list<text>>, and
+// tuple<int, text>. Unknown identifiers are accepted as user-defined type
+// (UDT) names.
 func (p *parser) parseDataType() (DataType, error) {
 	t := p.lex.next()
 	if t.kind != tokIdent {
-		return DataType{}, fmt.Errorf("at position %d: expected data type, got %q", t.pos, t.val)
+		return DataType{}, fmt.Errorf(
+			"at position %d: expected data type, got %q", t.pos, t.val)
 	}
 	name := strings.ToLower(t.val)
+
+	// Parameterized types that require a single type parameter: list<T>,
+	// set<T>, frozen<T>.
+	switch name {
+	case "list", "set", "frozen":
+		if p.lex.peek().kind != tokLT {
+			return DataType{}, fmt.Errorf(
+				"at position %d: %s type requires type parameters"+
+					" (e.g. %s<text>)", t.pos, name, name)
+		}
+		p.lex.next() // consume <
+		inner, err := p.parseDataType()
+		if err != nil {
+			return DataType{}, err
+		}
+		if err := p.expectToken(tokGT); err != nil {
+			return DataType{}, err
+		}
+		return DataType{Name: name, Params: []DataType{inner}}, nil
+
+	case "map":
+		if p.lex.peek().kind != tokLT {
+			return DataType{}, fmt.Errorf(
+				"at position %d: map type requires type parameters"+
+					" (e.g. map<text, int>)", t.pos)
+		}
+		p.lex.next() // consume <
+		keyType, err := p.parseDataType()
+		if err != nil {
+			return DataType{}, err
+		}
+		if err := p.expectToken(tokComma); err != nil {
+			return DataType{}, err
+		}
+		valType, err := p.parseDataType()
+		if err != nil {
+			return DataType{}, err
+		}
+		if err := p.expectToken(tokGT); err != nil {
+			return DataType{}, err
+		}
+		return DataType{
+			Name:   name,
+			Params: []DataType{keyType, valType},
+		}, nil
+
+	case "tuple":
+		if p.lex.peek().kind != tokLT {
+			return DataType{}, fmt.Errorf(
+				"at position %d: tuple type requires type parameters"+
+					" (e.g. tuple<int, text>)", t.pos)
+		}
+		p.lex.next() // consume <
+		var params []DataType
+		first, err := p.parseDataType()
+		if err != nil {
+			return DataType{}, err
+		}
+		params = append(params, first)
+		for p.lex.peek().kind == tokComma {
+			p.lex.next()
+			next, err := p.parseDataType()
+			if err != nil {
+				return DataType{}, err
+			}
+			params = append(params, next)
+		}
+		if err := p.expectToken(tokGT); err != nil {
+			return DataType{}, err
+		}
+		return DataType{Name: name, Params: params}, nil
+	}
+
+	// Known supported scalar types.
 	switch name {
 	case "text", "varchar", "int", "bigint", "float", "double",
 		"boolean", "timestamp", "uuid", "timeuuid", "blob",
 		"inet", "counter", "ascii", "varint", "decimal":
 		return DataType{Name: name}, nil
-	default:
-		return DataType{}, fmt.Errorf("at position %d: unsupported CQL type %q", t.pos, t.val)
 	}
+
+	// Known unsupported scalar types.
+	switch name {
+	case "smallint", "tinyint", "date", "time", "duration":
+		return DataType{}, fmt.Errorf(
+			"at position %d: unsupported CQL type %q", t.pos, name)
+	}
+
+	// Unknown identifier: accept as a user-defined type (UDT) name.
+	return DataType{Name: name}, nil
 }
 
 // parsePrimaryKeyClause parses PRIMARY KEY ((...), ...).
@@ -1223,7 +1322,7 @@ func (p *parser) parseExprList() ([]Expr, error) {
 }
 
 // parseExpr parses a single value expression (literal, bind marker,
-// function call, or CAST).
+// function call, collection literal, or CAST).
 func (p *parser) parseExpr() (Expr, error) {
 	t := p.lex.peek()
 	switch t.kind {
@@ -1257,6 +1356,10 @@ func (p *parser) parseExpr() (Expr, error) {
 			return nil, fmt.Errorf("at position %d: expected name after ':' for named bind marker", t.pos)
 		}
 		return &NamedBindMarker{Name: name}, nil
+	case tokLBracket:
+		return p.parseListLiteral()
+	case tokLBrace:
+		return p.parseSetOrMapLiteral()
 	case tokIdent:
 		upper := strings.ToUpper(t.val)
 		switch upper {
@@ -1576,6 +1679,218 @@ func (p *parser) parseOperator() (string, error) {
 	}
 }
 
+// parseCreateIndex parses:
+//
+//	CREATE [CUSTOM] INDEX [IF NOT EXISTS] <name> ON [<ks>.]<table>
+//	  (<col> | KEYS(<col>) | VALUES(<col>) | ENTRIES(<col>) | FULL(<col>))
+//	  [USING '<class>']
+func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) {
+	p.lex.next() // consume INDEX
+	stmt := &CreateIndexStatement{IsCustom: isCustom}
+
+	stmt.IfNotExists = p.tryIfNotExists()
+
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.IndexName = name
+
+	if err := p.expectKeyword("ON"); err != nil {
+		return nil, err
+	}
+
+	ks, tbl, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.Table = tbl
+
+	// Column list.
+	if err := p.expectToken(tokLParen); err != nil {
+		return nil, err
+	}
+	for {
+		var col IndexColumn
+		// Check for collection indexing functions.
+		if p.lex.peek().kind == tokIdent {
+			upper := strings.ToUpper(p.lex.peek().val)
+			switch upper {
+			case "KEYS", "VALUES", "ENTRIES", "FULL":
+				col.Function = upper
+				p.lex.next() // consume function name
+				if err := p.expectToken(tokLParen); err != nil {
+					return nil, err
+				}
+				colName, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				col.Name = colName
+				if err := p.expectToken(tokRParen); err != nil {
+					return nil, err
+				}
+				stmt.Columns = append(stmt.Columns, col)
+				if p.lex.peek().kind != tokComma {
+					break
+				}
+				p.lex.next() // consume comma
+				continue
+			}
+		}
+		colName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		col.Name = colName
+		stmt.Columns = append(stmt.Columns, col)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	if err := p.expectToken(tokRParen); err != nil {
+		return nil, err
+	}
+
+	// Optional USING clause for custom indexes.
+	if isKeyword(p.lex.peek(), "USING") {
+		p.lex.next() // consume USING
+		t := p.lex.next()
+		if t.kind != tokString {
+			return nil, fmt.Errorf(
+				"at position %d: expected string after USING, got %q",
+				t.pos, t.val)
+		}
+		stmt.UsingClass = t.val
+	}
+
+	return stmt, nil
+}
+
+// parseCreateType parses:
+//
+//	CREATE TYPE [IF NOT EXISTS] [<ks>.]<name> (<field> <type>, ...)
+func (p *parser) parseCreateType() (*CreateTypeStatement, error) {
+	p.lex.next() // consume TYPE
+	stmt := &CreateTypeStatement{}
+
+	stmt.IfNotExists = p.tryIfNotExists()
+
+	ks, name, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.TypeName = name
+
+	if err := p.expectToken(tokLParen); err != nil {
+		return nil, err
+	}
+
+	for p.lex.peek().kind != tokRParen {
+		if len(stmt.Fields) > 0 {
+			if err := p.expectToken(tokComma); err != nil {
+				return nil, err
+			}
+		}
+		fieldName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		fieldType, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Fields = append(stmt.Fields, ColumnDef{
+			Name: fieldName, DataType: fieldType,
+		})
+	}
+
+	if err := p.expectToken(tokRParen); err != nil {
+		return nil, err
+	}
+	return stmt, nil
+}
+
+// parseListLiteral parses [expr, expr, ...].
+func (p *parser) parseListLiteral() (*ListLiteral, error) {
+	p.lex.next() // consume [
+	lit := &ListLiteral{}
+	if p.lex.peek().kind != tokRBracket {
+		vals, err := p.parseExprList()
+		if err != nil {
+			return nil, err
+		}
+		lit.Values = vals
+	}
+	if err := p.expectToken(tokRBracket); err != nil {
+		return nil, err
+	}
+	return lit, nil
+}
+
+// parseSetOrMapLiteral parses {expr, ...} (set) or {expr: expr, ...} (map).
+// An empty {} is parsed as an empty map literal.
+func (p *parser) parseSetOrMapLiteral() (Expr, error) {
+	p.lex.next() // consume {
+	if p.lex.peek().kind == tokRBrace {
+		p.lex.next() // consume }
+		return &MapExprLiteral{}, nil
+	}
+
+	// Parse the first element to determine if this is a set or map.
+	first, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.lex.peek().kind == tokColon {
+		// Map literal: {key: val, ...}
+		p.lex.next() // consume :
+		firstVal, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		entries := []MapEntry{{Key: first, Value: firstVal}}
+		for p.lex.peek().kind == tokComma {
+			p.lex.next()
+			key, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(tokColon); err != nil {
+				return nil, err
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, MapEntry{Key: key, Value: val})
+		}
+		if err := p.expectToken(tokRBrace); err != nil {
+			return nil, err
+		}
+		return &MapExprLiteral{Entries: entries}, nil
+	}
+
+	// Set literal: {val, ...}
+	elements := []Expr{first}
+	for p.lex.peek().kind == tokComma {
+		p.lex.next()
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, e)
+	}
+	if err := p.expectToken(tokRBrace); err != nil {
+		return nil, err
+	}
+	return &SetLiteral{Values: elements}, nil
+}
+
 func kindName(kind tokenKind) string {
 	switch kind {
 	case tokEOF:
@@ -1598,6 +1913,10 @@ func kindName(kind tokenKind) string {
 		return "'{'"
 	case tokRBrace:
 		return "'}'"
+	case tokLBracket:
+		return "'['"
+	case tokRBracket:
+		return "']'"
 	case tokComma:
 		return "','"
 	case tokDot:
@@ -1618,14 +1937,14 @@ func kindName(kind tokenKind) string {
 		return "'>='"
 	case tokNE:
 		return "'!='"
-	case tokColon:
-		return "':'"
-	case tokQMark:
-		return "'?'"
 	case tokPlus:
 		return "'+'"
 	case tokMinus:
 		return "'-'"
+	case tokColon:
+		return "':'"
+	case tokQMark:
+		return "'?'"
 	default:
 		return "unknown"
 	}
