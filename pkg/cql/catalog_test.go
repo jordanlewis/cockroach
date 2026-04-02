@@ -24,7 +24,7 @@ func TestHandleSystemSchemaSelectEmptyTables(t *testing.T) {
 	ctx := context.Background()
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
-			res, handled := handleSystemSelect(ctx, nil, "system_schema", table)
+			res, handled := handleSystemSelect(ctx, nil, "system_schema", table, nil)
 			require.True(t, handled, "system_schema.%s should be handled", table)
 			require.False(t, res.IsError)
 
@@ -59,7 +59,7 @@ func TestHandleSystemSchemaKeyspaces(t *testing.T) {
 	// With db=nil, buildSystemSchemaKeyspacesBody returns only
 	// synthetic system keyspaces.
 	ctx := context.Background()
-	res, handled := handleSystemSelect(ctx, nil, "system_schema", "keyspaces")
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "keyspaces", nil)
 	require.True(t, handled)
 	require.False(t, res.IsError)
 
@@ -86,7 +86,7 @@ func TestHandleSystemSchemaKeyspaces(t *testing.T) {
 
 func TestHandleSystemSchemaTables(t *testing.T) {
 	ctx := context.Background()
-	res, handled := handleSystemSelect(ctx, nil, "system_schema", "tables")
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "tables", nil)
 	require.True(t, handled)
 	require.False(t, res.IsError)
 
@@ -114,7 +114,7 @@ func TestHandleSystemSchemaTables(t *testing.T) {
 
 func TestHandleSystemSchemaColumns(t *testing.T) {
 	ctx := context.Background()
-	res, handled := handleSystemSelect(ctx, nil, "system_schema", "columns")
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "columns", nil)
 	require.True(t, handled)
 	require.False(t, res.IsError)
 
@@ -141,20 +141,20 @@ func TestHandleSystemSchemaColumns(t *testing.T) {
 
 func TestHandleSystemSchemaSelectCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
-	res, handled := handleSystemSelect(ctx, nil, "SYSTEM_SCHEMA", "keyspaces")
+	res, handled := handleSystemSelect(ctx, nil, "SYSTEM_SCHEMA", "keyspaces", nil)
 	require.True(t, handled)
 	require.False(t, res.IsError)
 }
 
 func TestHandleSystemSchemaSelectUnknownTable(t *testing.T) {
 	ctx := context.Background()
-	_, handled := handleSystemSelect(ctx, nil, "system_schema", "nonexistent")
+	_, handled := handleSystemSelect(ctx, nil, "system_schema", "nonexistent", nil)
 	require.False(t, handled)
 }
 
 func TestHandleSystemSchemaSelectOtherKeyspace(t *testing.T) {
 	ctx := context.Background()
-	_, handled := handleSystemSelect(ctx, nil, "my_keyspace", "triggers")
+	_, handled := handleSystemSelect(ctx, nil, "my_keyspace", "triggers", nil)
 	require.False(t, handled)
 }
 
@@ -191,7 +191,7 @@ func TestExecutorSystemSchemaTriggers(t *testing.T) {
 func TestExecutorSystemSchemaColumnNames(t *testing.T) {
 	// Verify column names in the result metadata match the schema.
 	ctx := context.Background()
-	res, handled := handleSystemSelect(ctx, nil, "system_schema", "indexes")
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "indexes", nil)
 	require.True(t, handled)
 
 	r := bytes.NewReader(res.Body)

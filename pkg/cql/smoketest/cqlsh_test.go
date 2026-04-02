@@ -33,6 +33,55 @@ func runCqlsh(
 	return out.String(), errOut.String(), err
 }
 
+// TestCqlshUnqualifiedSelect verifies that cqlsh can USE a keyspace,
+// CREATE TABLE, INSERT, and SELECT with unqualified table names in a
+// single session. This reproduces a bug where SELECT failed with
+// "table not found in keyspace 'None'" because cqlsh's metadata cache
+// didn't include the newly created table.
+func TestCqlshUnqualifiedSelect(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	cqlshPath, err := exec.LookPath("cqlsh")
+	if err != nil {
+		t.Skip("cqlsh not found in PATH; install with: pip install cqlsh")
+	}
+
+	addr, cleanup := startCQLServer(t)
+	defer cleanup()
+
+	host, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	if host == "::" || host == "[::]" || host == "" {
+		host = "127.0.0.1"
+	}
+
+	// Pipe multiple statements through stdin in a single cqlsh
+	// session to test keyspace context preservation.
+	script := strings.Join([]string{
+		"USE defaultdb;",
+		"CREATE TABLE bug_test (a int, b int, PRIMARY KEY (b));",
+		"INSERT INTO bug_test (a, b) VALUES (1, 2);",
+		"SELECT a, b FROM bug_test;",
+	}, "\n")
+
+	cmd := exec.Command(cqlshPath, host, port)
+	cmd.Stdin = strings.NewReader(script)
+	var out, errOut strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err = cmd.Run()
+	t.Logf("cqlsh script:\n%s\nstdout:\n%s\nstderr:\n%s\nerr: %v",
+		script, out.String(), errOut.String(), err)
+
+	if err != nil {
+		t.Fatalf("cqlsh session failed:\nstdout: %s\nstderr: %s",
+			out.String(), errOut.String())
+	}
+	require.Contains(t, out.String(), "1 | 2",
+		"SELECT output should contain the inserted row")
+}
+
 // TestCqlshConnect verifies that the real cqlsh binary can connect to
 // a CockroachDB server with CQL enabled and run basic queries:
 // CREATE KEYSPACE, CREATE TABLE, INSERT, and SELECT.
