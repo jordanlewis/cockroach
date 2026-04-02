@@ -44,6 +44,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -438,6 +439,10 @@ func decodeTypedValue(b []byte, ti tdswire.TypeInfo) string {
 	// VARCHAR/CHAR — plain bytes.
 	case tdswire.TypeBigVarChar, tdswire.TypeBigChar:
 		return string(b)
+
+	// DECIMAL/NUMERIC — sign byte + LE unscaled integer.
+	case tdswire.TypeDecimalN, tdswire.TypeNumericN:
+		return decodeDecimal(b, ti)
 	}
 
 	// Fallback: try UTF-16LE heuristic, then raw bytes.
@@ -458,6 +463,53 @@ func decodeUTF16LE(b []byte) string {
 
 // decodeUTF16LEOrRaw tries UTF-16LE decoding if the byte slice looks
 // like it, otherwise returns the raw bytes as a string.
+// decodeDecimal decodes a TDS DECIMAL/NUMERIC value. The encoding is:
+// 1 byte sign (1=positive, 0=negative), followed by the absolute unscaled
+// integer in little-endian byte order. The scale from TypeInfo determines
+// the decimal point placement.
+func decodeDecimal(b []byte, ti tdswire.TypeInfo) string {
+	if len(b) < 2 {
+		return ""
+	}
+	positive := b[0] == 1
+	// Read the LE integer bytes.
+	intBytes := b[1:]
+	// Convert from LE to big.Int (need to reverse to big-endian).
+	reversed := make([]byte, len(intBytes))
+	for i, j := 0, len(intBytes)-1; j >= 0; i, j = i+1, j-1 {
+		reversed[i] = intBytes[j]
+	}
+	unscaled := new(big.Int).SetBytes(reversed)
+	if !positive {
+		unscaled.Neg(unscaled)
+	}
+
+	scale := int(ti.Scale)
+	if scale == 0 {
+		return unscaled.String()
+	}
+
+	// Format with decimal point.
+	sign := ""
+	abs := new(big.Int).Set(unscaled)
+	if abs.Sign() < 0 {
+		sign = "-"
+		abs.Neg(abs)
+	}
+	s := abs.String()
+	if len(s) <= scale {
+		s = strings.Repeat("0", scale-len(s)+1) + s
+	}
+	intPart := s[:len(s)-scale]
+	fracPart := s[len(s)-scale:]
+	// Trim trailing zeros from fraction.
+	fracPart = strings.TrimRight(fracPart, "0")
+	if fracPart == "" {
+		return sign + intPart
+	}
+	return sign + intPart + "." + fracPart
+}
+
 func decodeUTF16LEOrRaw(b []byte) string {
 	if len(b)%2 == 0 && len(b) >= 2 && b[1] == 0x00 {
 		return decodeUTF16LE(b)

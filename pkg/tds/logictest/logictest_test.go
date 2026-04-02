@@ -61,6 +61,9 @@ func TestLogic(t *testing.T) {
 
 	srv := serverutils.StartServerOnly(t, base.TestServerArgs{
 		Settings: st,
+		// The TDS server binds to a specific port. The shared process tenant
+		// would try to bind to the same port, causing a conflict.
+		DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
 	})
 	defer srv.Stopper().Stop(ctx)
 
