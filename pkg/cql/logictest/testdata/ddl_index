@@ -1,0 +1,185 @@
+# DDL tests for CQL secondary indexes (CREATE INDEX, DROP INDEX).
+#
+# CQL secondary indexes allow queries on non-primary-key columns.
+# CREATE INDEX, DROP INDEX, and querying by indexed columns are not
+# yet implemented in the parser. CREATE INDEX fails because the
+# parser only accepts KEYSPACE or TABLE after CREATE; DROP INDEX
+# fails because DROP is not a recognized statement keyword.
+
+exec
+USE defaultdb
+----
+
+# Create a table to use as the target for index operations.
+exec
+CREATE TABLE IF NOT EXISTS lt_idx_users (user_id int, email text, age int, city text, PRIMARY KEY (user_id))
+----
+
+exec
+INSERT INTO lt_idx_users (user_id, email, age, city) VALUES (1, 'alice@example.com', 30, 'new york')
+----
+
+exec
+INSERT INTO lt_idx_users (user_id, email, age, city) VALUES (2, 'bob@example.com', 25, 'chicago')
+----
+
+exec
+INSERT INTO lt_idx_users (user_id, email, age, city) VALUES (3, 'carol@example.com', 35, 'new york')
+----
+
+# Verify the base table is queryable by primary key.
+query
+SELECT user_id, email FROM lt_idx_users WHERE user_id = 1
+----
+user_id email
+1 alice@example.com
+
+# ---------------------------------------------------------------
+# CREATE INDEX (unsupported)
+#
+# The parser dispatches CREATE to parseCreate(), which only
+# recognizes KEYSPACE and TABLE as valid targets. INDEX falls
+# through to the default case.
+# ---------------------------------------------------------------
+
+# Basic named index on a single column.
+error
+CREATE INDEX lt_idx_users_email_idx ON lt_idx_users (email)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Named index on an integer column.
+error
+CREATE INDEX lt_idx_users_age_idx ON lt_idx_users (age)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Named index on a text column used for filtering.
+error
+CREATE INDEX lt_idx_users_city_idx ON lt_idx_users (city)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# CREATE INDEX IF NOT EXISTS.
+error
+CREATE INDEX IF NOT EXISTS lt_idx_users_email_idx ON lt_idx_users (email)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index with a qualified table name (keyspace.table).
+error
+CREATE INDEX lt_idx_qual_idx ON defaultdb.lt_idx_users (email)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# ---------------------------------------------------------------
+# CREATE INDEX: composite and special forms (unsupported)
+# ---------------------------------------------------------------
+
+# Composite index on multiple columns.
+error
+CREATE INDEX lt_idx_composite ON lt_idx_users (city, age)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index using a Cassandra KEYS() function on a collection column.
+error
+CREATE INDEX lt_idx_keys ON lt_idx_users (KEYS(email))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index using VALUES() for collection indexing.
+error
+CREATE INDEX lt_idx_values ON lt_idx_users (VALUES(email))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index using ENTRIES() for map collection indexing.
+error
+CREATE INDEX lt_idx_entries ON lt_idx_users (ENTRIES(email))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index using FULL() for frozen collection indexing.
+error
+CREATE INDEX lt_idx_full ON lt_idx_users (FULL(email))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# ---------------------------------------------------------------
+# CREATE INDEX: custom index class (unsupported)
+# ---------------------------------------------------------------
+
+# SASI index (Storage-Attached Secondary Index).
+error
+CREATE CUSTOM INDEX lt_idx_sasi ON lt_idx_users (email) USING 'org.apache.cassandra.index.sasi.SASIIndex'
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "CUSTOM"
+
+# ---------------------------------------------------------------
+# DROP INDEX (unsupported)
+#
+# DROP is not a recognized statement keyword in the parser.
+# ---------------------------------------------------------------
+
+# Drop a named index.
+error
+DROP INDEX lt_idx_users_email_idx
+----
+at position 0: unsupported statement "DROP"
+
+# Drop with IF EXISTS.
+error
+DROP INDEX IF EXISTS lt_idx_users_email_idx
+----
+at position 0: unsupported statement "DROP"
+
+# Drop with qualified name (keyspace.index).
+error
+DROP INDEX defaultdb.lt_idx_users_email_idx
+----
+at position 0: unsupported statement "DROP"
+
+# Drop with IF EXISTS and qualified name.
+error
+DROP INDEX IF EXISTS defaultdb.lt_idx_users_email_idx
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# Table with clustering keys for index testing context.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS lt_idx_events (sensor_id int, ts bigint, category text, reading double, PRIMARY KEY ((sensor_id), ts))
+----
+
+exec
+INSERT INTO lt_idx_events (sensor_id, ts, category, reading) VALUES (1, 1000, 'temp', 22.5)
+----
+
+exec
+INSERT INTO lt_idx_events (sensor_id, ts, category, reading) VALUES (1, 2000, 'humidity', 45.0)
+----
+
+exec
+INSERT INTO lt_idx_events (sensor_id, ts, category, reading) VALUES (2, 1000, 'temp', 18.3)
+----
+
+# Index on a non-key column of a table with clustering keys.
+error
+CREATE INDEX lt_idx_events_cat_idx ON lt_idx_events (category)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index on the clustering key column itself.
+error
+CREATE INDEX lt_idx_events_ts_idx ON lt_idx_events (ts)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Index on a double column.
+error
+CREATE INDEX lt_idx_events_reading_idx ON lt_idx_events (reading)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
