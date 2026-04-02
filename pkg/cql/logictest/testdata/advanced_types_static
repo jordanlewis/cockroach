@@ -1,0 +1,17 @@
+# Static columns in tables with clustering keys.
+#
+# Static columns share a single value per partition key, regardless
+# of the number of clustering rows. The STATIC keyword is not yet
+# supported by the parser.
+
+exec
+USE defaultdb
+----
+
+# Static column in a table with clustering key. The parser reads
+# "static" as a new column name and fails when it expects a type
+# but finds a comma.
+error
+CREATE TABLE static_table (pk int, ck int, v text, s text static, PRIMARY KEY (pk, ck))
+----
+at position 64: expected data type, got ","
