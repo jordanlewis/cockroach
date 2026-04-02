@@ -73,23 +73,26 @@ const (
 
 // O5LOGON key-value pair keys used in the authentication exchange.
 const (
-	authKeyUsername      = "AUTH_TERMINAL"
-	authKeyProgramName   = "AUTH_PROGRAM_NM"
-	authKeyMachine       = "AUTH_MACHINE"
-	authKeyPID           = "AUTH_PID"
-	authKeySID           = "AUTH_SID"
-	authKeyACE           = "AUTH_ACE"
-	authKeySessKey       = "AUTH_SESSKEY"
-	authKeyVFRData       = "AUTH_VFR_DATA"
-	authKeyPassword      = "AUTH_PASSWORD"
-	authKeyDBName        = "AUTH_DBNAME"
-	authKeyAlterSession  = "AUTH_ALTER_SESSION"
-	authKeyGlobalDBName  = "AUTH_GLOBALLY_UNIQUE_DBID"
+	authKeyUsername     = "AUTH_TERMINAL"
+	authKeyProgramName  = "AUTH_PROGRAM_NM"
+	authKeyMachine      = "AUTH_MACHINE"
+	authKeyPID          = "AUTH_PID"
+	authKeySID          = "AUTH_SID"
+	authKeyACE          = "AUTH_ACE"
+	authKeySessKey      = "AUTH_SESSKEY"
+	authKeyVFRData      = "AUTH_VFR_DATA"
+	authKeyPassword     = "AUTH_PASSWORD"
+	authKeyDBName       = "AUTH_DBNAME"
+	authKeyAlterSession = "AUTH_ALTER_SESSION"
+	authKeyGlobalDBName = "AUTH_GLOBALLY_UNIQUE_DBID"
 )
 
-// sessKeyLen is the length of the hex-encoded server/client session key.
+// SessKeyLen returns the length of the raw session key in bytes.
+func SessKeyLen() int { return sessKeyLenConst }
+
+// sessKeyLenConst is the length of the raw server/client session key.
 // O5LOGON uses 48 raw bytes (96 hex chars).
-const sessKeyLen = 48
+const sessKeyLenConst = 48
 
 // saltLen is the length of the password salt/verifier data.
 const saltLen = 10
@@ -128,7 +131,8 @@ const charsetID uint16 = 873
 // It reads/writes TNS packets on the underlying connection and manages
 // the authentication state machine.
 type Handshaker struct {
-	conn io.ReadWriter
+	// Conn is the underlying read/write connection for the TNS protocol.
+	Conn io.ReadWriter
 
 	// PasswordVerifier is called with the username and cleartext password
 	// extracted from the O5LOGON exchange. It returns nil if the credentials
@@ -170,7 +174,7 @@ func (h *Handshaker) Handshake() error {
 // handleConnect reads the CONNECT packet from the client, validates it,
 // and sends an ACCEPT response.
 func (h *Handshaker) handleConnect() error {
-	hdr, payload, err := tnswire.ReadPacket(h.conn)
+	hdr, payload, err := tnswire.ReadPacket(h.Conn)
 	if err != nil {
 		return err
 	}
@@ -189,7 +193,7 @@ func (h *Handshaker) handleConnect() error {
 			UserReason:   4, // version mismatch
 			Data:         "protocol version not supported",
 		})
-		_ = tnswire.WritePacket(h.conn, tnswire.PacketTypeRefuse, refusePayload)
+		_ = tnswire.WritePacket(h.Conn, tnswire.PacketTypeRefuse, refusePayload)
 		return errors.Newf(
 			"client version %d below minimum %d", conn.Version, MinProtocolVersion,
 		)
@@ -197,13 +201,13 @@ func (h *Handshaker) handleConnect() error {
 	h.ConnectData = conn.ConnectData
 
 	// Negotiate version: use the lower of our version and the client's.
-	negotiatedVersion := ProtocolVersion
+	negotiatedVersion := uint16(ProtocolVersion)
 	if conn.Version < negotiatedVersion {
 		negotiatedVersion = conn.Version
 	}
 
 	acceptPayload := tnswire.EncodeAccept(tnswire.AcceptPacket{
-		Version:        uint16(negotiatedVersion),
+		Version:        negotiatedVersion,
 		ServiceOptions: conn.ServiceOptions,
 		SDUSize:        DefaultSDUSize,
 		TDUSize:        DefaultTDUSize,
@@ -211,7 +215,7 @@ func (h *Handshaker) handleConnect() error {
 		ConnectFlags0:  conn.ConnectFlags0,
 		ConnectFlags1:  conn.ConnectFlags1,
 	})
-	return tnswire.WritePacket(h.conn, tnswire.PacketTypeAccept, acceptPayload)
+	return tnswire.WritePacket(h.Conn, tnswire.PacketTypeAccept, acceptPayload)
 }
 
 // handleProtocolNeg reads the protocol negotiation DATA packet and sends
@@ -240,7 +244,7 @@ func (h *Handshaker) handleProtocolNeg() error {
 		0x06,       // protocol version
 		0x00, 0x00, // flags
 		0x00, 0x00, // server banner length (none)
-		byte(charsetID >> 8), byte(charsetID), // character set
+		byte(charsetID >> 8), byte(charsetID & 0xFF), // character set
 	}
 	return h.writeDataPayload(resp)
 }
@@ -303,7 +307,7 @@ func (h *Handshaker) handleAuth() error {
 	h.Username = strings.ToLower(username)
 
 	// Step 2: Generate server session key and salt, send challenge.
-	serverSessKey := make([]byte, sessKeyLen)
+	serverSessKey := make([]byte, sessKeyLenConst)
 	if _, err := rand.Read(serverSessKey); err != nil {
 		return errors.Wrap(err, "generating server session key")
 	}
@@ -408,7 +412,7 @@ func (h *Handshaker) sendAuthFailure(msg string) error {
 // readDataPayload reads a DATA packet and returns the TTI payload (after
 // the 2-byte data flags).
 func (h *Handshaker) readDataPayload() ([]byte, error) {
-	hdr, payload, err := tnswire.ReadPacket(h.conn)
+	hdr, payload, err := tnswire.ReadPacket(h.Conn)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +432,7 @@ func (h *Handshaker) writeDataPayload(ttiPayload []byte) error {
 		Flags:   0,
 		Payload: ttiPayload,
 	})
-	return tnswire.WritePacket(h.conn, tnswire.PacketTypeData, dataPayload)
+	return tnswire.WritePacket(h.Conn, tnswire.PacketTypeData, dataPayload)
 }
 
 // encodeDataTypeNegResponse builds the server's data type negotiation response.
@@ -440,7 +444,7 @@ func encodeDataTypeNegResponse() []byte {
 	buf = append(buf, byte(TTIDataTypeNeg))
 
 	// Character set: AL32UTF8 (873).
-	buf = append(buf, byte(charsetID>>8), byte(charsetID))
+	buf = append(buf, byte(charsetID>>8), byte(charsetID&0xFF))
 
 	// Server flags and capabilities (simplified).
 	buf = append(buf,

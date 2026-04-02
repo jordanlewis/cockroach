@@ -118,6 +118,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/vecindex"
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/tds"
+	"github.com/cockroachdb/cockroach/pkg/tns"
 	"github.com/cockroachdb/cockroach/pkg/ts"
 	"github.com/cockroachdb/cockroach/pkg/upgrade"
 	"github.com/cockroachdb/cockroach/pkg/upgrade/upgradebase"
@@ -222,6 +223,12 @@ type SQLServer struct {
 	// server.tds.enabled cluster setting.
 	tdsMu     syncutil.Mutex
 	tdsServer *tds.Server
+
+	// tnsServer is the optional TNS (Oracle wire protocol) server. When
+	// server.tns.enabled is true, this accepts Oracle client connections
+	// and translates them to internal SQL execution. It is nil when TNS
+	// is disabled.
+	tnsServer *tns.Server
 
 	systemConfigWatcher *systemconfigwatcher.Cache
 
@@ -2364,4 +2371,25 @@ func (s *SQLServer) MetricsRegistry() *metric.Registry {
 // ClusterMetricsWriter returns the cluster metrics writer.
 func (s *SQLServer) ClusterMetricsWriter() *cmwriter.Writer {
 	return s.clusterMetricsWriter
+}
+
+// TNSServer returns the TNS server, or nil if TNS is not enabled.
+func (s *SQLServer) TNSServer() *tns.Server {
+	return s.tnsServer
+}
+
+// maybeStartTNS starts the TNS server if the server.tns.enabled cluster
+// setting is true.
+func (s *SQLServer) maybeStartTNS(ctx context.Context, stopper *stop.Stopper) error {
+	tnsServer, addr, err := startTNSServer(
+		ctx, stopper, s.execCfg.InternalDB, &s.execCfg.Settings.SV,
+	)
+	if err != nil {
+		return err
+	}
+	if tnsServer != nil {
+		s.tnsServer = tnsServer
+		_ = addr
+	}
+	return nil
 }

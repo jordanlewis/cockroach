@@ -271,10 +271,9 @@ func (t *translator) isRownumComparison(expr parser.Expr) (parser.Expr, bool) {
 	case parser.OpLt:
 		// ROWNUM < N → LIMIT N-1
 		if num, ok := bin.Right.(*parser.NumberLit); ok {
-			n, err := fmt.Sscanf(num.Value, "%d", new(int))
+			var v int
+			n, err := fmt.Sscanf(num.Value, "%d", &v)
 			if err == nil && n == 1 {
-				var v int
-				fmt.Sscanf(num.Value, "%d", &v)
 				return &parser.NumberLit{Value: fmt.Sprintf("%d", v-1)}, true
 			}
 		}
@@ -367,9 +366,7 @@ func (t *translator) translateDelete(s *parser.DeleteStmt) (string, error) {
 	return b.String(), nil
 }
 
-func (t *translator) translateCreateSequence(
-	s *parser.CreateSequenceStmt,
-) (string, error) {
+func (t *translator) translateCreateSequence(s *parser.CreateSequenceStmt) (string, error) {
 	var b strings.Builder
 	b.WriteString("CREATE SEQUENCE ")
 	b.WriteString(strings.ToLower(s.Name))
@@ -772,9 +769,7 @@ func mapFuncName(oracleName string) string {
 //	FF[1-9]         US            (fractional seconds → microseconds)
 //	RR              YY            (Oracle 2-digit year pivot)
 //	RRRR            YYYY          (Oracle 4-digit with RR pivot semantics)
-func (t *translator) translateToChar(
-	expr parser.Expr, fmtExpr parser.Expr,
-) (string, error) {
+func (t *translator) translateToChar(expr parser.Expr, fmtExpr parser.Expr) (string, error) {
 	inner, err := t.translateExpr(expr)
 	if err != nil {
 		return "", err
@@ -795,9 +790,7 @@ func (t *translator) translateToChar(
 }
 
 // translateToDate handles TO_DATE(str, fmt).
-func (t *translator) translateToDate(
-	expr parser.Expr, fmtExpr parser.Expr,
-) (string, error) {
+func (t *translator) translateToDate(expr parser.Expr, fmtExpr parser.Expr) (string, error) {
 	inner, err := t.translateExpr(expr)
 	if err != nil {
 		return "", err
