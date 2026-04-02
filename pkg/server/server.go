@@ -2612,6 +2612,12 @@ func (s *topLevelServer) CQLAddr() string {
 	return s.sqlServer.cqlAddr
 }
 
+// TNSAddr returns the address the TNS server is listening on, or the
+// empty string if TNS is not enabled.
+func (s *topLevelServer) TNSAddr() string {
+	return s.sqlServer.TNSAddr()
+}
+
 // SpanConfigReporter returns the spanconfig.Reporter. Used by tests.
 func (s *topLevelServer) SpanConfigReporter() spanconfig.Reporter {
 	return s.spanConfigReporter
