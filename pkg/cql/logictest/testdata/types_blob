@@ -1,0 +1,58 @@
+# Blob type.
+#
+# CQL blob maps to CRDB BYTES. Since the CQL parser does not support
+# hex blob literals (0xdeadbeef), blobs are inserted via string
+# literals that CRDB coerces to BYTES. The wire protocol returns raw
+# bytes; the test runner formats them as 0x + hex encoding.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_blob (id int, b blob, PRIMARY KEY (id))
+----
+
+# String literal coerced to BYTES.
+exec
+INSERT INTO lt_blob (id, b) VALUES (1, 'hello')
+----
+
+query
+SELECT id, b FROM lt_blob WHERE id = 1
+----
+id b
+1 0x68656c6c6f
+
+# Single character.
+exec
+INSERT INTO lt_blob (id, b) VALUES (2, 'A')
+----
+
+query
+SELECT id, b FROM lt_blob WHERE id = 2
+----
+id b
+2 0x41
+
+# Empty string → empty blob.
+exec
+INSERT INTO lt_blob (id, b) VALUES (3, '')
+----
+
+query
+SELECT id, b FROM lt_blob WHERE id = 3
+----
+id b
+3 0x
+
+# NULL blob.
+exec
+INSERT INTO lt_blob (id, b) VALUES (4, NULL)
+----
+
+query
+SELECT id, b FROM lt_blob WHERE id = 4
+----
+id b
+4 NULL
