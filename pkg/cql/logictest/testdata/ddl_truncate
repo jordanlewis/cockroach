@@ -1,0 +1,155 @@
+# DDL tests for TRUNCATE TABLE and IF EXISTS / IF NOT EXISTS.
+#
+# TRUNCATE TABLE is a common CQL DDL statement that removes all rows
+# from a table without dropping it. The parser does not recognize
+# TRUNCATE as a statement keyword.
+#
+# IF EXISTS and IF NOT EXISTS on DDL: CREATE TABLE/KEYSPACE IF NOT
+# EXISTS is supported. DROP TABLE/KEYSPACE IF EXISTS is not supported
+# because DROP is not a recognized statement keyword.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# TRUNCATE TABLE (unsupported)
+#
+# TRUNCATE is not recognized by the parser's statement dispatcher,
+# which only supports USE, CREATE, INSERT, SELECT, UPDATE, DELETE.
+# ---------------------------------------------------------------
+
+error
+TRUNCATE TABLE ddl_trunc_t
+----
+at position 0: unsupported statement "TRUNCATE"
+
+# TRUNCATE without TABLE keyword (also valid in CQL).
+error
+TRUNCATE ddl_trunc_t
+----
+at position 0: unsupported statement "TRUNCATE"
+
+# TRUNCATE with qualified table name.
+error
+TRUNCATE TABLE defaultdb.ddl_trunc_t
+----
+at position 0: unsupported statement "TRUNCATE"
+
+# ---------------------------------------------------------------
+# CREATE TABLE IF NOT EXISTS (supported)
+#
+# Verifies that IF NOT EXISTS works on both new and existing tables.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS ddl_ine_t (id int PRIMARY KEY, val text)
+----
+
+# Repeat CREATE with IF NOT EXISTS — no error on existing table.
+exec
+CREATE TABLE IF NOT EXISTS ddl_ine_t (id int PRIMARY KEY, val text)
+----
+
+# Insert and verify table is usable.
+exec
+INSERT INTO ddl_ine_t (id, val) VALUES (1, 'exists')
+----
+
+query
+SELECT id, val FROM ddl_ine_t WHERE id = 1
+----
+id val
+1 exists
+
+# ---------------------------------------------------------------
+# CREATE TABLE without IF NOT EXISTS — duplicate table error.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE ddl_ine_t (id int PRIMARY KEY, val text)
+----
+cql-ddl: relation "defaultdb.public.ddl_ine_t" already exists
+
+# ---------------------------------------------------------------
+# CREATE KEYSPACE IF NOT EXISTS (supported)
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS ddl_trunc_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+----
+
+# Repeat — no error on existing keyspace.
+exec
+CREATE KEYSPACE IF NOT EXISTS ddl_trunc_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+----
+
+# ---------------------------------------------------------------
+# DROP TABLE (unsupported)
+#
+# DROP is not recognized by the parser's statement dispatcher.
+# ---------------------------------------------------------------
+
+error
+DROP TABLE ddl_ine_t
+----
+at position 0: unsupported statement "DROP"
+
+error
+DROP TABLE IF EXISTS ddl_ine_t
+----
+at position 0: unsupported statement "DROP"
+
+# DROP with qualified name.
+error
+DROP TABLE defaultdb.ddl_ine_t
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# DROP KEYSPACE (unsupported)
+# ---------------------------------------------------------------
+
+error
+DROP KEYSPACE ddl_trunc_ks
+----
+at position 0: unsupported statement "DROP"
+
+error
+DROP KEYSPACE IF EXISTS ddl_trunc_ks
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# ALTER TABLE (unsupported)
+#
+# ALTER is not recognized by the parser's statement dispatcher.
+# IF EXISTS on ALTER TABLE is therefore also unsupported.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE ddl_ine_t ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+error
+ALTER TABLE IF EXISTS ddl_ine_t ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# CREATE INDEX IF NOT EXISTS (unsupported)
+#
+# The parser dispatches CREATE to parseCreate, which only handles
+# KEYSPACE and TABLE — not INDEX.
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX ddl_ine_idx ON ddl_ine_t (val)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+error
+CREATE INDEX IF NOT EXISTS ddl_ine_idx ON ddl_ine_t (val)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
