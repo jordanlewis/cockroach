@@ -1,0 +1,50 @@
+# Schema operations tests.
+
+# CREATE DATABASE.
+exec
+CREATE DATABASE test_schema_db
+----
+
+# USE database.
+exec
+USE test_schema_db
+----
+
+# CREATE TABLE with various column types.
+exec
+CREATE TABLE all_types (id INT, name VARCHAR(100), score FLOAT, data NVARCHAR(200))
+----
+
+# Insert a row into the table.
+exec
+INSERT INTO all_types (id, name, score, data) VALUES (1, 'test', 3.14, 'unicode data')
+----
+
+# Query it back.
+query colnames
+SELECT id, name, score, data FROM all_types WHERE id = 1
+----
+id  name  score  data
+1  test  3.14  unicode data
+
+# CREATE TABLE with nullable columns.
+exec
+CREATE TABLE nullable_test (id INT, optional_name VARCHAR(50) NULL, required_name VARCHAR(50) NOT NULL)
+----
+
+# Insert with NULL.
+exec
+INSERT INTO nullable_test (id, optional_name, required_name) VALUES (1, NULL, 'required')
+----
+
+# Query NULL column.
+query colnames
+SELECT id, optional_name, required_name FROM nullable_test WHERE id = 1
+----
+id  optional_name  required_name
+1  NULL  required
+
+# Switch back to defaultdb.
+exec
+USE defaultdb
+----

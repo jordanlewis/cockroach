@@ -1,0 +1,142 @@
+# Expression tests: operators, comparisons, and complex expressions.
+
+# Arithmetic.
+query
+SELECT 1 + 2
+----
+3
+
+query
+SELECT 10 - 3
+----
+7
+
+query
+SELECT 4 * 5
+----
+20
+
+# String concatenation (T-SQL uses + for strings).
+query
+SELECT 'foo' + 'bar'
+----
+foobar
+
+query
+SELECT 'hello' + ' ' + 'world'
+----
+hello world
+
+# Comparison in WHERE clause.
+query
+SELECT 'yes' WHERE 1 = 1
+----
+yes
+
+query
+SELECT 'yes' WHERE 1 <> 2
+----
+yes
+
+query
+SELECT 'yes' WHERE 5 > 3
+----
+yes
+
+query
+SELECT 'yes' WHERE 3 < 5
+----
+yes
+
+query
+SELECT 'yes' WHERE 5 >= 5
+----
+yes
+
+query
+SELECT 'yes' WHERE 5 <= 5
+----
+yes
+
+# IS NULL / IS NOT NULL.
+query
+SELECT 'is null' WHERE NULL IS NULL
+----
+is null
+
+query
+SELECT 'not null' WHERE 1 IS NOT NULL
+----
+not null
+
+# LIKE operator.
+query
+SELECT 'match' WHERE 'hello world' LIKE 'hello%'
+----
+match
+
+query
+SELECT 'match' WHERE 'hello world' LIKE '%world'
+----
+match
+
+# IN operator.
+query
+SELECT 'found' WHERE 2 IN (1, 2, 3)
+----
+found
+
+# BETWEEN operator.
+query
+SELECT 'in range' WHERE 5 BETWEEN 1 AND 10
+----
+in range
+
+# Boolean operators.
+query
+SELECT 'both' WHERE 1 = 1 AND 2 = 2
+----
+both
+
+query
+SELECT 'either' WHERE 1 = 2 OR 2 = 2
+----
+either
+
+query
+SELECT 'negated' WHERE NOT 1 = 2
+----
+negated
+
+# ISNULL function.
+query
+SELECT ISNULL(NULL, 'default')
+----
+default
+
+query
+SELECT ISNULL('value', 'default')
+----
+value
+
+# CONVERT function.
+query
+SELECT CONVERT(VARCHAR, 42)
+----
+42
+
+query
+SELECT CONVERT(INT, '123')
+----
+123
+
+# Parenthesized expressions.
+query
+SELECT (1 + 2) * 3
+----
+9
+
+query
+SELECT 10 - (3 + 2)
+----
+5

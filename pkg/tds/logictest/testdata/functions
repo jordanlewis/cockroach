@@ -1,0 +1,48 @@
+# T-SQL function tests.
+
+# ISNULL (maps to COALESCE).
+query
+SELECT ISNULL(NULL, 'default')
+----
+default
+
+query
+SELECT ISNULL('real', 'default')
+----
+real
+
+# CONVERT (maps to CAST).
+query
+SELECT CONVERT(INT, '42')
+----
+42
+
+query
+SELECT CONVERT(VARCHAR, 123)
+----
+123
+
+# @@VERSION.
+query
+SELECT @@VERSION
+----
+Adaptive Server Enterprise/16.0/CockroachDB 24.3.0/SP0/Enterprise Linux/x86_64
+
+# String functions (pass-through to CRDB).
+query
+SELECT UPPER('hello')
+----
+HELLO
+
+query
+SELECT LOWER('WORLD')
+----
+world
+
+# LEN is T-SQL; CockroachDB uses length(). The TDS frontend
+# does not yet translate LEN→length, so this is expected to fail.
+# TODO(tds): add LEN translation.
+# query
+# SELECT LEN('test')
+# ----
+# 4

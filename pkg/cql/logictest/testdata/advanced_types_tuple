@@ -1,0 +1,38 @@
+# Tuples and frozen collection types.
+#
+# Tuple types and frozen collections are currently unsupported by the
+# parser. These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# Tuple column type.
+error
+CREATE TABLE tuple_table (id int PRIMARY KEY, coords tuple<int, int>)
+----
+at position 53: unsupported CQL type "tuple"
+
+# Frozen tuple column type.
+error
+CREATE TABLE frozen_tuple_table (id int PRIMARY KEY, coords frozen<tuple<int, int>>)
+----
+at position 60: unsupported CQL type "frozen"
+
+# Frozen map column type.
+error
+CREATE TABLE frozen_map_table (id int PRIMARY KEY, data frozen<map<text, text>>)
+----
+at position 56: unsupported CQL type "frozen"
+
+# Frozen set column type.
+error
+CREATE TABLE frozen_set_table (id int PRIMARY KEY, tags frozen<set<text>>)
+----
+at position 56: unsupported CQL type "frozen"
+
+# Frozen list column type.
+error
+CREATE TABLE frozen_list_table (id int PRIMARY KEY, items frozen<list<int>>)
+----
+at position 58: unsupported CQL type "frozen"

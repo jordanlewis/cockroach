@@ -1,0 +1,23 @@
+# Basic TDS logictest smoke test.
+
+query
+SELECT 1 AS val
+----
+1
+
+query colnames
+SELECT 1 AS val, 2 AS other
+----
+val  other
+1  2
+
+query
+SELECT 42
+----
+42
+
+# Verify @@VERSION returns something with CockroachDB.
+query
+SELECT @@VERSION
+----
+Adaptive Server Enterprise/16.0/CockroachDB 24.3.0/SP0/Enterprise Linux/x86_64

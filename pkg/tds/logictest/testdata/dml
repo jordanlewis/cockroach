@@ -1,0 +1,106 @@
+# DML tests: CREATE TABLE, INSERT, SELECT from tables.
+
+# Create a test table.
+exec
+CREATE TABLE test_dml (id INT, name VARCHAR(100), score INT)
+----
+
+# Insert rows.
+exec
+INSERT INTO test_dml (id, name, score) VALUES (1, 'alice', 90)
+----
+
+exec
+INSERT INTO test_dml (id, name, score) VALUES (2, 'bob', 85)
+----
+
+exec
+INSERT INTO test_dml (id, name, score) VALUES (3, 'carol', 95)
+----
+
+# Query all rows.
+query colnames
+SELECT id, name, score FROM test_dml ORDER BY id
+----
+id  name  score
+1  alice  90
+2  bob  85
+3  carol  95
+
+# Query with WHERE.
+query colnames
+SELECT name, score FROM test_dml WHERE score > 85 ORDER BY score
+----
+name  score
+alice  90
+carol  95
+
+# Query with TOP.
+query colnames
+SELECT TOP 2 id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+2  bob
+
+# SELECT with expression.
+query colnames
+SELECT name, score + 10 AS boosted FROM test_dml WHERE id = 1
+----
+name  boosted
+alice  100
+
+# UPDATE a single row.
+exec
+UPDATE test_dml SET score = 99 WHERE id = 1
+----
+
+query colnames
+SELECT name, score FROM test_dml WHERE id = 1
+----
+name  score
+alice  99
+
+# UPDATE multiple columns.
+exec
+UPDATE test_dml SET name = 'bobby', score = 100 WHERE id = 2
+----
+
+query colnames
+SELECT name, score FROM test_dml WHERE id = 2
+----
+name  score
+bobby  100
+
+# DELETE a row.
+exec
+DELETE FROM test_dml WHERE id = 3
+----
+
+query colnames
+SELECT id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+2  bobby
+
+# DELETE without FROM (T-SQL allows this).
+exec
+DELETE test_dml WHERE id = 2
+----
+
+query colnames
+SELECT id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+
+# DELETE all remaining rows.
+exec
+DELETE FROM test_dml
+----
+
+query
+SELECT CONVERT(INT, COUNT(*)) FROM test_dml
+----
+0

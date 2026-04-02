@@ -1,0 +1,29 @@
+# Counter tables.
+#
+# Counter columns are a special Cassandra type that supports atomic
+# increment/decrement via UPDATE. The counter type is recognized by
+# the parser but UPDATE statements are not yet supported.
+
+exec
+USE defaultdb
+----
+
+# CREATE TABLE with counter column succeeds (counter type is
+# recognized and mapped to bigint).
+exec
+CREATE TABLE IF NOT EXISTS counter_table (id int PRIMARY KEY, c counter)
+----
+
+# UPDATE with counter increment is not yet supported. The lexer
+# rejects the '+' operator.
+error
+UPDATE counter_table SET c = c + 1 WHERE id = 1
+----
+unexpected character '+' at position 31
+
+# UPDATE with counter decrement is not yet supported. The lexer
+# rejects the '-' operator (when not followed immediately by a digit).
+error
+UPDATE counter_table SET c = c - 1 WHERE id = 1
+----
+unexpected character '-' at position 31

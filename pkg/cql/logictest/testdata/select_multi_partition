@@ -1,0 +1,88 @@
+# Multi-partition queries.
+#
+# Multi-partition queries span multiple partitions, either by
+# omitting WHERE or by using conditions that don't restrict to
+# a single partition.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_mp (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO sel_mp (pk, ck, val) VALUES (1, 10, 'a')
+----
+
+exec
+INSERT INTO sel_mp (pk, ck, val) VALUES (1, 20, 'b')
+----
+
+exec
+INSERT INTO sel_mp (pk, ck, val) VALUES (2, 10, 'c')
+----
+
+exec
+INSERT INTO sel_mp (pk, ck, val) VALUES (2, 20, 'd')
+----
+
+exec
+INSERT INTO sel_mp (pk, ck, val) VALUES (3, 10, 'e')
+----
+
+# SELECT * without WHERE returns all rows across all partitions.
+query rowsort
+SELECT pk, ck, val FROM sel_mp
+----
+pk ck val
+1 10 a
+1 20 b
+2 10 c
+2 20 d
+3 10 e
+
+# SELECT with column list (no WHERE).
+query rowsort
+SELECT pk, val FROM sel_mp
+----
+pk val
+1 a
+1 b
+2 c
+2 d
+3 e
+
+# WHERE on clustering column only (spans multiple partitions).
+query rowsort
+SELECT pk, ck, val FROM sel_mp WHERE ck = 10
+----
+pk ck val
+1 10 a
+2 10 c
+3 10 e
+
+# WHERE with range on clustering column (no partition restriction).
+query rowsort
+SELECT pk, ck, val FROM sel_mp WHERE ck > 10
+----
+pk ck val
+1 20 b
+2 20 d
+
+# WHERE on non-key column (full table scan in CRDB).
+query rowsort
+SELECT pk, ck, val FROM sel_mp WHERE val = 'c'
+----
+pk ck val
+2 10 c
+
+# Multi-partition with LIMIT.
+query rowsort
+SELECT pk, ck, val FROM sel_mp LIMIT 3
+----
+pk ck val
+1 10 a
+1 20 b
+2 10 c

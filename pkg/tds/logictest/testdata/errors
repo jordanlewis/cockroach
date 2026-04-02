@@ -1,0 +1,16 @@
+# Error handling tests.
+
+# Bad syntax should produce parse errors.
+exec error=(parse error)
+THIS IS NOT VALID SQL
+----
+
+# Missing table should produce an error.
+query error=(does not exist)
+SELECT * FROM nonexistent_table_xyz
+----
+
+# Type mismatch in CONVERT.
+query error=(could not parse)
+SELECT CONVERT(INT, 'not_a_number')
+----

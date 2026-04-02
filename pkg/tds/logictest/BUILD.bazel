@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "logictest",
+    srcs = ["logictest.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tds/logictest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tds/tdswire",
+        "@com_github_cockroachdb_datadriven//:datadriven",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "logictest_test",
+    srcs = ["logictest_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":logictest"],
+    deps = [
+        "//pkg/base",
+        "//pkg/security/securityassets",
+        "//pkg/security/securitytest",
+        "//pkg/server",
+        "//pkg/settings",
+        "//pkg/settings/cluster",
+        "//pkg/testutils/serverutils",
+        "//pkg/testutils/testcluster",
+        "//pkg/util/leaktest",
+        "//pkg/util/log",
+        "@com_github_cockroachdb_datadriven//:datadriven",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1087,6 +1087,11 @@ func (s *SQLServerWrapper) AcceptClients(ctx context.Context) error {
 		}
 	}
 
+	// Start the optional TNS (Oracle wire protocol) server.
+	if err := s.sqlServer.maybeStartTNS(ctx, s.stopper); err != nil {
+		return err
+	}
+
 	s.sqlServer.isReady.Store(true)
 
 	log.Event(ctx, "server ready")

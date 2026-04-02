@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tns",
+    srcs = [
+        "conn.go",
+        "executor.go",
+        "server.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tns",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/security/username",
+        "//pkg/sql/isql",
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/sessiondata",
+        "//pkg/sql/types",
+        "//pkg/tns/auth",
+        "//pkg/tns/catalog",
+        "//pkg/tns/tnswire",
+        "//pkg/tns/translate",
+        "//pkg/util/log",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_cockroachdb_redact//:redact",
+    ],
+)
+
+go_test(
+    name = "tns_test",
+    srcs = [
+        "main_test.go",
+        "server_test.go",
+    ],
+    deps = [
+        ":tns",
+        "//pkg/base",
+        "//pkg/security/securityassets",
+        "//pkg/security/securitytest",
+        "//pkg/server",
+        "//pkg/sql/isql",
+        "//pkg/testutils/serverutils",
+        "//pkg/tns/auth",
+        "//pkg/tns/tnswire",
+        "//pkg/util/randutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)

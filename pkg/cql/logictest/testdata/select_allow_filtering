@@ -1,0 +1,44 @@
+# ALLOW FILTERING clause.
+#
+# In Cassandra, queries that require a full table scan (e.g. WHERE on
+# a non-indexed, non-key column) need ALLOW FILTERING to proceed. The
+# parser does not support ALLOW FILTERING.
+#
+# Since CRDB executes the translated SQL directly, filtering on
+# non-key columns works without any special clause — CRDB performs
+# a full table scan as needed.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_af (pk int, ck int, data text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO sel_af (pk, ck, data) VALUES (1, 10, 'hello')
+----
+
+exec
+INSERT INTO sel_af (pk, ck, data) VALUES (2, 20, 'world')
+----
+
+exec
+INSERT INTO sel_af (pk, ck, data) VALUES (3, 30, 'hello')
+----
+
+# ALLOW FILTERING is not supported by the parser.
+error
+SELECT * FROM sel_af WHERE data = 'hello' ALLOW FILTERING
+----
+at position 42: unexpected token "ALLOW" after statement
+
+# WHERE on a non-key column works without ALLOW FILTERING because
+# the CQL layer translates the WHERE clause directly to SQL.
+query rowsort
+SELECT pk, ck, data FROM sel_af WHERE data = 'hello'
+----
+pk ck data
+1 10 hello
+3 30 hello
