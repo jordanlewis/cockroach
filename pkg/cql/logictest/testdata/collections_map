@@ -18,25 +18,25 @@ USE defaultdb
 error
 CREATE TABLE lt_coll_map (id int PRIMARY KEY, attrs map<text, text>)
 ----
-at position 46: unsupported CQL type "map"
+at position 52: unsupported CQL type "map"
 
 # Bare map type (without angle brackets).
 error
 CREATE TABLE lt_coll_map2 (id int, data map, PRIMARY KEY (id))
 ----
-at position 39: unsupported CQL type "map"
+at position 40: unsupported CQL type "map"
 
 # Map with int values.
 error
 CREATE TABLE lt_coll_map3 (id int PRIMARY KEY, scores map<text, int>)
 ----
-at position 48: unsupported CQL type "map"
+at position 54: unsupported CQL type "map"
 
 # Map with boolean values.
 error
 CREATE TABLE lt_coll_map4 (id int PRIMARY KEY, flags map<text, boolean>)
 ----
-at position 47: unsupported CQL type "map"
+at position 53: unsupported CQL type "map"
 
 # ---------------------------------------------------------------
 # Frozen map column — unsupported frozen modifier.
@@ -45,30 +45,29 @@ at position 47: unsupported CQL type "map"
 error
 CREATE TABLE lt_coll_fmap (id int PRIMARY KEY, data frozen<map<text, text>>)
 ----
-at position 47: unsupported CQL type "frozen"
+at position 52: unsupported CQL type "frozen"
 
 # ---------------------------------------------------------------
 # INSERT with map literal — parser expects expression, gets brace.
 #
 # CQL map literals use braces with colon-separated entries:
 # {'key1': 'val1', 'key2': 'val2'}. The lexer recognizes braces
-# and colons but the expression parser does not support map
-# literals in value position.
+# but the expression parser does not support brace literals.
 # ---------------------------------------------------------------
 
 error
 INSERT INTO lt_coll_map (id, attrs) VALUES (1, {'color': 'red', 'size': 'large'})
 ----
-at position 46: unsupported CQL type "map"
+at position 47: expected expression, got "{"
 
 # ---------------------------------------------------------------
-# UPDATE with map literal.
+# UPDATE with map literal — parser rejects brace in expression.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = {'key': 'val'} WHERE id = 1
 ----
-at position 46: unsupported CQL type "map"
+at position 31: expected expression, got "{"
 
 # ---------------------------------------------------------------
 # Map element insertion (SET col[key] = val) — lexer rejects
@@ -78,25 +77,25 @@ at position 46: unsupported CQL type "map"
 error
 UPDATE lt_coll_map SET attrs['newkey'] = 'newval' WHERE id = 1
 ----
-at position 46: unsupported CQL type "map"
+unexpected character '[' at position 28
 
 # ---------------------------------------------------------------
-# Map append (SET col = col + {...}).
+# Map append (SET col = col + {...}) — lexer rejects plus.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = attrs + {'extra': 'val'} WHERE id = 1
 ----
-at position 46: unsupported CQL type "map"
+unexpected character '+' at position 37
 
 # ---------------------------------------------------------------
-# Map key removal (SET col = col - {...}).
+# Map key removal (SET col = col - {...}) — lexer rejects minus.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = attrs - {'unwanted'} WHERE id = 1
 ----
-at position 46: unsupported CQL type "map"
+unexpected character '-' at position 37
 
 # ---------------------------------------------------------------
 # Nested map (map<text, map<text, int>>) — unsupported.
@@ -105,7 +104,7 @@ at position 46: unsupported CQL type "map"
 error
 CREATE TABLE lt_coll_nested_map (id int PRIMARY KEY, nested map<text, map<text, int>>)
 ----
-at position 53: unsupported CQL type "map"
+at position 60: unsupported CQL type "map"
 
 # ---------------------------------------------------------------
 # Map used as clustering key — unsupported type.
@@ -114,4 +113,4 @@ at position 53: unsupported CQL type "map"
 error
 CREATE TABLE lt_coll_map_ck (pk int, ck map<text, int>, val text, PRIMARY KEY (pk, ck))
 ----
-at position 34: unsupported CQL type "map"
+at position 40: unsupported CQL type "map"

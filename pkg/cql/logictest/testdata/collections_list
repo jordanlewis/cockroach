@@ -17,25 +17,25 @@ USE defaultdb
 error
 CREATE TABLE lt_coll_list (id int PRIMARY KEY, tags list<text>)
 ----
-at position 46: unsupported CQL type "list"
+at position 52: unsupported CQL type "list"
 
 # Bare list type (without angle brackets).
 error
 CREATE TABLE lt_coll_list2 (id int, data list, PRIMARY KEY (id))
 ----
-at position 40: unsupported CQL type "list"
+at position 41: unsupported CQL type "list"
 
 # List of integers.
 error
 CREATE TABLE lt_coll_list3 (id int PRIMARY KEY, nums list<int>)
 ----
-at position 48: unsupported CQL type "list"
+at position 53: unsupported CQL type "list"
 
 # List of UUIDs.
 error
 CREATE TABLE lt_coll_list4 (id int PRIMARY KEY, ids list<uuid>)
 ----
-at position 47: unsupported CQL type "list"
+at position 52: unsupported CQL type "list"
 
 # ---------------------------------------------------------------
 # Frozen list column — unsupported frozen modifier.
@@ -44,7 +44,7 @@ at position 47: unsupported CQL type "list"
 error
 CREATE TABLE lt_coll_flist (id int PRIMARY KEY, items frozen<list<int>>)
 ----
-at position 48: unsupported CQL type "frozen"
+at position 54: unsupported CQL type "frozen"
 
 # ---------------------------------------------------------------
 # INSERT with list literal — lexer rejects square brackets.
@@ -59,13 +59,13 @@ INSERT INTO lt_coll_list (id, tags) VALUES (1, ['hello', 'world'])
 unexpected character '[' at position 47
 
 # ---------------------------------------------------------------
-# UPDATE with list literal.
+# UPDATE with list literal — lexer rejects square brackets.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_list SET tags = ['a', 'b'] WHERE id = 1
 ----
-at position 46: unsupported CQL type "list"
+unexpected character '[' at position 31
 
 # ---------------------------------------------------------------
 # List append (SET col = col + [...]) — lexer rejects brackets.
@@ -83,16 +83,16 @@ unexpected character '[' at position 47
 error
 UPDATE lt_coll_list SET tags = ['prepend'] + tags WHERE id = 1
 ----
-at position 46: unsupported CQL type "list"
+unexpected character '[' at position 31
 
 # ---------------------------------------------------------------
-# List removal (SET col = col - [...]) — lexer rejects brackets.
+# List removal (SET col = col - [...]) — lexer rejects minus.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_list SET tags = tags - ['remove'] WHERE id = 1
 ----
-at position 46: unsupported CQL type "list"
+unexpected character '-' at position 36
 
 # ---------------------------------------------------------------
 # Nested list (list<list<int>>) — unsupported.
@@ -101,4 +101,4 @@ at position 46: unsupported CQL type "list"
 error
 CREATE TABLE lt_coll_nested_list (id int PRIMARY KEY, matrix list<list<int>>)
 ----
-at position 55: unsupported CQL type "list"
+at position 61: unsupported CQL type "list"

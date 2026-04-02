@@ -17,25 +17,25 @@ USE defaultdb
 error
 CREATE TABLE lt_coll_set (id int PRIMARY KEY, emails set<text>)
 ----
-at position 47: unsupported CQL type "set"
+at position 53: unsupported CQL type "set"
 
 # Bare set type (without angle brackets).
 error
 CREATE TABLE lt_coll_set2 (id int, data set, PRIMARY KEY (id))
 ----
-at position 39: unsupported CQL type "set"
+at position 40: unsupported CQL type "set"
 
 # Set of integers.
 error
 CREATE TABLE lt_coll_set3 (id int PRIMARY KEY, nums set<int>)
 ----
-at position 47: unsupported CQL type "set"
+at position 52: unsupported CQL type "set"
 
 # Set of UUIDs.
 error
 CREATE TABLE lt_coll_set4 (id int PRIMARY KEY, ids set<uuid>)
 ----
-at position 46: unsupported CQL type "set"
+at position 51: unsupported CQL type "set"
 
 # ---------------------------------------------------------------
 # Frozen set column — unsupported frozen modifier.
@@ -44,47 +44,46 @@ at position 46: unsupported CQL type "set"
 error
 CREATE TABLE lt_coll_fset (id int PRIMARY KEY, tags frozen<set<text>>)
 ----
-at position 47: unsupported CQL type "frozen"
+at position 52: unsupported CQL type "frozen"
 
 # ---------------------------------------------------------------
 # INSERT with set literal — parser expects expression, gets brace.
 #
-# CQL set literals use braces: {'a', 'b'}. The parser recognizes
-# braces but does not support set literals in value position.
+# CQL set literals use braces: {'a', 'b'}. The lexer recognizes
+# braces but the expression parser does not support brace literals.
 # ---------------------------------------------------------------
 
 error
 INSERT INTO lt_coll_set (id, emails) VALUES (1, {'a@example.com', 'b@example.com'})
 ----
-at position 47: unsupported CQL type "set"
+at position 48: expected expression, got "{"
 
 # ---------------------------------------------------------------
-# UPDATE with set literal.
+# UPDATE with set literal — parser rejects brace in expression.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_set SET emails = {'x@test.com'} WHERE id = 1
 ----
-at position 47: unsupported CQL type "set"
+at position 32: expected expression, got "{"
 
 # ---------------------------------------------------------------
-# Set add (SET col = col + {...}) — unsupported type prevents
-# table creation, so operations on the column are unreachable.
+# Set add (SET col = col + {...}) — lexer rejects plus operator.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_set SET emails = emails + {'new@test.com'} WHERE id = 1
 ----
-at position 47: unsupported CQL type "set"
+unexpected character '+' at position 39
 
 # ---------------------------------------------------------------
-# Set removal (SET col = col - {...}).
+# Set removal (SET col = col - {...}) — lexer rejects minus.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_set SET emails = emails - {'old@test.com'} WHERE id = 1
 ----
-at position 47: unsupported CQL type "set"
+unexpected character '-' at position 39
 
 # ---------------------------------------------------------------
 # Nested set (set<set<int>>) — unsupported.
@@ -93,4 +92,4 @@ at position 47: unsupported CQL type "set"
 error
 CREATE TABLE lt_coll_nested_set (id int PRIMARY KEY, groups set<set<int>>)
 ----
-at position 53: unsupported CQL type "set"
+at position 60: unsupported CQL type "set"
