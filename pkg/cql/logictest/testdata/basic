@@ -1,0 +1,30 @@
+# Basic CQL operations: DDL, DML, and SELECT queries.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_basic (id int, name text, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_basic (id, name) VALUES (1, 'alice')
+----
+
+exec
+INSERT INTO lt_basic (id, name) VALUES (2, 'bob')
+----
+
+query rowsort
+SELECT id, name FROM lt_basic
+----
+id name
+1 alice
+2 bob
+
+query
+SELECT id, name FROM lt_basic WHERE id = 1
+----
+id name
+1 alice
