@@ -349,6 +349,43 @@ func (e *ParenExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Expr)
 }
 
+// InExpr represents <expr> [NOT] IN (<values>).
+type InExpr struct {
+	Expr   Expr
+	Values []Expr
+	Not    bool
+}
+
+func (*InExpr) exprNode() {}
+
+func (e *InExpr) String() string {
+	var vals []string
+	for _, v := range e.Values {
+		vals = append(vals, v.String())
+	}
+	if e.Not {
+		return fmt.Sprintf("%s NOT IN (%s)", e.Expr, strings.Join(vals, ", "))
+	}
+	return fmt.Sprintf("%s IN (%s)", e.Expr, strings.Join(vals, ", "))
+}
+
+// BetweenExpr represents <expr> [NOT] BETWEEN <low> AND <high>.
+type BetweenExpr struct {
+	Expr Expr
+	Low  Expr
+	High Expr
+	Not  bool
+}
+
+func (*BetweenExpr) exprNode() {}
+
+func (e *BetweenExpr) String() string {
+	if e.Not {
+		return fmt.Sprintf("%s NOT BETWEEN %s AND %s", e.Expr, e.Low, e.High)
+	}
+	return fmt.Sprintf("%s BETWEEN %s AND %s", e.Expr, e.Low, e.High)
+}
+
 // formatIdent returns an identifier, quoting it with brackets if it contains
 // special characters or is a reserved word. For simplicity, identifiers that
 // are plain alphanumeric (plus underscore) are returned unquoted.
