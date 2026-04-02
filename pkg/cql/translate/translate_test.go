@@ -101,6 +101,118 @@ func TestTranslateCreateTable(t *testing.T) {
 	}
 }
 
+func TestTranslateCreateIndex(t *testing.T) {
+	tests := []struct {
+		name    string
+		cql     string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "basic single column",
+			cql:  "CREATE INDEX idx_email ON users (email)",
+			want: `CREATE INDEX "idx_email" ON "users" ("email")`,
+		},
+		{
+			name: "if not exists",
+			cql:  "CREATE INDEX IF NOT EXISTS idx_email ON users (email)",
+			want: `CREATE INDEX IF NOT EXISTS "idx_email" ON "users" ("email")`,
+		},
+		{
+			name: "composite index",
+			cql:  "CREATE INDEX idx_city_age ON users (city, age)",
+			want: `CREATE INDEX "idx_city_age" ON "users" ("city", "age")`,
+		},
+		{
+			name: "qualified table name",
+			cql:  "CREATE INDEX idx_q ON ks1.users (email)",
+			want: `CREATE INDEX "idx_q" ON "ks1"."users" ("email")`,
+		},
+		{
+			name:    "collection function KEYS rejected",
+			cql:     "CREATE INDEX idx_k ON t (KEYS(col))",
+			wantErr: "collection index function KEYS() is not supported",
+		},
+		{
+			name:    "collection function VALUES rejected",
+			cql:     "CREATE INDEX idx_v ON t (VALUES(col))",
+			wantErr: "collection index function VALUES() is not supported",
+		},
+		{
+			name:    "custom index rejected",
+			cql:     "CREATE CUSTOM INDEX idx_sasi ON t (col) USING 'org.apache.cassandra.index.sasi.SASIIndex'",
+			wantErr: "CUSTOM INDEX is not supported",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, result.SQL)
+			}
+		})
+	}
+}
+
+func TestTranslateAlterTableWith(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+	}{
+		{
+			name: "compaction strategy",
+			cql:  "ALTER TABLE t WITH compaction = {'class': 'LeveledCompactionStrategy'}",
+		},
+		{
+			name: "gc_grace_seconds",
+			cql:  "ALTER TABLE t WITH gc_grace_seconds = 86400",
+		},
+		{
+			name: "multiple properties",
+			cql:  "ALTER TABLE t WITH gc_grace_seconds = 86400 AND compaction = {'class': 'SizeTieredCompactionStrategy'}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Empty(t, result.SQL)
+		})
+	}
+}
+
+func TestTranslateAlterKeyspace(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+	}{
+		{
+			name: "replication change",
+			cql:  "ALTER KEYSPACE ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}",
+		},
+		{
+			name: "durable writes",
+			cql:  "ALTER KEYSPACE ks WITH durable_writes = false",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Empty(t, result.SQL)
+		})
+	}
+}
+
 func TestTranslateInsert(t *testing.T) {
 	tests := []struct {
 		name       string

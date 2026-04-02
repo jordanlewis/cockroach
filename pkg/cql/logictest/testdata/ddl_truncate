@@ -204,18 +204,16 @@ ALTER TABLE ddl_ine_t DROP email
 ----
 
 # ---------------------------------------------------------------
-# CREATE INDEX IF NOT EXISTS (unsupported)
+# CREATE INDEX IF NOT EXISTS (supported)
 #
-# The parser dispatches CREATE to parseCreate, which only handles
-# KEYSPACE and TABLE — not INDEX.
+# Basic CREATE INDEX maps to CRDB CREATE INDEX.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE INDEX ddl_ine_idx ON ddl_ine_t (val)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
-error
+# IF NOT EXISTS — no error on existing index.
+exec
 CREATE INDEX IF NOT EXISTS ddl_ine_idx ON ddl_ine_t (val)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement

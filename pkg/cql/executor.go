@@ -111,6 +111,12 @@ func (e *Executor) ExecuteQuery(
 	switch s := stmt.(type) {
 	case *parser.CreateKeyspaceStatement:
 		return e.executeDDL(ctx, result, override, "CREATED", "KEYSPACE", s.Keyspace, "")
+	case *parser.CreateIndexStatement:
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "UPDATED", "TABLE", ks, s.Table)
 	case *parser.CreateTableStatement:
 		ks := s.Keyspace
 		if ks == "" {
@@ -130,8 +136,20 @@ func (e *Executor) ExecuteQuery(
 		if ks == "" {
 			ks = keyspace
 		}
+		if result.SQL == "" {
+			// No-op translation (e.g. ALTER TABLE WITH properties).
+			return ExecuteResult{
+				Body: buildSchemaChangeBody("UPDATED", "TABLE", ks, s.Table),
+			}
+		}
 		return e.executeDDL(ctx, result, override, "UPDATED", "TABLE", ks, s.Table)
 	case *parser.AlterKeyspaceStatement:
+		if result.SQL == "" {
+			// No-op translation (ALTER KEYSPACE properties).
+			return ExecuteResult{
+				Body: buildSchemaChangeBody("UPDATED", "KEYSPACE", s.Keyspace, ""),
+			}
+		}
 		return e.executeDDL(ctx, result, override, "UPDATED", "KEYSPACE", s.Keyspace, "")
 	case *parser.DropStatement:
 		switch s.ObjectType {

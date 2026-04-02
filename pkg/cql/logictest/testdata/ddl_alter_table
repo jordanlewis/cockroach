@@ -177,38 +177,34 @@ cql-ddl: column "age" cannot be cast automatically to type BYTES
 #
 # In Cassandra, ALTER TABLE ... WITH allows changing table-level
 # options like compaction, gc_grace_seconds, and comments. These
-# do not map to CRDB operations.
+# have no CRDB equivalent and are silently accepted for
+# compatibility.
 # ---------------------------------------------------------------
 
-# Change compaction strategy.
-error
+# Change compaction strategy — silently accepted.
+exec
 ALTER TABLE lt_alt_basic WITH compaction = {'class': 'LeveledCompactionStrategy'}
 ----
-ALTER TABLE WITH properties is not supported
 
-# Change gc_grace_seconds.
-error
+# Change gc_grace_seconds — silently accepted.
+exec
 ALTER TABLE lt_alt_basic WITH gc_grace_seconds = 86400
 ----
-ALTER TABLE WITH properties is not supported
 
-# Change default_time_to_live.
-error
+# Change default_time_to_live — silently accepted.
+exec
 ALTER TABLE lt_alt_basic WITH default_time_to_live = 3600
 ----
-ALTER TABLE WITH properties is not supported
 
-# Add a comment to the table.
-error
+# Add a comment to the table — silently accepted.
+exec
 ALTER TABLE lt_alt_basic WITH comment = 'A test table with metadata'
 ----
-ALTER TABLE WITH properties is not supported
 
-# Multiple property changes with AND.
-error
+# Multiple property changes with AND — silently accepted.
+exec
 ALTER TABLE lt_alt_basic WITH gc_grace_seconds = 86400 AND compaction = {'class': 'SizeTieredCompactionStrategy'}
 ----
-ALTER TABLE WITH properties is not supported
 
 # ---------------------------------------------------------------
 # Verify base tables have been modified by successful operations.

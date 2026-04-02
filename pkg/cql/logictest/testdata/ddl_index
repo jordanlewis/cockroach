@@ -1,9 +1,9 @@
 # DDL tests for CQL secondary indexes (CREATE INDEX, DROP INDEX).
 #
 # CQL secondary indexes allow queries on non-primary-key columns.
-# The parser accepts CREATE INDEX, CREATE CUSTOM INDEX, and DROP
-# INDEX syntax, but the translator does not yet map these to CRDB
-# SQL operations. These tests document the expected errors.
+# Basic CREATE INDEX maps directly to CRDB CREATE INDEX. Collection
+# index functions (KEYS, VALUES, ENTRIES, FULL) and custom indexes
+# (USING class) are not supported.
 
 exec
 USE defaultdb
@@ -34,76 +34,77 @@ user_id email
 1 alice@example.com
 
 # ---------------------------------------------------------------
-# CREATE INDEX — translator rejects.
+# CREATE INDEX — basic forms (supported)
 #
 # The parser accepts CREATE INDEX syntax and produces a
-# CreateIndexStatement AST node. The translator does not yet
-# handle this statement type.
+# CreateIndexStatement AST node. Basic indexes map directly
+# to CRDB CREATE INDEX.
 # ---------------------------------------------------------------
 
 # Basic named index on a single column.
-error
+exec
 CREATE INDEX lt_idx_users_email_idx ON lt_idx_users (email)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Named index on an integer column.
-error
+exec
 CREATE INDEX lt_idx_users_age_idx ON lt_idx_users (age)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Named index on a text column used for filtering.
-error
+exec
 CREATE INDEX lt_idx_users_city_idx ON lt_idx_users (city)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
-# CREATE INDEX IF NOT EXISTS.
-error
+# CREATE INDEX IF NOT EXISTS — no error on existing index.
+exec
 CREATE INDEX IF NOT EXISTS lt_idx_users_email_idx ON lt_idx_users (email)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index with a qualified table name (keyspace.table).
-error
+exec
 CREATE INDEX lt_idx_qual_idx ON defaultdb.lt_idx_users (email)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # ---------------------------------------------------------------
-# CREATE INDEX: composite and special forms (unsupported)
+# CREATE INDEX: composite indexes (supported)
 # ---------------------------------------------------------------
 
 # Composite index on multiple columns.
-error
+exec
 CREATE INDEX lt_idx_composite ON lt_idx_users (city, age)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+
+# ---------------------------------------------------------------
+# CREATE INDEX: collection index functions (unsupported)
+#
+# KEYS(), VALUES(), ENTRIES(), and FULL() are CQL-specific
+# collection indexing functions that are not yet supported.
+# ---------------------------------------------------------------
 
 # Index using a Cassandra KEYS() function on a collection column.
 error
 CREATE INDEX lt_idx_keys ON lt_idx_users (KEYS(email))
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+collection index function KEYS() is not supported
 
 # Index using VALUES() for collection indexing.
 error
 CREATE INDEX lt_idx_values ON lt_idx_users (VALUES(email))
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+collection index function VALUES() is not supported
 
 # Index using ENTRIES() for map collection indexing.
 error
 CREATE INDEX lt_idx_entries ON lt_idx_users (ENTRIES(email))
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+collection index function ENTRIES() is not supported
 
 # Index using FULL() for frozen collection indexing.
 error
 CREATE INDEX lt_idx_full ON lt_idx_users (FULL(email))
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+collection index function FULL() is not supported
 
 # ---------------------------------------------------------------
 # CREATE INDEX: custom index class (unsupported)
@@ -113,27 +114,26 @@ unsupported CQL statement type: *parser.CreateIndexStatement
 error
 CREATE CUSTOM INDEX lt_idx_sasi ON lt_idx_users (email) USING 'org.apache.cassandra.index.sasi.SASIIndex'
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
+CUSTOM INDEX is not supported
 
 # ---------------------------------------------------------------
 # DROP INDEX
 #
-# DROP INDEX is now parsed and translated. Since CREATE INDEX is
-# not yet supported, the indexes don't exist, producing errors.
+# DROP INDEX is parsed and translated. Indexes created above
+# can now be dropped.
 # ---------------------------------------------------------------
 
-# Drop a named index — doesn't exist.
-error
+# Drop a named index that was created above.
+exec
 DROP INDEX lt_idx_users_email_idx
 ----
-cql-ddl: index "lt_idx_users_email_idx" does not exist
 
-# Drop with IF EXISTS — no error for non-existent index.
+# Drop with IF EXISTS — no error for already-dropped index.
 exec
 DROP INDEX IF EXISTS lt_idx_users_email_idx
 ----
 
-# Drop with qualified name — doesn't exist.
+# Drop with qualified name — already dropped above.
 error
 DROP INDEX defaultdb.lt_idx_users_email_idx
 ----
@@ -165,19 +165,16 @@ INSERT INTO lt_idx_events (sensor_id, ts, category, reading) VALUES (2, 1000, 't
 ----
 
 # Index on a non-key column of a table with clustering keys.
-error
+exec
 CREATE INDEX lt_idx_events_cat_idx ON lt_idx_events (category)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index on the clustering key column itself.
-error
+exec
 CREATE INDEX lt_idx_events_ts_idx ON lt_idx_events (ts)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index on a double column.
-error
+exec
 CREATE INDEX lt_idx_events_reading_idx ON lt_idx_events (reading)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement

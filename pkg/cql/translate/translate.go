@@ -133,6 +133,8 @@ func Translate(stmt parser.Statement) (Result, error) {
 		return translateUpdate(s)
 	case *parser.DeleteStatement:
 		return translateDelete(s)
+	case *parser.CreateIndexStatement:
+		return translateCreateIndex(s)
 	case *parser.AlterTableStatement:
 		return translateAlterTable(s)
 	case *parser.AlterKeyspaceStatement:
@@ -209,6 +211,43 @@ func translateCreateTable(s *parser.CreateTableStatement) (Result, error) {
 		sb.WriteByte(')')
 	}
 
+	sb.WriteByte(')')
+	return Result{SQL: sb.String()}, nil
+}
+
+// translateCreateIndex maps CQL CREATE INDEX to CRDB CREATE INDEX. Collection
+// index functions (KEYS, VALUES, ENTRIES, FULL) and custom indexes (USING
+// class) are not supported.
+func translateCreateIndex(s *parser.CreateIndexStatement) (Result, error) {
+	if s.IsCustom {
+		return Result{}, errors.Newf("CUSTOM INDEX is not supported")
+	}
+	for _, col := range s.Columns {
+		if col.Function != "" {
+			return Result{}, errors.Newf(
+				"collection index function %s() is not supported", col.Function,
+			)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("CREATE INDEX ")
+	if s.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	if s.IndexName != "" {
+		sb.WriteString(quoteIdent(s.IndexName))
+		sb.WriteByte(' ')
+	}
+	sb.WriteString("ON ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" (")
+	for i, col := range s.Columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(col.Name))
+	}
 	sb.WriteByte(')')
 	return Result{SQL: sb.String()}, nil
 }
@@ -876,11 +915,11 @@ func qualifiedTable(keyspace, table string) string {
 	return quoteIdent(table)
 }
 
-// translateAlterKeyspace returns an error because CockroachDB does not support
-// ALTER DATABASE operations equivalent to CQL's ALTER KEYSPACE properties
-// (replication strategy, durable_writes).
+// translateAlterKeyspace silently accepts ALTER KEYSPACE for compatibility.
+// CQL keyspace properties (replication strategy, durable_writes) have no CRDB
+// equivalent — CRDB uses zone configurations instead.
 func translateAlterKeyspace(_ *parser.AlterKeyspaceStatement) (Result, error) {
-	return Result{}, errors.Newf("ALTER KEYSPACE is not supported")
+	return Result{}, nil
 }
 
 // translateAlterTable maps CQL ALTER TABLE operations to CRDB SQL.
@@ -917,7 +956,9 @@ func translateAlterTable(s *parser.AlterTableStatement) (Result, error) {
 		sb.WriteString(" SET DATA TYPE ")
 		sb.WriteString(sqlType)
 	case *parser.AlterTableWith:
-		return Result{}, errors.Newf("ALTER TABLE WITH properties is not supported")
+		// CQL table properties (compaction, gc_grace_seconds, etc.) have no
+		// CRDB equivalent. Silently accept for compatibility.
+		return Result{}, nil
 	default:
 		return Result{}, errors.Newf("unsupported ALTER TABLE operation: %T", op)
 	}

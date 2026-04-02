@@ -217,10 +217,9 @@ CREATE TABLE lt_ddl_multi_opts (id int PRIMARY KEY, val text) WITH gc_grace_seco
 ----
 
 # ---------------------------------------------------------------
-# CREATE INDEX (unsupported)
+# CREATE INDEX (supported)
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE INDEX lt_ddl_basic_name_idx ON lt_ddl_basic (name)
 ----
-unsupported CQL statement type: *parser.CreateIndexStatement

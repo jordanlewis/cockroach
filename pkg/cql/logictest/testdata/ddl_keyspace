@@ -90,21 +90,20 @@ DROP KEYSPACE IF EXISTS test_ks_simple
 ----
 
 # ---------------------------------------------------------------
-# ALTER KEYSPACE (parsed but not translatable — CRDB does not
-# support ALTER DATABASE replication/durable_writes properties)
+# ALTER KEYSPACE — silently accepted for compatibility.
+#
+# CQL keyspace properties (replication strategy, durable_writes)
+# have no CRDB equivalent. CRDB uses zone configs instead.
 # ---------------------------------------------------------------
 
-error
+exec
 ALTER KEYSPACE test_ks_nts WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}
 ----
-ALTER KEYSPACE is not supported
 
-error
+exec
 ALTER KEYSPACE test_ks_nts WITH durable_writes = false
 ----
-ALTER KEYSPACE is not supported
 
-error
+exec
 ALTER KEYSPACE test_ks_nts WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': '3'} AND durable_writes = true
 ----
-ALTER KEYSPACE is not supported
