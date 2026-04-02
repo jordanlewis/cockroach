@@ -1,7 +1,8 @@
 # DDL tests for CQL keyspace (CREATE, DROP, ALTER).
 #
-# CQL keyspaces map to CockroachDB databases. CREATE KEYSPACE is
-# supported; DROP and ALTER are not yet implemented in the parser.
+# CQL keyspaces map to CockroachDB databases. CREATE KEYSPACE maps
+# to CREATE DATABASE. ALTER KEYSPACE is parsed but returns a
+# translation error — CRDB handles replication via zone configs.
 
 # ---------------------------------------------------------------
 # CREATE KEYSPACE
@@ -89,15 +90,21 @@ DROP KEYSPACE IF EXISTS test_ks_simple
 ----
 
 # ---------------------------------------------------------------
-# ALTER KEYSPACE (unsupported — ALTER only handles TABLE)
+# ALTER KEYSPACE (parsed but not translatable — CRDB does not
+# support ALTER DATABASE replication/durable_writes properties)
 # ---------------------------------------------------------------
 
 error
-ALTER KEYSPACE test_ks_simple WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}
+ALTER KEYSPACE test_ks_nts WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}
 ----
-at position 6: expected TABLE after ALTER, got "KEYSPACE"
+ALTER KEYSPACE is not supported
 
 error
-ALTER KEYSPACE test_ks_simple WITH durable_writes = false
+ALTER KEYSPACE test_ks_nts WITH durable_writes = false
 ----
-at position 6: expected TABLE after ALTER, got "KEYSPACE"
+ALTER KEYSPACE is not supported
+
+error
+ALTER KEYSPACE test_ks_nts WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': '3'} AND durable_writes = true
+----
+ALTER KEYSPACE is not supported

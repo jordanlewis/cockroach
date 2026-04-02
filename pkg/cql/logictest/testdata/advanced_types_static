@@ -1,17 +1,46 @@
 # Static columns in tables with clustering keys.
 #
 # Static columns share a single value per partition key, regardless
-# of the number of clustering rows. The STATIC keyword is not yet
-# supported by the parser.
+# of the number of clustering rows. The STATIC keyword is accepted
+# by the parser and silently ignored during translation — CRDB does
+# not distinguish static columns.
 
 exec
 USE defaultdb
 ----
 
-# Static column in a table with clustering key. The parser reads
-# "static" as a new column name and fails when it expects a type
-# but finds a comma.
-error
-CREATE TABLE static_table (pk int, ck int, v text, s text static, PRIMARY KEY (pk, ck))
+# Static column in a table with clustering key. The STATIC keyword
+# is parsed but the column is treated as a regular column in CRDB.
+exec
+CREATE TABLE IF NOT EXISTS static_table (pk int, ck int, v text, s text static, PRIMARY KEY (pk, ck))
 ----
-at position 64: expected data type, got ","
+
+exec
+INSERT INTO static_table (pk, ck, v, s) VALUES (1, 1, 'row1', 'shared')
+----
+
+exec
+INSERT INTO static_table (pk, ck, v, s) VALUES (1, 2, 'row2', 'shared')
+----
+
+query rowsort
+SELECT pk, ck, v, s FROM static_table
+----
+pk ck v s
+1 1 row1 shared
+1 2 row2 shared
+
+# Multiple static columns.
+exec
+CREATE TABLE IF NOT EXISTS multi_static (pk int, ck int, a text static, b int static, c text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO multi_static (pk, ck, a, b, c) VALUES (1, 1, 'hello', 42, 'data')
+----
+
+query
+SELECT pk, ck, a, b, c FROM multi_static WHERE pk = 1 AND ck = 1
+----
+pk ck a b c
+1 1 hello 42 data

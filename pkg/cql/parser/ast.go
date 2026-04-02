@@ -33,10 +33,21 @@ type CreateKeyspaceStatement struct {
 
 func (*CreateKeyspaceStatement) statementNode() {}
 
+// AlterKeyspaceStatement represents
+// ALTER KEYSPACE <name> WITH replication = { ... } [AND durable_writes = ...].
+type AlterKeyspaceStatement struct {
+	Keyspace      string
+	Replication   map[string]string
+	DurableWrites *bool
+}
+
+func (*AlterKeyspaceStatement) statementNode() {}
+
 // ColumnDef describes a single column in a CREATE TABLE statement.
 type ColumnDef struct {
 	Name     string
 	DataType DataType
+	IsStatic bool // STATIC keyword present (Cassandra per-partition shared column)
 }
 
 // DataType represents a CQL data type. Scalar types have an empty Params
@@ -162,18 +173,19 @@ func (*DeleteStatement) statementNode() {}
 
 // SelectStatement represents
 // SELECT [JSON] [DISTINCT] <cols> FROM <table> [WHERE <conds>]
-// [GROUP BY <cols>] [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>]
-// [ALLOW FILTERING].
+// [GROUP BY <cols>] [ORDER BY <col> [ASC|DESC], ...]
+// [PER PARTITION LIMIT <n>] [LIMIT <n>] [ALLOW FILTERING].
 type SelectStatement struct {
-	Table    string
-	Keyspace string // empty when unqualified
-	Columns  []Selector
-	Distinct bool
-	JSON     bool // SELECT JSON
-	Where    []WhereClause
-	GroupBy  []string
-	OrderBy  []OrderByClause
-	Limit    Expr // nil if no LIMIT
+	Table             string
+	Keyspace          string // empty when unqualified
+	Columns           []Selector
+	Distinct          bool
+	JSON              bool // SELECT JSON
+	Where             []WhereClause
+	GroupBy           []string
+	OrderBy           []OrderByClause
+	PerPartitionLimit Expr // nil if no PER PARTITION LIMIT
+	Limit             Expr // nil if no LIMIT
 }
 
 func (*SelectStatement) statementNode() {}
@@ -415,6 +427,7 @@ type IndexColumn struct {
 	Name     string
 	Function string // "KEYS", "VALUES", "ENTRIES", "FULL", or ""
 }
+
 // DropStatement represents DROP TABLE/KEYSPACE/INDEX [IF EXISTS] <name>.
 type DropStatement struct {
 	ObjectType string // "TABLE", "KEYSPACE", "INDEX"

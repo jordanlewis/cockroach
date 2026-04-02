@@ -1,8 +1,8 @@
 # LIMIT and PER PARTITION LIMIT.
 #
 # LIMIT restricts the total number of rows returned. PER PARTITION
-# LIMIT restricts rows per partition. LIMIT is supported; PER
-# PARTITION LIMIT is not.
+# LIMIT restricts rows per partition. LIMIT is translated to SQL
+# LIMIT; PER PARTITION LIMIT is parsed but not translatable.
 
 exec
 USE defaultdb
@@ -61,8 +61,15 @@ pk val
 2 two
 3 three
 
-# PER PARTITION LIMIT is not supported by the parser.
+# PER PARTITION LIMIT is parsed but not translatable — CRDB does
+# not support per-partition row limits.
 error
 SELECT * FROM sel_lim PER PARTITION LIMIT 1
 ----
-at position 22: unexpected token "PER" after statement
+PER PARTITION LIMIT is not supported
+
+# PER PARTITION LIMIT with a regular LIMIT.
+error
+SELECT * FROM sel_lim PER PARTITION LIMIT 2 LIMIT 10
+----
+PER PARTITION LIMIT is not supported

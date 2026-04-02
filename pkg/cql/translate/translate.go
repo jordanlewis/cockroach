@@ -95,6 +95,8 @@ func Translate(stmt parser.Statement) (Result, error) {
 		return translateDelete(s)
 	case *parser.AlterTableStatement:
 		return translateAlterTable(s)
+	case *parser.AlterKeyspaceStatement:
+		return translateAlterKeyspace(s)
 	case *parser.DropStatement:
 		return translateDrop(s)
 	case *parser.TruncateStatement:
@@ -224,6 +226,9 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 func translateSelect(s *parser.SelectStatement) (Result, error) {
 	if s.JSON {
 		return Result{}, errors.Newf("SELECT JSON is not yet supported")
+	}
+	if s.PerPartitionLimit != nil {
+		return Result{}, errors.Newf("PER PARTITION LIMIT is not supported")
 	}
 
 	var sb strings.Builder
@@ -592,6 +597,13 @@ func qualifiedTable(keyspace, table string) string {
 		return quoteIdent(keyspace) + "." + quoteIdent(table)
 	}
 	return quoteIdent(table)
+}
+
+// translateAlterKeyspace returns an error because CockroachDB does not support
+// ALTER DATABASE operations equivalent to CQL's ALTER KEYSPACE properties
+// (replication strategy, durable_writes).
+func translateAlterKeyspace(_ *parser.AlterKeyspaceStatement) (Result, error) {
+	return Result{}, errors.Newf("ALTER KEYSPACE is not supported")
 }
 
 // translateAlterTable maps CQL ALTER TABLE operations to CRDB SQL.

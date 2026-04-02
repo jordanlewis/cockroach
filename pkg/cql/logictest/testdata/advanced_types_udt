@@ -16,11 +16,11 @@ CREATE TYPE address (street text, city text, zip text)
 ----
 unsupported CQL statement type: *parser.CreateTypeStatement
 
-# ALTER TYPE is not yet supported (ALTER only handles TABLE).
+# ALTER TYPE is not yet supported (ALTER handles TABLE and KEYSPACE).
 error
 ALTER TYPE address ADD state text
 ----
-at position 6: expected TABLE after ALTER, got "TYPE"
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
 
 # UDT as a column type — parsed as unknown type, translator rejects.
 error

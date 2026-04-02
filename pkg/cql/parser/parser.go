@@ -400,6 +400,22 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 		stmt.OrderBy = orderBy
 	}
 
+	// Optional PER PARTITION LIMIT (must appear before LIMIT).
+	if isKeyword(p.lex.peek(), "PER") {
+		p.lex.next() // consume PER
+		if err := p.expectKeyword("PARTITION"); err != nil {
+			return nil, err
+		}
+		if err := p.expectKeyword("LIMIT"); err != nil {
+			return nil, err
+		}
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		stmt.PerPartitionLimit = expr
+	}
+
 	// Optional LIMIT.
 	if isKeyword(p.lex.peek(), "LIMIT") {
 		p.lex.next()
@@ -595,14 +611,76 @@ func (p *parser) parseAssignmentValue() (Expr, error) {
 	return p.parseExpr()
 }
 
-// parseAlter parses ALTER TABLE statements.
+// parseAlter parses ALTER TABLE and ALTER KEYSPACE statements.
 func (p *parser) parseAlter() (Statement, error) {
 	p.lex.next() // consume ALTER
 	t := p.lex.peek()
-	if !isKeyword(t, "TABLE") {
-		return nil, p.errorf("expected TABLE after ALTER, got %q", t.val)
+	switch strings.ToUpper(t.val) {
+	case "TABLE":
+		return p.parseAlterTable()
+	case "KEYSPACE":
+		return p.parseAlterKeyspace()
+	default:
+		return nil, p.errorf("expected TABLE or KEYSPACE after ALTER, got %q", t.val)
 	}
-	return p.parseAlterTable()
+}
+
+// parseAlterKeyspace parses:
+//
+//	ALTER KEYSPACE <name>
+//	  WITH replication = { 'key': 'val', ... }
+//	  [AND durable_writes = true|false]
+func (p *parser) parseAlterKeyspace() (*AlterKeyspaceStatement, error) {
+	p.lex.next() // consume KEYSPACE
+	stmt := &AlterKeyspaceStatement{}
+
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = name
+
+	if err := p.expectKeyword("WITH"); err != nil {
+		return nil, err
+	}
+
+	// The WITH clause can contain replication and/or durable_writes
+	// in any order, separated by AND.
+	for {
+		t := p.lex.peek()
+		switch strings.ToLower(t.val) {
+		case "replication":
+			p.lex.next()
+			if err := p.expectToken(tokEq); err != nil {
+				return nil, err
+			}
+			m, err := p.parseMapLiteral()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Replication = m
+		case "durable_writes":
+			p.lex.next()
+			if err := p.expectToken(tokEq); err != nil {
+				return nil, err
+			}
+			b, err := p.parseBoolValue()
+			if err != nil {
+				return nil, err
+			}
+			stmt.DurableWrites = &b
+		default:
+			return nil, p.errorf(
+				"expected replication or durable_writes after WITH, got %q", t.val)
+		}
+
+		if !isKeyword(p.lex.peek(), "AND") {
+			break
+		}
+		p.lex.next() // consume AND
+	}
+
+	return stmt, nil
 }
 
 // parseAlterTable parses:
@@ -1097,9 +1175,10 @@ func (p *parser) parseBoolValue() (bool, error) {
 	}
 }
 
-// parseColumnDef parses <name> <type> [PRIMARY KEY]. The inline
-// PRIMARY KEY is a Cassandra shorthand for single-partition-key
-// tables.
+// parseColumnDef parses <name> <type> [STATIC] [PRIMARY KEY]. The
+// inline PRIMARY KEY is a Cassandra shorthand for single-partition-key
+// tables. The STATIC keyword marks a column whose value is shared
+// across all clustering rows within a partition.
 func (p *parser) parseColumnDef() (ColumnDef, bool, error) {
 	name, err := p.expectIdent()
 	if err != nil {
@@ -1109,6 +1188,14 @@ func (p *parser) parseColumnDef() (ColumnDef, bool, error) {
 	if err != nil {
 		return ColumnDef{}, false, err
 	}
+
+	// Optional STATIC keyword (Cassandra per-partition shared column).
+	isStatic := false
+	if isKeyword(p.lex.peek(), "STATIC") {
+		p.lex.next()
+		isStatic = true
+	}
+
 	// Check for inline PRIMARY KEY.
 	isPK := false
 	if isKeyword(p.lex.peek(), "PRIMARY") {
@@ -1121,7 +1208,7 @@ func (p *parser) parseColumnDef() (ColumnDef, bool, error) {
 			p.lex.cur = saved
 		}
 	}
-	return ColumnDef{Name: name, DataType: dt}, isPK, nil
+	return ColumnDef{Name: name, DataType: dt, IsStatic: isStatic}, isPK, nil
 }
 
 // parseDataType parses a CQL data type, including parameterized types like

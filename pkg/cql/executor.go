@@ -129,6 +129,8 @@ func (e *Executor) ExecuteQuery(
 			ks = keyspace
 		}
 		return e.executeDDL(ctx, result, override, "UPDATED", "TABLE", ks, s.Table)
+	case *parser.AlterKeyspaceStatement:
+		return e.executeDDL(ctx, result, override, "UPDATED", "KEYSPACE", s.Keyspace, "")
 	case *parser.DropStatement:
 		switch s.ObjectType {
 		case "KEYSPACE":
