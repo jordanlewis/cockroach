@@ -728,4 +728,74 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseIN(t *testing.T) {
+	sql := `SELECT * FROM users WHERE id IN (1, 2, 3)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	in, ok := sel.Where.(*InExpr)
+	if !ok {
+		t.Fatalf("expected *InExpr, got %T", sel.Where)
+	}
+	if in.Not {
+		t.Error("expected Not=false")
+	}
+	if len(in.Values) != 3 {
+		t.Fatalf("expected 3 values, got %d", len(in.Values))
+	}
+}
+
+func TestParseNotIN(t *testing.T) {
+	sql := `SELECT * FROM users WHERE id NOT IN (1, 2)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	in := sel.Where.(*InExpr)
+	if !in.Not {
+		t.Error("expected Not=true")
+	}
+	if len(in.Values) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(in.Values))
+	}
+}
+
+func TestParseBETWEEN(t *testing.T) {
+	sql := `SELECT * FROM users WHERE age BETWEEN 18 AND 65`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	btwn, ok := sel.Where.(*BetweenExpr)
+	if !ok {
+		t.Fatalf("expected *BetweenExpr, got %T", sel.Where)
+	}
+	if btwn.Not {
+		t.Error("expected Not=false")
+	}
+	if btwn.Low.(*IntLit).Value != 18 {
+		t.Errorf("expected low=18, got %s", btwn.Low)
+	}
+	if btwn.High.(*IntLit).Value != 65 {
+		t.Errorf("expected high=65, got %s", btwn.High)
+	}
+}
+
+func TestParseNotBETWEEN(t *testing.T) {
+	sql := `SELECT * FROM users WHERE age NOT BETWEEN 18 AND 65`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	btwn := sel.Where.(*BetweenExpr)
+	if !btwn.Not {
+		t.Error("expected Not=true")
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

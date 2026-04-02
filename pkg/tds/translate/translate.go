@@ -58,6 +58,10 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateInsert(s), nil
 	case *parser.SelectStmt:
 		return translateSelect(s), nil
+	case *parser.DeleteStmt:
+		return translateDelete(s), nil
+	case *parser.UpdateStmt:
+		return translateUpdate(s), nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -183,6 +187,32 @@ func translateSelect(s *parser.SelectStmt) string {
 	// TOP N → LIMIT N (placed after ORDER BY, per SQL standard).
 	if s.Top != nil {
 		fmt.Fprintf(&b, " LIMIT %d", *s.Top)
+	}
+	return b.String()
+}
+
+// translateDelete converts a T-SQL DELETE to CRDB syntax.
+func translateDelete(s *parser.DeleteStmt) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(s.Table))
+	if s.Where != nil {
+		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+	}
+	return b.String()
+}
+
+// translateUpdate converts a T-SQL UPDATE to CRDB syntax.
+func translateUpdate(s *parser.UpdateStmt) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "UPDATE %s SET ", quoteIdent(s.Table))
+	for i, a := range s.Assignments {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s = %s", quoteIdent(a.Column), translateExpr(a.Value))
+	}
+	if s.Where != nil {
+		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
 	}
 	return b.String()
 }

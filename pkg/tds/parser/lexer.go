@@ -70,6 +70,9 @@ const (
 	tokenBETWEEN
 	tokenLIKE
 	tokenDATABASE
+	tokenDELETE
+	tokenUPDATE
+	tokenSET
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
@@ -101,6 +104,9 @@ var keywords = map[string]tokenType{
 	"IN":       tokenIN,
 	"BETWEEN":  tokenBETWEEN,
 	"LIKE":     tokenLIKE,
+	"DELETE":   tokenDELETE,
+	"UPDATE":   tokenUPDATE,
+	"SET":      tokenSET,
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
 	"GETDATE":  tokenGETDATE,
