@@ -86,7 +86,9 @@ func (e *Executor) ExecuteQuery(
 	// tables during startup. We return synthetic results for these
 	// since CRDB does not have Cassandra system tables.
 	if sel, ok := stmt.(*parser.SelectStatement); ok {
-		if res, handled := handleSystemSelect(ctx, e.db, sel.Keyspace, sel.Table); handled {
+		if res, handled := handleSystemSelect(
+			ctx, e.db, sel.Keyspace, sel.Table, sel.Where,
+		); handled {
 			return res
 		}
 	}

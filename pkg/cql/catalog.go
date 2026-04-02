@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	cqltypes "github.com/cockroachdb/cockroach/pkg/cql/types"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
@@ -19,6 +20,44 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/redact"
 )
+
+// whereFilters holds equality filter values extracted from a SELECT
+// WHERE clause. The cassandra-driver uses these filters during
+// targeted schema refreshes (e.g. after CREATE TABLE) to request
+// metadata for a specific keyspace and table.
+type whereFilters struct {
+	keyspaceName string // empty = no filter
+	tableName    string // empty = no filter
+	viewName     string // empty = no filter
+}
+
+// extractWhereFilters pulls equality filter values from the parsed
+// WHERE clauses. Only simple equality checks on known column names
+// are extracted; all other clauses are ignored.
+func extractWhereFilters(where []parser.WhereClause) whereFilters {
+	var f whereFilters
+	for _, w := range where {
+		if w.Operator != "=" {
+			continue
+		}
+		val := ""
+		switch v := w.Value.(type) {
+		case *parser.StringLiteral:
+			val = v.Value
+		default:
+			continue
+		}
+		switch strings.ToLower(w.Column) {
+		case "keyspace_name":
+			f.keyspaceName = val
+		case "table_name":
+			f.tableName = val
+		case "view_name":
+			f.viewName = val
+		}
+	}
+	return f
+}
 
 // systemSchemaColumn describes a single column in a system_schema virtual
 // table stub.
@@ -181,30 +220,35 @@ var systemVirtualSchemaTables = map[string]systemSchemaTable{
 // returns a synthetic result. Returns (result, true) when handled, or
 // (ExecuteResult{}, false) when the query should proceed through the
 // normal path. The db parameter is used to query CRDB for real
-// database names when populating system_schema.keyspaces.
+// database names when populating system_schema.keyspaces. The where
+// parameter carries any WHERE clause filters from the parsed SELECT;
+// the cassandra-driver uses filtered queries like
+// "WHERE keyspace_name = 'ks' AND table_name = 'tbl'" during targeted
+// schema refreshes.
 func handleSystemSelect(
-	ctx context.Context, db isql.DB, keyspace, table string,
+	ctx context.Context, db isql.DB, keyspace, table string, where []parser.WhereClause,
 ) (ExecuteResult, bool) {
 	ks := strings.ToLower(keyspace)
 	tbl := strings.ToLower(table)
+	filters := extractWhereFilters(where)
 
 	switch ks {
 	case "system_schema":
 		switch tbl {
 		case "keyspaces":
-			body, err := buildSystemSchemaKeyspacesBody(ctx, db)
+			body, err := buildSystemSchemaKeyspacesBody(ctx, db, filters)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
 			return ExecuteResult{Body: body}, true
 		case "tables":
-			body, err := buildSystemSchemaTablesBody(ctx, db)
+			body, err := buildSystemSchemaTablesBody(ctx, db, filters)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
 			return ExecuteResult{Body: body}, true
 		case "columns":
-			body, err := buildSystemSchemaColumnsBody(ctx, db)
+			body, err := buildSystemSchemaColumnsBody(ctx, db, filters)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -288,8 +332,11 @@ func buildEmptyRowsBody(cols []systemSchemaColumn) ([]byte, error) {
 // buildSystemSchemaKeyspacesBody builds a CQL RESULT Rows frame body
 // for system_schema.keyspaces. It includes synthetic system keyspaces
 // plus any user-created databases from CRDB. cqlsh uses this metadata
-// to resolve keyspace names when formatting query results.
-func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, error) {
+// to resolve keyspace names when formatting query results. If filters
+// specifies a keyspace_name, only matching keyspaces are included.
+func buildSystemSchemaKeyspacesBody(
+	ctx context.Context, db isql.DB, filters whereFilters,
+) ([]byte, error) {
 	// Start with synthetic system keyspaces.
 	keyspaceNames := []string{
 		"system",
@@ -320,6 +367,17 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 				}
 			}
 		}
+	}
+
+	// Apply keyspace_name filter if present.
+	if filters.keyspaceName != "" {
+		filtered := keyspaceNames[:0]
+		for _, name := range keyspaceNames {
+			if name == filters.keyspaceName {
+				filtered = append(filtered, name)
+			}
+		}
+		keyspaceNames = filtered
 	}
 
 	cols := systemSchemaTables["keyspaces"].columns
@@ -363,7 +421,11 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 // system_schema.tables. It includes the synthetic system tables plus
 // any user-created tables discovered via CRDB's information_schema.
 // cqlsh uses this to validate table names before issuing queries.
-func buildSystemSchemaTablesBody(ctx context.Context, db isql.DB) ([]byte, error) {
+// If filters specifies keyspace_name and/or table_name, only matching
+// rows are included.
+func buildSystemSchemaTablesBody(
+	ctx context.Context, db isql.DB, filters whereFilters,
+) ([]byte, error) {
 	cols := systemSchemaTables["tables"].columns
 	var buf bytes.Buffer
 
@@ -415,6 +477,21 @@ func buildSystemSchemaTablesBody(ctx context.Context, db isql.DB) ([]byte, error
 				}
 			}
 		}
+	}
+
+	// Apply filters.
+	if filters.keyspaceName != "" || filters.tableName != "" {
+		filtered := tables[:0]
+		for _, tbl := range tables {
+			if filters.keyspaceName != "" && tbl.keyspaceName != filters.keyspaceName {
+				continue
+			}
+			if filters.tableName != "" && tbl.tableName != filters.tableName {
+				continue
+			}
+			filtered = append(filtered, tbl)
+		}
+		tables = filtered
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(tables)))
@@ -486,7 +563,11 @@ func crdbTypeToCQLTypeName(crdbType string) string {
 // buildSystemSchemaColumnsBody builds a CQL RESULT Rows frame body
 // for system_schema.columns listing columns for system tables and
 // any user-created tables discovered via CRDB's information_schema.
-func buildSystemSchemaColumnsBody(ctx context.Context, db isql.DB) ([]byte, error) {
+// If filters specifies keyspace_name and/or table_name, only matching
+// rows are included.
+func buildSystemSchemaColumnsBody(
+	ctx context.Context, db isql.DB, filters whereFilters,
+) ([]byte, error) {
 	cols := systemSchemaTables["columns"].columns
 	var buf bytes.Buffer
 
@@ -608,6 +689,21 @@ func buildSystemSchemaColumnsBody(ctx context.Context, db isql.DB) ([]byte, erro
 				}
 			}
 		}
+	}
+
+	// Apply filters.
+	if filters.keyspaceName != "" || filters.tableName != "" {
+		filtered := columnRows[:0]
+		for _, cr := range columnRows {
+			if filters.keyspaceName != "" && cr.keyspaceName != filters.keyspaceName {
+				continue
+			}
+			if filters.tableName != "" && cr.tableName != filters.tableName {
+				continue
+			}
+			filtered = append(filtered, cr)
+		}
+		columnRows = filtered
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(columnRows)))
