@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "auth",
+    srcs = ["auth.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/tns/auth",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tns/tnswire",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
