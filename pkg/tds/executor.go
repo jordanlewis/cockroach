@@ -160,6 +160,9 @@ func (e *Executor) executeStatement(
 		useStmt := stmt.(*parser.UseStmt)
 		return e.handleUseDatabase(useStmt.Database, tw)
 
+	case *parser.CreateDatabaseStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
 	case *parser.CreateTableStmt:
 		return e.executeDDL(ctx, crdbSQL, tw)
 
@@ -177,9 +180,7 @@ func (e *Executor) executeStatement(
 
 // executeDDL executes a DDL statement (CREATE TABLE, etc.) and returns
 // a DONE token with the row count.
-func (e *Executor) executeDDL(
-	ctx context.Context, sql string, tw *tdswire.TokenWriter,
-) error {
+func (e *Executor) executeDDL(ctx context.Context, sql string, tw *tdswire.TokenWriter) error {
 	executor := e.db.Executor()
 	rowCount, err := executor.ExecEx(
 		ctx,
@@ -202,9 +203,7 @@ func (e *Executor) executeDDL(
 // executeDML executes a DML statement (INSERT, UPDATE, DELETE) and
 // returns a DONE token with the rows affected. It also stores the
 // count for @@ROWCOUNT.
-func (e *Executor) executeDML(
-	ctx context.Context, sql string, tw *tdswire.TokenWriter,
-) error {
+func (e *Executor) executeDML(ctx context.Context, sql string, tw *tdswire.TokenWriter) error {
 	executor := e.db.Executor()
 	rowCount, err := executor.ExecEx(
 		ctx,
@@ -228,9 +227,7 @@ func (e *Executor) executeDML(
 
 // executeSelect executes a SELECT statement and writes COLMETADATA +
 // ROW tokens + DONE to the token writer.
-func (e *Executor) executeSelect(
-	ctx context.Context, sql string, tw *tdswire.TokenWriter,
-) error {
+func (e *Executor) executeSelect(ctx context.Context, sql string, tw *tdswire.TokenWriter) error {
 	executor := e.db.Executor()
 	rows, resultCols, err := executor.QueryBufferedExWithCols(
 		ctx,
@@ -282,9 +279,7 @@ func (e *Executor) executeSelect(
 // mapResultColumns converts CRDB colinfo.ResultColumns to TDS
 // ColMetaData and returns the TypeInfo for each column for value
 // encoding.
-func mapResultColumns(
-	cols []resultColumnInfo,
-) (tdswire.ColMetaData, []tdstypes.TypeInfo, error) {
+func mapResultColumns(cols []resultColumnInfo) (tdswire.ColMetaData, []tdstypes.TypeInfo, error) {
 	md := tdswire.ColMetaData{
 		Columns: make([]tdswire.Column, len(cols)),
 	}
@@ -479,9 +474,7 @@ func isPrecScaleTDSType(typeID byte) bool {
 // ExecuteBatchToBytes is a convenience method that executes a SQL batch
 // and returns the complete TDS token stream as bytes. This is used by
 // the connection handler.
-func (e *Executor) ExecuteBatchToBytes(
-	ctx context.Context, sqlBatch string,
-) ([]byte, error) {
+func (e *Executor) ExecuteBatchToBytes(ctx context.Context, sqlBatch string) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tdswire.NewTokenWriter(&buf)
 

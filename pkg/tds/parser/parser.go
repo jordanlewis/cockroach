@@ -81,14 +81,30 @@ func (p *parser) parseUse() (*UseStmt, error) {
 	return &UseStmt{Database: name}, nil
 }
 
-// parseCreate dispatches CREATE TABLE (only CREATE TABLE is supported in
-// phase 1).
+// parseCreate dispatches CREATE TABLE or CREATE DATABASE.
 func (p *parser) parseCreate() (Statement, error) {
 	p.lex.next() // consume CREATE
-	if err := p.expect(tokenTABLE); err != nil {
+	switch p.lex.peek().typ {
+	case tokenTABLE:
+		p.lex.next() // consume TABLE
+		return p.parseCreateTable()
+	case tokenDATABASE:
+		p.lex.next() // consume DATABASE
+		return p.parseCreateDatabase()
+	default:
+		return nil, p.error(fmt.Sprintf(
+			"expected TABLE or DATABASE after CREATE, got %q at position %d",
+			p.lex.peek().val, p.lex.peek().pos))
+	}
+}
+
+// parseCreateDatabase parses: CREATE DATABASE <name>
+func (p *parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
 		return nil, err
 	}
-	return p.parseCreateTable()
+	return &CreateDatabaseStmt{Database: name}, nil
 }
 
 // parseCreateTable parses: CREATE TABLE <name> (<col_defs>)
@@ -802,10 +818,10 @@ func (p *parser) error(msg string) error {
 
 func isKeywordToken(typ tokenType) bool {
 	switch typ {
-	case tokenUSE, tokenCREATE, tokenTABLE, tokenINSERT, tokenINTO,
-		tokenVALUES, tokenSELECT, tokenFROM, tokenWHERE, tokenORDER,
-		tokenBY, tokenTOP, tokenAS, tokenNOT, tokenNULL, tokenAND,
-		tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
+	case tokenUSE, tokenCREATE, tokenTABLE, tokenDATABASE, tokenINSERT,
+		tokenINTO, tokenVALUES, tokenSELECT, tokenFROM, tokenWHERE,
+		tokenORDER, tokenBY, tokenTOP, tokenAS, tokenNOT, tokenNULL,
+		tokenAND, tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
 		tokenBETWEEN, tokenLIKE, tokenISNULL, tokenCONVERT, tokenGETDATE:
 		return true
 	}
