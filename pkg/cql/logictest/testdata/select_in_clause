@@ -1,0 +1,31 @@
+# IN clause on partition key and clustering columns.
+#
+# CQL IN allows multi-value lookups on partition and clustering keys.
+# The parser does not support IN: WHERE conditions expect a comparison
+# operator (=, <, >, <=, >=, !=), so IN is rejected.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_in (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+# IN on partition key.
+error
+SELECT * FROM sel_in WHERE pk IN (1, 2)
+----
+at position 30: expected comparison operator, got "IN"
+
+# IN on clustering column.
+error
+SELECT * FROM sel_in WHERE pk = 1 AND ck IN (10, 20)
+----
+at position 41: expected comparison operator, got "IN"
+
+# IN on composite partition key.
+error
+SELECT * FROM sel_in WHERE pk IN (1, 2, 3) AND ck = 10
+----
+at position 30: expected comparison operator, got "IN"

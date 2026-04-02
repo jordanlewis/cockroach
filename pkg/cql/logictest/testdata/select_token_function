@@ -1,0 +1,33 @@
+# token() function for partition key range scans.
+#
+# CQL token() returns the hash token of a partition key, enabling
+# range scans across partitions by token value. The parser does not
+# support function calls in WHERE clauses: it reads the function name
+# as a column identifier and fails on the opening parenthesis.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_tok (pk int, val text, PRIMARY KEY (pk))
+----
+
+# token() on partition key in WHERE clause.
+error
+SELECT * FROM sel_tok WHERE token(pk) > 0
+----
+at position 33: expected comparison operator, got "("
+
+# token() with range between two token values.
+error
+SELECT * FROM sel_tok WHERE token(pk) > -100 AND token(pk) < 100
+----
+at position 33: expected comparison operator, got "("
+
+# token() in SELECT list (function call syntax is not supported
+# in selectors either).
+error
+SELECT token(pk), val FROM sel_tok
+----
+at position 12: expected FROM, got "("

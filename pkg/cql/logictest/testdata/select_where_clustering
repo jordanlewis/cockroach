@@ -1,0 +1,109 @@
+# WHERE clauses on clustering columns.
+#
+# Clustering columns define row ordering within a partition. CQL
+# supports both equality and range predicates on clustering columns.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS sel_ck (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO sel_ck (pk, ck, val) VALUES (1, 10, 'a')
+----
+
+exec
+INSERT INTO sel_ck (pk, ck, val) VALUES (1, 20, 'b')
+----
+
+exec
+INSERT INTO sel_ck (pk, ck, val) VALUES (1, 30, 'c')
+----
+
+exec
+INSERT INTO sel_ck (pk, ck, val) VALUES (2, 10, 'd')
+----
+
+exec
+INSERT INTO sel_ck (pk, ck, val) VALUES (2, 20, 'e')
+----
+
+# Equality on partition key and clustering column.
+query
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck = 20
+----
+pk ck val
+1 20 b
+
+# Range: greater-than on clustering column.
+query rowsort
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck > 10
+----
+pk ck val
+1 20 b
+1 30 c
+
+# Range: less-than on clustering column.
+query
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck < 20
+----
+pk ck val
+1 10 a
+
+# Range: greater-than-or-equal on clustering column.
+query rowsort
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck >= 20
+----
+pk ck val
+1 20 b
+1 30 c
+
+# Range: less-than-or-equal on clustering column.
+query rowsort
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck <= 20
+----
+pk ck val
+1 10 a
+1 20 b
+
+# Range: between (two conditions on clustering column).
+query
+SELECT pk, ck, val FROM sel_ck WHERE pk = 1 AND ck > 10 AND ck < 30
+----
+pk ck val
+1 20 b
+
+# Multiple clustering columns.
+exec
+CREATE TABLE IF NOT EXISTS sel_mck (pk int, ck1 int, ck2 text, val text, PRIMARY KEY (pk, ck1, ck2))
+----
+
+exec
+INSERT INTO sel_mck (pk, ck1, ck2, val) VALUES (1, 10, 'x', 'alpha')
+----
+
+exec
+INSERT INTO sel_mck (pk, ck1, ck2, val) VALUES (1, 10, 'y', 'beta')
+----
+
+exec
+INSERT INTO sel_mck (pk, ck1, ck2, val) VALUES (1, 20, 'x', 'gamma')
+----
+
+# Equality on first clustering column.
+query rowsort
+SELECT pk, ck1, ck2, val FROM sel_mck WHERE pk = 1 AND ck1 = 10
+----
+pk ck1 ck2 val
+1 10 x alpha
+1 10 y beta
+
+# Equality on both clustering columns.
+query
+SELECT pk, ck1, ck2, val FROM sel_mck WHERE pk = 1 AND ck1 = 10 AND ck2 = 'y'
+----
+pk ck1 ck2 val
+1 10 y beta
