@@ -1,0 +1,418 @@
+# Primary key tests: range queries on clustering columns.
+#
+# CQL supports range predicates (>, <, >=, <=) on clustering columns.
+# This file provides thorough coverage of range queries including
+# single-column ranges, multi-column clustering ranges, combined
+# range predicates (BETWEEN equivalent), and range queries on tables
+# with composite partition keys.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Basic range queries on a single clustering column
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_rq_basic (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_rq_basic (pk, ck, val) VALUES (1, 10, 'ten')
+----
+
+exec
+INSERT INTO keys_rq_basic (pk, ck, val) VALUES (1, 20, 'twenty')
+----
+
+exec
+INSERT INTO keys_rq_basic (pk, ck, val) VALUES (1, 30, 'thirty')
+----
+
+exec
+INSERT INTO keys_rq_basic (pk, ck, val) VALUES (1, 40, 'forty')
+----
+
+exec
+INSERT INTO keys_rq_basic (pk, ck, val) VALUES (1, 50, 'fifty')
+----
+
+# Greater-than.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 30
+----
+pk ck val
+1 40 forty
+1 50 fifty
+
+# Greater-than-or-equal.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 30
+----
+pk ck val
+1 30 thirty
+1 40 forty
+1 50 fifty
+
+# Less-than.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck < 30
+----
+pk ck val
+1 10 ten
+1 20 twenty
+
+# Less-than-or-equal.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck <= 30
+----
+pk ck val
+1 10 ten
+1 20 twenty
+1 30 thirty
+
+# BETWEEN equivalent: ck > low AND ck < high.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 10 AND ck < 50
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+1 40 forty
+
+# BETWEEN equivalent: ck >= low AND ck <= high (inclusive).
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 20 AND ck <= 40
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+1 40 forty
+
+# BETWEEN with exclusive low, inclusive high.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 10 AND ck <= 30
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+
+# BETWEEN with inclusive low, exclusive high.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 20 AND ck < 40
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+
+# Range returning a single row.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 40
+----
+pk ck val
+1 50 fifty
+
+# Range returning no rows.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 50
+----
+pk ck val
+
+# Narrow BETWEEN returning no rows.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck > 20 AND ck < 30
+----
+pk ck val
+
+# ---------------------------------------------------------------
+# Range queries with ORDER BY
+# ---------------------------------------------------------------
+
+# Range query with ORDER BY ASC (default).
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 20 ORDER BY ck ASC
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+1 40 forty
+1 50 fifty
+
+# Range query with ORDER BY DESC.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 20 ORDER BY ck DESC
+----
+pk ck val
+1 50 fifty
+1 40 forty
+1 30 thirty
+1 20 twenty
+
+# BETWEEN with ORDER BY DESC.
+query
+SELECT pk, ck, val FROM keys_rq_basic WHERE pk = 1 AND ck >= 20 AND ck <= 40 ORDER BY ck DESC
+----
+pk ck val
+1 40 forty
+1 30 thirty
+1 20 twenty
+
+# ---------------------------------------------------------------
+# Range queries on text clustering columns
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_rq_text (pk int, ck text, val int, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_rq_text (pk, ck, val) VALUES (1, 'alpha', 1)
+----
+
+exec
+INSERT INTO keys_rq_text (pk, ck, val) VALUES (1, 'bravo', 2)
+----
+
+exec
+INSERT INTO keys_rq_text (pk, ck, val) VALUES (1, 'charlie', 3)
+----
+
+exec
+INSERT INTO keys_rq_text (pk, ck, val) VALUES (1, 'delta', 4)
+----
+
+exec
+INSERT INTO keys_rq_text (pk, ck, val) VALUES (1, 'echo', 5)
+----
+
+# Lexicographic greater-than on text.
+query
+SELECT pk, ck, val FROM keys_rq_text WHERE pk = 1 AND ck > 'bravo'
+----
+pk ck val
+1 charlie 3
+1 delta 4
+1 echo 5
+
+# Lexicographic less-than on text.
+query
+SELECT pk, ck, val FROM keys_rq_text WHERE pk = 1 AND ck < 'delta'
+----
+pk ck val
+1 alpha 1
+1 bravo 2
+1 charlie 3
+
+# Lexicographic BETWEEN on text.
+query
+SELECT pk, ck, val FROM keys_rq_text WHERE pk = 1 AND ck >= 'bravo' AND ck <= 'delta'
+----
+pk ck val
+1 bravo 2
+1 charlie 3
+1 delta 4
+
+# ---------------------------------------------------------------
+# Range queries with multi-column clustering keys
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_rq_multi (pk int, ck1 int, ck2 int, val text, PRIMARY KEY (pk, ck1, ck2))
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 1, 1, 'a')
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 1, 2, 'b')
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 1, 3, 'c')
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 2, 1, 'd')
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 2, 2, 'e')
+----
+
+exec
+INSERT INTO keys_rq_multi (pk, ck1, ck2, val) VALUES (1, 3, 1, 'f')
+----
+
+# Range on first clustering column.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 > 1
+----
+pk ck1 ck2 val
+1 2 1 d
+1 2 2 e
+1 3 1 f
+
+# Range on first clustering column with equality.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 >= 2
+----
+pk ck1 ck2 val
+1 2 1 d
+1 2 2 e
+1 3 1 f
+
+# Equality on first, range on second clustering column.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 = 1 AND ck2 > 1
+----
+pk ck1 ck2 val
+1 1 2 b
+1 1 3 c
+
+# Equality on first, BETWEEN on second.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 = 1 AND ck2 >= 1 AND ck2 <= 2
+----
+pk ck1 ck2 val
+1 1 1 a
+1 1 2 b
+
+# Less-than on first clustering column.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 < 2
+----
+pk ck1 ck2 val
+1 1 1 a
+1 1 2 b
+1 1 3 c
+
+# BETWEEN on first clustering column.
+query
+SELECT pk, ck1, ck2, val FROM keys_rq_multi WHERE pk = 1 AND ck1 >= 1 AND ck1 <= 2
+----
+pk ck1 ck2 val
+1 1 1 a
+1 1 2 b
+1 1 3 c
+1 2 1 d
+1 2 2 e
+
+# ---------------------------------------------------------------
+# Range queries with composite partition key
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_rq_cpk (pk1 text, pk2 int, ck int, val text, PRIMARY KEY ((pk1, pk2), ck))
+----
+
+exec
+INSERT INTO keys_rq_cpk (pk1, pk2, ck, val) VALUES ('a', 1, 100, 'r1')
+----
+
+exec
+INSERT INTO keys_rq_cpk (pk1, pk2, ck, val) VALUES ('a', 1, 200, 'r2')
+----
+
+exec
+INSERT INTO keys_rq_cpk (pk1, pk2, ck, val) VALUES ('a', 1, 300, 'r3')
+----
+
+exec
+INSERT INTO keys_rq_cpk (pk1, pk2, ck, val) VALUES ('a', 1, 400, 'r4')
+----
+
+exec
+INSERT INTO keys_rq_cpk (pk1, pk2, ck, val) VALUES ('b', 1, 100, 'r5')
+----
+
+# Range on clustering column within a composite partition.
+query
+SELECT pk1, pk2, ck, val FROM keys_rq_cpk WHERE pk1 = 'a' AND pk2 = 1 AND ck > 100
+----
+pk1 pk2 ck val
+a 1 200 r2
+a 1 300 r3
+a 1 400 r4
+
+# BETWEEN on clustering column within a composite partition.
+query
+SELECT pk1, pk2, ck, val FROM keys_rq_cpk WHERE pk1 = 'a' AND pk2 = 1 AND ck >= 200 AND ck <= 300
+----
+pk1 pk2 ck val
+a 1 200 r2
+a 1 300 r3
+
+# Less-than on clustering column within a composite partition.
+query
+SELECT pk1, pk2, ck, val FROM keys_rq_cpk WHERE pk1 = 'a' AND pk2 = 1 AND ck < 300
+----
+pk1 pk2 ck val
+a 1 100 r1
+a 1 200 r2
+
+# Range with ORDER BY DESC on composite partition.
+query
+SELECT pk1, pk2, ck, val FROM keys_rq_cpk WHERE pk1 = 'a' AND pk2 = 1 AND ck >= 200 ORDER BY ck DESC
+----
+pk1 pk2 ck val
+a 1 400 r4
+a 1 300 r3
+a 1 200 r2
+
+# ---------------------------------------------------------------
+# Range queries across partition boundaries
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_rq_partitions (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_rq_partitions (pk, ck, val) VALUES (1, 10, 'p1-10')
+----
+
+exec
+INSERT INTO keys_rq_partitions (pk, ck, val) VALUES (1, 20, 'p1-20')
+----
+
+exec
+INSERT INTO keys_rq_partitions (pk, ck, val) VALUES (1, 30, 'p1-30')
+----
+
+exec
+INSERT INTO keys_rq_partitions (pk, ck, val) VALUES (2, 10, 'p2-10')
+----
+
+exec
+INSERT INTO keys_rq_partitions (pk, ck, val) VALUES (2, 20, 'p2-20')
+----
+
+# Range scoped to partition 1.
+query
+SELECT pk, ck, val FROM keys_rq_partitions WHERE pk = 1 AND ck >= 20
+----
+pk ck val
+1 20 p1-20
+1 30 p1-30
+
+# Range scoped to partition 2.
+query
+SELECT pk, ck, val FROM keys_rq_partitions WHERE pk = 2 AND ck < 20
+----
+pk ck val
+2 10 p2-10
+
+# Same range, different partitions yield different rows.
+query
+SELECT pk, ck, val FROM keys_rq_partitions WHERE pk = 1 AND ck = 10
+----
+pk ck val
+1 10 p1-10
+
+query
+SELECT pk, ck, val FROM keys_rq_partitions WHERE pk = 2 AND ck = 10
+----
+pk ck val
+2 10 p2-10
