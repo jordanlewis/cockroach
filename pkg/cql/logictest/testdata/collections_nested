@@ -1,0 +1,54 @@
+# Nested and frozen collection types.
+#
+# CQL supports frozen collections for use in primary keys and as
+# inner types of other collections. Deeply nested collection types
+# are not supported. These tests document the expected errors.
+#
+# Basic frozen<collection> cases are covered in advanced_types_tuple.
+# This file tests deeper nesting and compound collection scenarios.
+
+exec
+USE defaultdb
+----
+
+# Nested list: list<list<int>> (non-frozen inner list).
+error
+CREATE TABLE lt_nested_list (id int PRIMARY KEY, matrix list<list<int>>)
+----
+at position 56: unsupported CQL type "list"
+
+# Nested map in list: list<map<text, int>>.
+error
+CREATE TABLE lt_list_of_map (id int PRIMARY KEY, entries list<map<text, int>>)
+----
+at position 57: unsupported CQL type "list"
+
+# Nested set in map: map<text, set<int>>.
+error
+CREATE TABLE lt_map_of_set (id int PRIMARY KEY, groups map<text, set<int>>)
+----
+at position 55: unsupported CQL type "map"
+
+# Deep nesting: frozen<list<frozen<map<text, int>>>>.
+error
+CREATE TABLE lt_deep_nested (id int PRIMARY KEY, deep frozen<list<frozen<map<text, int>>>>)
+----
+at position 54: unsupported CQL type "frozen"
+
+# frozen<map<text, frozen<list<int>>>>.
+error
+CREATE TABLE lt_frozen_map_list (id int PRIMARY KEY, data frozen<map<text, frozen<list<int>>>>)
+----
+at position 58: unsupported CQL type "frozen"
+
+# Map with frozen set values: map<text, frozen<set<int>>>.
+error
+CREATE TABLE lt_map_frozen_set (id int PRIMARY KEY, data map<text, frozen<set<int>>>)
+----
+at position 57: unsupported CQL type "map"
+
+# Multiple collection columns in one table.
+error
+CREATE TABLE lt_multi_collection (id int PRIMARY KEY, names list<text>, tags set<int>, props map<text, text>)
+----
+at position 60: unsupported CQL type "list"

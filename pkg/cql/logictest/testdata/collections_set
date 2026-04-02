@@ -1,0 +1,60 @@
+# Set collection type (set<T>).
+#
+# CQL set columns store sorted collections of unique elements.
+# Set types, set literals, and set operations are currently
+# unsupported. These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# set<int> column type.
+error
+CREATE TABLE lt_set_int (id int PRIMARY KEY, tags set<int>)
+----
+at position 50: unsupported CQL type "set"
+
+# set<text> column type.
+error
+CREATE TABLE lt_set_text (id int PRIMARY KEY, labels set<text>)
+----
+at position 53: unsupported CQL type "set"
+
+# set<bigint> column type.
+error
+CREATE TABLE lt_set_bigint (id int PRIMARY KEY, ids set<bigint>)
+----
+at position 52: unsupported CQL type "set"
+
+# set<uuid> column type.
+error
+CREATE TABLE lt_set_uuid (id int PRIMARY KEY, refs set<uuid>)
+----
+at position 51: unsupported CQL type "set"
+
+# INSERT with set literal using brace syntax. The lexer accepts
+# '{' and '}' but the parser cannot handle them in expression
+# position.
+error
+INSERT INTO lt_set_int (id, tags) VALUES (1, {1, 2, 3})
+----
+at position 45: expected expression, got "{"
+
+# Empty set literal.
+error
+INSERT INTO lt_set_int (id, tags) VALUES (1, {})
+----
+at position 45: expected expression, got "{"
+
+# UPDATE with set addition (+). The lexer rejects '+'.
+error
+UPDATE lt_set_int SET tags = tags + {3} WHERE id = 1
+----
+unexpected character '+' at position 34
+
+# UPDATE with set removal (-). The lexer rejects '-' when
+# not followed immediately by a digit.
+error
+UPDATE lt_set_int SET tags = tags - {1} WHERE id = 1
+----
+unexpected character '-' at position 34

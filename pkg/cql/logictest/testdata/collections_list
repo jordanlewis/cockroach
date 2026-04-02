@@ -1,0 +1,90 @@
+# List collection type (list<T>).
+#
+# CQL list columns store ordered sequences of elements.
+# List types, list literals, and list operations are currently
+# unsupported. These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# list<int> column type.
+error
+CREATE TABLE lt_list_int (id int PRIMARY KEY, items list<int>)
+----
+at position 52: unsupported CQL type "list"
+
+# list<text> column type.
+error
+CREATE TABLE lt_list_text (id int PRIMARY KEY, names list<text>)
+----
+at position 53: unsupported CQL type "list"
+
+# list<bigint> column type.
+error
+CREATE TABLE lt_list_bigint (id int PRIMARY KEY, values list<bigint>)
+----
+at position 56: unsupported CQL type "list"
+
+# list<boolean> column type.
+error
+CREATE TABLE lt_list_bool (id int PRIMARY KEY, flags list<boolean>)
+----
+at position 53: unsupported CQL type "list"
+
+# list<uuid> column type.
+error
+CREATE TABLE lt_list_uuid (id int PRIMARY KEY, refs list<uuid>)
+----
+at position 52: unsupported CQL type "list"
+
+# INSERT with list literal. The lexer rejects '[' before the
+# parser sees the statement.
+error
+INSERT INTO lt_list_int (id, items) VALUES (1, [1, 2, 3])
+----
+unexpected character '[' at position 47
+
+# Empty list literal.
+error
+INSERT INTO lt_list_int (id, items) VALUES (1, [])
+----
+unexpected character '[' at position 47
+
+# NULL list value. The table cannot be created so the INSERT
+# also fails at the DDL level.
+error
+CREATE TABLE lt_list_null (id int PRIMARY KEY, items list<int>)
+----
+at position 53: unsupported CQL type "list"
+
+# List index access in SELECT. The lexer rejects '['.
+error
+SELECT items[0] FROM lt_list_int WHERE id = 1
+----
+unexpected character '[' at position 12
+
+# UPDATE with list append (+). The lexer rejects '+'.
+error
+UPDATE lt_list_int SET items = items + [3] WHERE id = 1
+----
+unexpected character '+' at position 37
+
+# UPDATE with list prepend. The lexer rejects '['.
+error
+UPDATE lt_list_int SET items = [0] + items WHERE id = 1
+----
+unexpected character '[' at position 31
+
+# UPDATE with list removal (-). The lexer rejects '-' when
+# not followed immediately by a digit.
+error
+UPDATE lt_list_int SET items = items - [2] WHERE id = 1
+----
+unexpected character '-' at position 37
+
+# UPDATE with list index assignment. The lexer rejects '['.
+error
+UPDATE lt_list_int SET items[0] = 99 WHERE id = 1
+----
+unexpected character '[' at position 28

@@ -1,0 +1,72 @@
+# Map collection type (map<K,V>).
+#
+# CQL map columns store sorted key-value pairs. Map types,
+# map literals, and map operations are currently unsupported.
+# These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# map<text, int> column type.
+error
+CREATE TABLE lt_map_text_int (id int PRIMARY KEY, data map<text, int>)
+----
+at position 55: unsupported CQL type "map"
+
+# map<text, text> column type.
+error
+CREATE TABLE lt_map_text_text (id int PRIMARY KEY, props map<text, text>)
+----
+at position 57: unsupported CQL type "map"
+
+# map<int, text> column type.
+error
+CREATE TABLE lt_map_int_text (id int PRIMARY KEY, lookup map<int, text>)
+----
+at position 57: unsupported CQL type "map"
+
+# map<uuid, bigint> column type.
+error
+CREATE TABLE lt_map_uuid_bigint (id int PRIMARY KEY, scores map<uuid, bigint>)
+----
+at position 60: unsupported CQL type "map"
+
+# INSERT with map literal using brace/colon syntax. The lexer
+# accepts '{', ':', '}' but the parser cannot handle them in
+# expression position.
+error
+INSERT INTO lt_map_text_int (id, data) VALUES (1, {'a': 1, 'b': 2})
+----
+at position 50: expected expression, got "{"
+
+# Empty map literal.
+error
+INSERT INTO lt_map_text_int (id, data) VALUES (1, {})
+----
+at position 50: expected expression, got "{"
+
+# UPDATE with map put (+). The lexer rejects '+'.
+error
+UPDATE lt_map_text_int SET data = data + {'c': 3} WHERE id = 1
+----
+unexpected character '+' at position 39
+
+# UPDATE with map key removal (-). The lexer rejects '-' when
+# not followed immediately by a digit.
+error
+UPDATE lt_map_text_int SET data = data - {'a'} WHERE id = 1
+----
+unexpected character '-' at position 39
+
+# Map key access in SELECT. The lexer rejects '['.
+error
+SELECT data['key'] FROM lt_map_text_int WHERE id = 1
+----
+unexpected character '[' at position 11
+
+# UPDATE with map key assignment. The lexer rejects '['.
+error
+UPDATE lt_map_text_int SET data['key'] = 99 WHERE id = 1
+----
+unexpected character '[' at position 31

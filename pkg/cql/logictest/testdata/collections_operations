@@ -1,0 +1,76 @@
+# Collection operations: append, removal, element access, functions.
+#
+# CQL supports various operations on collection columns including
+# element access, arithmetic-style add/remove, and built-in
+# functions. All are currently unsupported. These tests document
+# the expected errors.
+
+exec
+USE defaultdb
+----
+
+# List append with + operator. The lexer rejects '+'.
+error
+UPDATE t SET items = items + [4, 5] WHERE id = 1
+----
+unexpected character '+' at position 27
+
+# List prepend (reverse order). The lexer rejects '['.
+error
+UPDATE t SET items = [0] + items WHERE id = 1
+----
+unexpected character '[' at position 21
+
+# Set union with + operator. The lexer rejects '+'.
+error
+UPDATE t SET tags = tags + {4, 5} WHERE id = 1
+----
+unexpected character '+' at position 25
+
+# Set difference with - operator.
+error
+UPDATE t SET tags = tags - {1, 2} WHERE id = 1
+----
+unexpected character '-' at position 25
+
+# Map merge with + operator. The lexer rejects '+'.
+error
+UPDATE t SET data = data + {'x': 10} WHERE id = 1
+----
+unexpected character '+' at position 25
+
+# Map key delete with - operator.
+error
+UPDATE t SET data = data - {'x'} WHERE id = 1
+----
+unexpected character '-' at position 25
+
+# List element access by index. The lexer rejects '['.
+error
+SELECT items[0] FROM t WHERE id = 1
+----
+unexpected character '[' at position 12
+
+# List element access with negative index.
+error
+SELECT items[-1] FROM t WHERE id = 1
+----
+unexpected character '[' at position 12
+
+# Map value access by key. The lexer rejects '['.
+error
+SELECT data['key'] FROM t WHERE id = 1
+----
+unexpected character '[' at position 11
+
+# DELETE specific list element. The lexer rejects '['.
+error
+DELETE items[0] FROM t WHERE id = 1
+----
+unexpected character '[' at position 12
+
+# DELETE specific map key. The lexer rejects '['.
+error
+DELETE data['key'] FROM t WHERE id = 1
+----
+unexpected character '[' at position 11
