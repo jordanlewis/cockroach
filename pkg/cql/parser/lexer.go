@@ -143,6 +143,11 @@ func (l *lexer) tokenize() error {
 				return err
 			}
 			continue // lexString already advanced pos
+		case '"':
+			if err := l.lexQuotedIdent(); err != nil {
+				return err
+			}
+			continue // lexQuotedIdent already advanced pos
 		default:
 			if isDigit(ch) || (ch == '-' && l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1])) {
 				l.lexNumber()
@@ -216,6 +221,33 @@ func (l *lexer) lexNumber() {
 		}
 	}
 	l.tokens = append(l.tokens, token{kind: kind, val: l.input[start:l.pos], pos: start})
+}
+
+// lexQuotedIdent reads a double-quoted CQL identifier. Double-quoted
+// identifiers preserve case and may contain reserved words. CQL escapes
+// embedded double quotes by doubling them ("").
+func (l *lexer) lexQuotedIdent() error {
+	start := l.pos
+	l.pos++ // skip opening "
+	var b strings.Builder
+	for l.pos < len(l.input) {
+		ch := l.input[l.pos]
+		if ch == '"' {
+			if l.pos+1 < len(l.input) && l.input[l.pos+1] == '"' {
+				b.WriteByte('"')
+				l.pos += 2
+				continue
+			}
+			l.pos++ // skip closing "
+			l.tokens = append(l.tokens, token{
+				kind: tokIdent, val: b.String(), pos: start,
+			})
+			return nil
+		}
+		b.WriteByte(ch)
+		l.pos++
+	}
+	return fmt.Errorf("unterminated quoted identifier starting at position %d", start)
 }
 
 // lexIdent reads a keyword or identifier. CQL identifiers are case-insensitive

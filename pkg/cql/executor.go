@@ -81,12 +81,12 @@ func (e *Executor) ExecuteQuery(
 		}
 	}
 
-	// Intercept system_schema queries. cqlsh and other CQL drivers
-	// query system_schema tables during startup to discover schema
-	// metadata. We return empty result sets for these since CRDB does
-	// not have Cassandra system tables.
+	// Intercept system and system_schema queries. cqlsh and other CQL
+	// drivers query system.local, system.peers, and system_schema.*
+	// tables during startup. We return synthetic results for these
+	// since CRDB does not have Cassandra system tables.
 	if sel, ok := stmt.(*parser.SelectStatement); ok {
-		if res, handled := handleSystemSchemaSelect(sel.Keyspace, sel.Table); handled {
+		if res, handled := handleSystemSelect(sel.Keyspace, sel.Table); handled {
 			return res
 		}
 	}
@@ -207,13 +207,19 @@ func buildSetKeyspaceBody(keyspace string) []byte {
 }
 
 // buildSchemaChangeBody builds a CQL RESULT frame body with
-// SchemaChange kind.
-func buildSchemaChangeBody(changeType, target, name string) []byte {
+// SchemaChange kind. For KEYSPACE targets, only the keyspace name is
+// written. For TABLE or TYPE targets, both keyspace and object name
+// are written as required by the CQL native protocol v4 spec
+// (section 4.2.5.5).
+func buildSchemaChangeBody(changeType, target, keyspace, name string) []byte {
 	var buf bytes.Buffer
 	_ = cqlwire.WriteInt(&buf, resultKindSchemaChange)
 	_ = cqlwire.WriteString(&buf, changeType)
 	_ = cqlwire.WriteString(&buf, target)
-	_ = cqlwire.WriteString(&buf, name)
+	_ = cqlwire.WriteString(&buf, keyspace)
+	if target != "KEYSPACE" {
+		_ = cqlwire.WriteString(&buf, name)
+	}
 	return buf.Bytes()
 }
 
