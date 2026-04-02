@@ -1,0 +1,154 @@
+# End-to-end workflow test mimicking a real tsql session.
+
+# Create a database and use it.
+exec
+CREATE DATABASE appdb
+----
+
+exec
+USE appdb
+----
+
+# Create tables.
+exec
+CREATE TABLE users (id INT, username VARCHAR(50) NOT NULL, email VARCHAR(100), active INT)
+----
+
+exec
+CREATE TABLE orders (id INT, user_id INT, product VARCHAR(50), quantity INT, price INT)
+----
+
+# Insert users.
+exec
+INSERT INTO users (id, username, email, active) VALUES (1, 'alice', 'alice@example.com', 1)
+----
+
+exec
+INSERT INTO users (id, username, email, active) VALUES (2, 'bob', 'bob@example.com', 1)
+----
+
+exec
+INSERT INTO users (id, username, email, active) VALUES (3, 'carol', NULL, 0)
+----
+
+# Insert orders.
+exec
+INSERT INTO orders (id, user_id, product, quantity, price) VALUES (1, 1, 'Widget', 3, 10)
+----
+
+exec
+INSERT INTO orders (id, user_id, product, quantity, price) VALUES (2, 1, 'Gadget', 1, 25)
+----
+
+exec
+INSERT INTO orders (id, user_id, product, quantity, price) VALUES (3, 2, 'Widget', 5, 10)
+----
+
+exec
+INSERT INTO orders (id, user_id, product, quantity, price) VALUES (4, 2, 'Gizmo', 2, 15)
+----
+
+# Basic queries.
+query colnames
+SELECT id, username, email FROM users ORDER BY id
+----
+id  username  email
+1  alice  alice@example.com
+2  bob  bob@example.com
+3  carol  NULL
+
+# WHERE with ISNULL.
+query colnames
+SELECT username, ISNULL(email, 'no email') AS email FROM users ORDER BY id
+----
+username  email
+alice  alice@example.com
+bob  bob@example.com
+carol  no email
+
+# WHERE with IN.
+query colnames
+SELECT username FROM users WHERE id IN (1, 3) ORDER BY username
+----
+username
+alice
+carol
+
+# WHERE with BETWEEN.
+query colnames
+SELECT username FROM users WHERE id BETWEEN 1 AND 2 ORDER BY username
+----
+username
+alice
+bob
+
+# Aggregates with GROUP BY.
+query colnames
+SELECT user_id, COUNT(*) AS order_count, SUM(quantity * price) AS total_spend FROM orders GROUP BY user_id ORDER BY user_id
+----
+user_id  order_count  total_spend
+1  2  55
+2  2  80
+
+# HAVING filter.
+query colnames
+SELECT user_id, SUM(quantity * price) AS total FROM orders GROUP BY user_id HAVING SUM(quantity * price) > 60
+----
+user_id  total
+2  80
+
+# CASE expression.
+query colnames
+SELECT username, CASE WHEN active = 1 THEN 'active' ELSE 'inactive' END AS status FROM users ORDER BY id
+----
+username  status
+alice  active
+bob  active
+carol  inactive
+
+# TOP with ORDER BY.
+query colnames
+SELECT TOP 2 username FROM users ORDER BY id
+----
+username
+alice
+bob
+
+# DISTINCT.
+query colnames
+SELECT DISTINCT product FROM orders ORDER BY product
+----
+product
+Gadget
+Gizmo
+Widget
+
+# UPDATE.
+exec
+UPDATE users SET active = 1, email = 'carol@example.com' WHERE username = 'carol'
+----
+
+query colnames
+SELECT username, email, active FROM users WHERE username = 'carol'
+----
+username  email  active
+carol  carol@example.com  1
+
+# DELETE.
+exec
+DELETE FROM orders WHERE product = 'Gizmo'
+----
+
+query
+SELECT COUNT(*) FROM orders
+----
+3
+
+# Clean up — switch back to defaultdb and drop.
+exec
+USE defaultdb
+----
+
+exec
+DROP DATABASE appdb
+----
