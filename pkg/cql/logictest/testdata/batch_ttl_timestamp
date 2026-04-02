@@ -28,17 +28,15 @@ exec
 INSERT INTO ttl_test (id, val) VALUES (3, 'both') USING TTL 3600 AND TIMESTAMP 1234567890
 ----
 
-# TTL() function in SELECT — Cassandra-specific, not supported.
-error
+# TTL() function in SELECT — returns NULL (CRDB has no per-cell TTL).
+exec
 SELECT TTL(val) FROM ttl_test
 ----
-translating selector: unsupported CQL function "TTL"
 
-# writetime() function in SELECT — Cassandra-specific, not supported.
-error
+# writetime() function in SELECT — returns 0 (CRDB has no per-cell timestamps).
+exec
 SELECT writetime(val) FROM ttl_test
 ----
-translating selector: unsupported CQL function "writetime"
 
 # UPDATE with USING TTL to change TTL on existing rows. Parsed but ignored.
 exec

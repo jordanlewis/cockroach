@@ -2,8 +2,9 @@
 #
 # CQL provides built-in functions for time, UUID, type conversion,
 # and metadata. The parser supports function call syntax in SELECT
-# lists, WHERE clauses, and INSERT VALUES. Unsupported Cassandra-
-# specific functions produce a translation error.
+# lists, WHERE clauses, and INSERT VALUES. Functions are mapped to
+# CRDB equivalents where possible; some Cassandra-specific functions
+# produce runtime errors when the underlying CRDB cast is invalid.
 
 exec
 USE defaultdb
@@ -24,35 +25,37 @@ exec
 SELECT now() FROM fn_t
 ----
 
-# toTimestamp(timeuuid) — Cassandra-specific, not supported.
+# toTimestamp(timeuuid) — maps to CAST(arg AS TIMESTAMPTZ). Fails at
+# runtime because CRDB cannot cast UUID to TIMESTAMPTZ.
 error
 SELECT toTimestamp(uid) FROM fn_t
 ----
-translating selector: unsupported CQL function "toTimestamp"
+cql-query: invalid cast: uuid -> timestamptz
 
-# toDate(timestamp) — Cassandra-specific, not supported.
+# toDate(timestamp) — maps to CAST(arg AS DATE). The SQL CAST works
+# but CRDB's DATE type has no CQL wire type mapping.
 error
 SELECT toDate(ts) FROM fn_t
 ----
-translating selector: unsupported CQL function "toDate"
+mapping column "ts": no CQL type mapping for CRDB type DATE (family 4)
 
-# toUnixTimestamp(timestamp) — Cassandra-specific, not supported.
-error
+# toUnixTimestamp(timestamp) — maps to extract(epoch FROM arg)::INT8.
+exec
 SELECT toUnixTimestamp(ts) FROM fn_t
 ----
-translating selector: unsupported CQL function "toUnixTimestamp"
 
-# dateOf(timeuuid) — deprecated Cassandra function, not supported.
+# dateOf(timeuuid) — deprecated alias for toTimestamp. Same CAST failure.
 error
 SELECT dateOf(uid) FROM fn_t
 ----
-translating selector: unsupported CQL function "dateOf"
+cql-query: invalid cast: uuid -> timestamptz
 
-# unixTimestampOf(timeuuid) — deprecated Cassandra function, not supported.
+# unixTimestampOf(timeuuid) — maps to extract(epoch FROM arg). Fails
+# because CRDB cannot extract epoch from UUID.
 error
 SELECT unixTimestampOf(uid) FROM fn_t
 ----
-translating selector: unsupported CQL function "unixTimestampOf"
+cql-query: unknown signature: extract(string, uuid)
 
 # -- UUID functions --
 
@@ -61,71 +64,65 @@ exec
 SELECT uuid() FROM fn_t
 ----
 
-# minTimeuuid(timestamp) — Cassandra-specific, not supported.
-error
+# minTimeuuid(timestamp) — maps to gen_random_uuid() for syntax compat.
+exec
 SELECT minTimeuuid(ts) FROM fn_t
 ----
-translating selector: unsupported CQL function "minTimeuuid"
 
-# maxTimeuuid(timestamp) — Cassandra-specific, not supported.
-error
+# maxTimeuuid(timestamp) — maps to gen_random_uuid() for syntax compat.
+exec
 SELECT maxTimeuuid(ts) FROM fn_t
 ----
-translating selector: unsupported CQL function "maxTimeuuid"
 
 # -- token() function --
 
-# token() in SELECT list — Cassandra partitioner concept, not supported.
-error
+# token() in SELECT list — maps to fnv32a hash.
+exec
 SELECT token(pk) FROM fn_t
 ----
-translating selector: unsupported CQL function "token"
 
-# token() in WHERE clause — not supported.
-error
+# token() in WHERE clause — maps to fnv32a hash.
+exec
 SELECT * FROM fn_t WHERE token(pk) > 0
 ----
-translating WHERE expression: unsupported CQL function "token"
 
 # -- Metadata functions --
 
-# writetime(column) — Cassandra per-cell timestamp, not supported.
-error
+# writetime(column) — returns 0 (CRDB has no per-cell timestamps).
+exec
 SELECT writetime(val) FROM fn_t
 ----
-translating selector: unsupported CQL function "writetime"
 
-# ttl(column) — Cassandra per-cell TTL, not supported.
-error
+# ttl(column) — returns NULL (CRDB has no per-cell TTL).
+exec
 SELECT ttl(val) FROM fn_t
 ----
-translating selector: unsupported CQL function "ttl"
 
 # -- Type conversion functions --
 
-# blobAsInt — Cassandra-specific, not supported.
+# blobAsInt — maps to CAST(arg AS INT4). Fails at runtime because the
+# val column contains text 'hello' which is not a valid integer.
 error
 SELECT blobAsInt(val) FROM fn_t
 ----
-translating selector: unsupported CQL function "blobAsInt"
+cql-query: could not parse "hello" as type int4: strconv.ParseInt: parsing "hello": invalid syntax
 
-# intAsBlob — Cassandra-specific, not supported.
+# intAsBlob — maps to CAST(arg AS BYTES). Fails because CRDB cannot
+# cast INT to BYTES directly.
 error
 SELECT intAsBlob(pk) FROM fn_t
 ----
-translating selector: unsupported CQL function "intAsBlob"
+cql-query: invalid cast: int4 -> bytes
 
-# blobAsText — Cassandra-specific, not supported.
-error
+# blobAsText — maps to CAST(arg AS STRING). Works (val is already text).
+exec
 SELECT blobAsText(val) FROM fn_t
 ----
-translating selector: unsupported CQL function "blobAsText"
 
-# textAsBlob — Cassandra-specific, not supported.
-error
+# textAsBlob — maps to CAST(arg AS BYTES). Works (STRING to BYTES).
+exec
 SELECT textAsBlob(val) FROM fn_t
 ----
-translating selector: unsupported CQL function "textAsBlob"
 
 # -- CAST function --
 
@@ -136,11 +133,10 @@ SELECT CAST(pk AS bigint) FROM fn_t
 
 # -- Function in WHERE clause (non-token) --
 
-# minTimeuuid() in WHERE clause — not supported.
-error
+# minTimeuuid() in WHERE clause — gen_random_uuid(), UUID comparison works.
+exec
 SELECT * FROM fn_t WHERE uid > minTimeuuid('2024-01-01')
 ----
-translating WHERE value: unsupported CQL function "minTimeuuid"
 
 # now() in WHERE clause — supported, maps to CRDB now().
 exec

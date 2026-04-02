@@ -5,10 +5,9 @@
 # fromJson() convert between CQL values and JSON text. CAST(col AS
 # type) performs explicit type conversions.
 #
-# INSERT JSON and SELECT JSON parse successfully but are not yet
-# supported at translation time. toJson() maps to CRDB's to_jsonb()
-# but JSONB results may not map to a CQL type. fromJson() is not
-# supported. CAST maps directly to SQL CAST.
+# INSERT JSON is translated by parsing the JSON at translation time
+# and generating a standard UPSERT/INSERT. SELECT JSON uses
+# row_to_json() or jsonb_build_object() to produce JSON string output.
 
 exec
 USE defaultdb
@@ -30,7 +29,7 @@ INSERT INTO json_t (id, name, age, active) VALUES (2, 'bob', 25, false)
 # INSERT JSON
 #
 # INSERT JSON (bare, without INTO) is not valid CQL syntax.
-# INSERT INTO <table> JSON '...' parses but is not yet supported.
+# INSERT INTO <table> JSON '...' is now supported.
 # ---------------------------------------------------------------
 
 # INSERT JSON without INTO — invalid CQL syntax.
@@ -51,41 +50,38 @@ INSERT JSON '{"id": 12}' DEFAULT NULL
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT INTO <table> JSON — parses but not yet supported.
-error
+# INSERT INTO <table> JSON — supported, translates to UPSERT.
+exec
 INSERT INTO json_t JSON '{"id": 13, "name": "eve"}'
 ----
-INSERT JSON is not yet supported
 
 # ---------------------------------------------------------------
 # SELECT JSON
 #
-# SELECT JSON parses but is not yet supported at translation time.
+# SELECT JSON wraps results in JSON using row_to_json() or
+# jsonb_build_object(). Result is returned as a STRING column.
 # ---------------------------------------------------------------
 
-# SELECT JSON * — not yet supported.
-error
+# SELECT JSON * — wraps in row_to_json subquery.
+exec
 SELECT JSON * FROM json_t
 ----
-SELECT JSON is not yet supported
 
-# SELECT JSON with specific columns.
-error
+# SELECT JSON with specific columns — uses jsonb_build_object.
+exec
 SELECT JSON id, name FROM json_t
 ----
-SELECT JSON is not yet supported
 
 # SELECT JSON with WHERE clause.
-error
+exec
 SELECT JSON * FROM json_t WHERE id = 1
 ----
-SELECT JSON is not yet supported
 
 # ---------------------------------------------------------------
 # toJson() function
 #
 # toJson() maps to CRDB's to_jsonb(). The result is JSONB which
-# may not map to a CQL wire type.
+# does not map to a CQL wire type.
 # ---------------------------------------------------------------
 
 # toJson on a column — translates to to_jsonb() but CRDB returns JSONB,
@@ -95,29 +91,30 @@ SELECT toJson(name) FROM json_t WHERE id = 1
 ----
 mapping column "to_jsonb": no CQL type mapping for CRDB type JSONB (family 18)
 
-# toJson on the entire row via * — not valid SQL.
+# toJson on the entire row via * — not a valid function argument.
 error
 SELECT toJson(*) FROM json_t
 ----
-translating selector: unsupported CQL function "toJson"
+translating selector: toJson() does not accept * as an argument
 
 # ---------------------------------------------------------------
 # fromJson() function
 #
-# fromJson() is not yet supported.
+# fromJson() maps to CAST(arg AS JSONB). The JSONB result type may
+# conflict with the target column type at runtime.
 # ---------------------------------------------------------------
 
-# fromJson in INSERT VALUES.
-error
+# fromJson in INSERT VALUES — CAST to JSONB, CRDB implicitly converts
+# to STRING for the target column.
+exec
 INSERT INTO json_t (id, name) VALUES (20, fromJson('"frank"'))
 ----
-translating INSERT value: unsupported CQL function "fromJson"
 
-# fromJson in SELECT.
+# fromJson in SELECT — produces JSONB which has no CQL wire type mapping.
 error
-SELECT fromJson(name) FROM json_t WHERE id = 1
+SELECT fromJson(name) FROM json_t WHERE id = 20
 ----
-translating selector: unsupported CQL function "fromJson"
+mapping column "name": no CQL type mapping for CRDB type JSONB (family 18)
 
 # ---------------------------------------------------------------
 # CAST operations
@@ -146,7 +143,7 @@ SELECT * FROM json_t WHERE CAST(id AS bigint) > 0
 ----
 
 # ---------------------------------------------------------------
-# Verify normal operations still work.
+# Verify normal operations still work (including JSON-inserted data).
 # ---------------------------------------------------------------
 
 query rowsort
@@ -154,4 +151,6 @@ SELECT id, name, age, active FROM json_t
 ----
 id name age active
 1 alice 30 true
+13 eve NULL NULL
 2 bob 25 false
+20 "frank" NULL NULL

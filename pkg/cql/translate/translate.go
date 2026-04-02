@@ -318,10 +318,7 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 // clauses to sb for a SELECT statement. Shared by normal and JSON SELECT
 // translation.
 func writeFromAndClauses(
-	sb *strings.Builder,
-	s *parser.SelectStatement,
-	params *[]interface{},
-	paramIdx *int,
+	sb *strings.Builder, s *parser.SelectStatement, params *[]interface{}, paramIdx *int,
 ) error {
 	sb.WriteString(" FROM ")
 	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
@@ -671,9 +668,7 @@ func singleArgCast(
 
 // extractEpochToSQL translates toUnixTimestamp/unixTimestampOf to
 // CAST(extract(epoch FROM arg) AS INT8).
-func extractEpochToSQL(
-	fc *parser.FunctionCall, paramIdx *int,
-) (string, interface{}, error) {
+func extractEpochToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
 	if len(fc.Args) != 1 {
 		return "", nil, errors.Newf(
 			"%s() requires exactly one argument", fc.Name,
@@ -691,9 +686,7 @@ func extractEpochToSQL(
 // tokenToSQL translates the CQL token() function to a CRDB hash function.
 // CQL token() returns the partitioner hash of partition key values; this
 // approximation uses fnv32a for syntax compatibility.
-func tokenToSQL(
-	fc *parser.FunctionCall, paramIdx *int,
-) (string, interface{}, error) {
+func tokenToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
 	if len(fc.Args) == 0 {
 		return "", nil, errors.Newf("token() requires at least one argument")
 	}

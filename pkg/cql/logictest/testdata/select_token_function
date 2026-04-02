@@ -1,8 +1,8 @@
 # token() function for partition key range scans.
 #
 # CQL token() returns the hash token of a partition key, enabling
-# range scans across partitions by token value. token() is a
-# Cassandra-specific partitioner concept and is not supported.
+# range scans across partitions by token value. token() is mapped
+# to fnv32a() for syntax compatibility.
 
 exec
 USE defaultdb
@@ -12,20 +12,17 @@ exec
 CREATE TABLE IF NOT EXISTS sel_tok (pk int, val text, PRIMARY KEY (pk))
 ----
 
-# token() on partition key in WHERE clause — not supported.
-error
+# token() on partition key in WHERE clause — maps to fnv32a hash.
+exec
 SELECT * FROM sel_tok WHERE token(pk) > 0
 ----
-translating WHERE expression: unsupported CQL function "token"
 
-# token() with range between two token values — not supported.
-error
+# token() with range between two token values — maps to fnv32a hash.
+exec
 SELECT * FROM sel_tok WHERE token(pk) > -100 AND token(pk) < 100
 ----
-translating WHERE expression: unsupported CQL function "token"
 
-# token() in SELECT list — not supported.
-error
+# token() in SELECT list — maps to fnv32a hash.
+exec
 SELECT token(pk), val FROM sel_tok
 ----
-translating selector: unsupported CQL function "token"
