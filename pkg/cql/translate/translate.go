@@ -79,6 +79,14 @@ func Translate(stmt parser.Statement) (Result, error) {
 		return translateUpdate(s)
 	case *parser.DeleteStatement:
 		return translateDelete(s)
+	case *parser.AlterTableStatement:
+		return translateAlterTable(s)
+	case *parser.DropStatement:
+		return translateDrop(s)
+	case *parser.TruncateStatement:
+		return translateTruncate(s)
+	case *parser.BatchStatement:
+		return translateBatch(s)
 	default:
 		return Result{}, errors.Newf("unsupported CQL statement type: %T", stmt)
 	}
@@ -435,6 +443,12 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		placeholder := fmt.Sprintf("$%d", *paramIdx)
 		*paramIdx++
 		return placeholder, placeholder, nil
+	case *parser.CounterExpr:
+		valSQL, param, err := exprToSQL(v.Value, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("%s %s %s", quoteIdent(v.Column), v.Op, valSQL), param, nil
 	default:
 		return "", nil, errors.Newf("unsupported expression type: %T", e)
 	}
@@ -460,4 +474,106 @@ func qualifiedTable(keyspace, table string) string {
 		return quoteIdent(keyspace) + "." + quoteIdent(table)
 	}
 	return quoteIdent(table)
+}
+
+// translateAlterTable maps CQL ALTER TABLE operations to CRDB SQL.
+func translateAlterTable(s *parser.AlterTableStatement) (Result, error) {
+	var sb strings.Builder
+	sb.WriteString("ALTER TABLE ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+
+	switch op := s.Op.(type) {
+	case *parser.AlterTableAdd:
+		sqlType, ok := cqlTypeToCRDBSQL[op.DataType.Name]
+		if !ok {
+			return Result{}, errors.Newf("unsupported CQL type %q", op.DataType.Name)
+		}
+		sb.WriteString(" ADD COLUMN ")
+		sb.WriteString(quoteIdent(op.Column))
+		sb.WriteByte(' ')
+		sb.WriteString(sqlType)
+	case *parser.AlterTableDrop:
+		sb.WriteString(" DROP COLUMN ")
+		sb.WriteString(quoteIdent(op.Column))
+	case *parser.AlterTableRename:
+		sb.WriteString(" RENAME COLUMN ")
+		sb.WriteString(quoteIdent(op.OldName))
+		sb.WriteString(" TO ")
+		sb.WriteString(quoteIdent(op.NewName))
+	case *parser.AlterTableAlterType:
+		sqlType, ok := cqlTypeToCRDBSQL[op.DataType.Name]
+		if !ok {
+			return Result{}, errors.Newf("unsupported CQL type %q", op.DataType.Name)
+		}
+		sb.WriteString(" ALTER COLUMN ")
+		sb.WriteString(quoteIdent(op.Column))
+		sb.WriteString(" SET DATA TYPE ")
+		sb.WriteString(sqlType)
+	case *parser.AlterTableWith:
+		return Result{}, errors.Newf("ALTER TABLE WITH properties is not supported")
+	default:
+		return Result{}, errors.Newf("unsupported ALTER TABLE operation: %T", op)
+	}
+	return Result{SQL: sb.String()}, nil
+}
+
+// translateDrop maps CQL DROP TABLE/KEYSPACE/INDEX to CRDB SQL.
+func translateDrop(s *parser.DropStatement) (Result, error) {
+	var sb strings.Builder
+	switch s.ObjectType {
+	case "TABLE":
+		sb.WriteString("DROP TABLE ")
+		if s.IfExists {
+			sb.WriteString("IF EXISTS ")
+		}
+		sb.WriteString(qualifiedTable(s.Keyspace, s.Name))
+	case "KEYSPACE":
+		sb.WriteString("DROP DATABASE ")
+		if s.IfExists {
+			sb.WriteString("IF EXISTS ")
+		}
+		sb.WriteString(quoteIdent(s.Name))
+	case "INDEX":
+		sb.WriteString("DROP INDEX ")
+		if s.IfExists {
+			sb.WriteString("IF EXISTS ")
+		}
+		sb.WriteString(qualifiedTable(s.Keyspace, s.Name))
+	default:
+		return Result{}, errors.Newf("unsupported DROP target: %s", s.ObjectType)
+	}
+	return Result{SQL: sb.String()}, nil
+}
+
+// translateTruncate maps CQL TRUNCATE TABLE to CRDB TRUNCATE TABLE.
+func translateTruncate(s *parser.TruncateStatement) (Result, error) {
+	var sb strings.Builder
+	sb.WriteString("TRUNCATE TABLE ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	return Result{SQL: sb.String()}, nil
+}
+
+// translateBatch maps CQL BATCH to a sequence of SQL statements
+// wrapped in BEGIN/COMMIT. Each inner statement is translated
+// individually and semicolon-separated.
+func translateBatch(s *parser.BatchStatement) (Result, error) {
+	if len(s.Statements) == 0 {
+		return Result{}, errors.Newf("empty BATCH statement")
+	}
+	var sb strings.Builder
+	var allParams []interface{}
+	sb.WriteString("BEGIN; ")
+	for i, innerStmt := range s.Statements {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		r, err := Translate(innerStmt)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating BATCH inner statement")
+		}
+		sb.WriteString(r.SQL)
+		allParams = append(allParams, r.Params...)
+	}
+	sb.WriteString("; COMMIT")
+	return Result{SQL: sb.String(), Params: allParams}, nil
 }

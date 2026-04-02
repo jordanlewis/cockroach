@@ -37,6 +37,8 @@ const (
 	tokNE        // !=
 	tokColon     // :
 	tokQMark     // ?
+	tokPlus      // +
+	tokMinus     // -
 )
 
 // token is a single lexer token.
@@ -139,6 +141,15 @@ func (l *lexer) tokenize() error {
 			} else {
 				return fmt.Errorf("unexpected character '!' at position %d", l.pos)
 			}
+		case '+':
+			l.emit(tokPlus, "+")
+		case '-':
+			// Negative number literal: - immediately followed by a digit.
+			if l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1]) {
+				l.lexNumber()
+				continue
+			}
+			l.emit(tokMinus, "-")
 		case '\'':
 			if err := l.lexString(); err != nil {
 				return err
@@ -150,7 +161,7 @@ func (l *lexer) tokenize() error {
 			}
 			continue // lexQuotedIdent already advanced pos
 		default:
-			if isDigit(ch) || (ch == '-' && l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1])) {
+			if isDigit(ch) {
 				if isHexDigit(ch) && l.tryLexUUID() {
 					continue
 				}

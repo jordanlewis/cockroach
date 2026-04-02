@@ -293,7 +293,7 @@ func TestParseErrors(t *testing.T) {
 		want  string // substring of error message
 	}{
 		{"", "expected statement keyword"},
-		{"DROP TABLE t", "unsupported statement"},
+		{"GRANT ALL ON t", "unsupported statement"},
 		{"CREATE INDEX foo", "expected KEYSPACE or TABLE"},
 		{"USE", "expected identifier"},
 		{"SELECT * FROM", "expected identifier"},

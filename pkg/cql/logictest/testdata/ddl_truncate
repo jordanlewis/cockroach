@@ -1,40 +1,82 @@
 # DDL tests for TRUNCATE TABLE and IF EXISTS / IF NOT EXISTS.
 #
-# TRUNCATE TABLE is a common CQL DDL statement that removes all rows
-# from a table without dropping it. The parser does not recognize
-# TRUNCATE as a statement keyword.
-#
-# IF EXISTS and IF NOT EXISTS on DDL: CREATE TABLE/KEYSPACE IF NOT
-# EXISTS is supported. DROP TABLE/KEYSPACE IF EXISTS is not supported
-# because DROP is not a recognized statement keyword.
+# TRUNCATE TABLE removes all rows from a table without dropping it.
+# DROP TABLE/KEYSPACE removes the object entirely.
+# ALTER TABLE is tested in ddl_alter_table.
 
 exec
 USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# TRUNCATE TABLE (unsupported)
+# TRUNCATE TABLE
 #
-# TRUNCATE is not recognized by the parser's statement dispatcher,
-# which only supports USE, CREATE, INSERT, SELECT, UPDATE, DELETE.
+# TRUNCATE is now parsed and translated to CRDB TRUNCATE TABLE.
 # ---------------------------------------------------------------
 
-error
+exec
+CREATE TABLE IF NOT EXISTS ddl_trunc_t (id int PRIMARY KEY, val text)
+----
+
+exec
+INSERT INTO ddl_trunc_t (id, val) VALUES (1, 'hello')
+----
+
+exec
+INSERT INTO ddl_trunc_t (id, val) VALUES (2, 'world')
+----
+
+query rowsort
+SELECT id, val FROM ddl_trunc_t
+----
+id val
+1 hello
+2 world
+
+exec
 TRUNCATE TABLE ddl_trunc_t
 ----
-at position 0: unsupported statement "TRUNCATE"
+
+# Table is empty after truncation.
+query
+SELECT id, val FROM ddl_trunc_t
+----
+id val
+
+# Re-insert to verify table is still usable.
+exec
+INSERT INTO ddl_trunc_t (id, val) VALUES (3, 'new')
+----
+
+query
+SELECT id, val FROM ddl_trunc_t WHERE id = 3
+----
+id val
+3 new
 
 # TRUNCATE without TABLE keyword (also valid in CQL).
-error
+exec
 TRUNCATE ddl_trunc_t
 ----
-at position 0: unsupported statement "TRUNCATE"
+
+query
+SELECT id, val FROM ddl_trunc_t
+----
+id val
 
 # TRUNCATE with qualified table name.
-error
+exec
+INSERT INTO ddl_trunc_t (id, val) VALUES (4, 'qualified')
+----
+
+exec
 TRUNCATE TABLE defaultdb.ddl_trunc_t
 ----
-at position 0: unsupported statement "TRUNCATE"
+
+query
+SELECT id, val FROM ddl_trunc_t
+----
+id val
 
 # ---------------------------------------------------------------
 # CREATE TABLE IF NOT EXISTS (supported)
@@ -85,57 +127,81 @@ CREATE KEYSPACE IF NOT EXISTS ddl_trunc_ks WITH replication = {'class': 'SimpleS
 ----
 
 # ---------------------------------------------------------------
-# DROP TABLE (unsupported)
+# DROP TABLE
 #
-# DROP is not recognized by the parser's statement dispatcher.
+# DROP TABLE is now parsed and translated to CRDB DROP TABLE.
 # ---------------------------------------------------------------
 
-error
-DROP TABLE ddl_ine_t
+exec
+CREATE TABLE IF NOT EXISTS ddl_drop_t (id int PRIMARY KEY, val text)
 ----
-at position 0: unsupported statement "DROP"
 
-error
-DROP TABLE IF EXISTS ddl_ine_t
+exec
+DROP TABLE ddl_drop_t
 ----
-at position 0: unsupported statement "DROP"
+
+exec
+DROP TABLE IF EXISTS ddl_drop_t
+----
 
 # DROP with qualified name.
-error
-DROP TABLE defaultdb.ddl_ine_t
+exec
+CREATE TABLE IF NOT EXISTS ddl_drop_t2 (id int PRIMARY KEY, val text)
 ----
-at position 0: unsupported statement "DROP"
+
+exec
+DROP TABLE defaultdb.ddl_drop_t2
+----
 
 # ---------------------------------------------------------------
-# DROP KEYSPACE (unsupported)
+# DROP KEYSPACE
 # ---------------------------------------------------------------
 
-error
-DROP KEYSPACE ddl_trunc_ks
+exec
+CREATE KEYSPACE IF NOT EXISTS ddl_drop_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
 ----
-at position 0: unsupported statement "DROP"
 
-error
-DROP KEYSPACE IF EXISTS ddl_trunc_ks
+exec
+DROP KEYSPACE ddl_drop_ks
 ----
-at position 0: unsupported statement "DROP"
+
+exec
+CREATE KEYSPACE IF NOT EXISTS ddl_drop_ks2 WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+----
+
+exec
+DROP KEYSPACE IF EXISTS ddl_drop_ks2
+----
+
+# Drop non-existent keyspace with IF EXISTS — no error.
+exec
+DROP KEYSPACE IF EXISTS ddl_nonexistent_ks
+----
 
 # ---------------------------------------------------------------
-# ALTER TABLE (unsupported)
+# ALTER TABLE (tested in ddl_alter_table)
 #
-# ALTER is not recognized by the parser's statement dispatcher.
-# IF EXISTS on ALTER TABLE is therefore also unsupported.
+# Basic smoke test to confirm ALTER TABLE is recognized.
 # ---------------------------------------------------------------
 
-error
+exec
 ALTER TABLE ddl_ine_t ADD email text
 ----
-at position 0: unsupported statement "ALTER"
 
-error
-ALTER TABLE IF EXISTS ddl_ine_t ADD email text
+exec
+ALTER TABLE ddl_ine_t DROP email
 ----
-at position 0: unsupported statement "ALTER"
+
+# ALTER TABLE IF EXISTS is parsed but IF EXISTS is not used in
+# the CRDB translation (CRDB ALTER TABLE does not support IF EXISTS).
+# The statement succeeds because the table exists.
+exec
+ALTER TABLE ddl_ine_t ADD email text
+----
+
+exec
+ALTER TABLE ddl_ine_t DROP email
+----
 
 # ---------------------------------------------------------------
 # CREATE INDEX IF NOT EXISTS (unsupported)

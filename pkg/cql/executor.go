@@ -123,6 +123,35 @@ func (e *Executor) ExecuteQuery(
 		return e.executeDML(ctx, result, override)
 	case *parser.SelectStatement:
 		return e.executeSelect(ctx, result, override)
+	case *parser.AlterTableStatement:
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "UPDATED", "TABLE", ks, s.Table)
+	case *parser.DropStatement:
+		switch s.ObjectType {
+		case "KEYSPACE":
+			return e.executeDDL(ctx, result, override, "DROPPED", "KEYSPACE", s.Name, "")
+		case "TABLE":
+			ks := s.Keyspace
+			if ks == "" {
+				ks = keyspace
+			}
+			return e.executeDDL(ctx, result, override, "DROPPED", "TABLE", ks, s.Name)
+		case "INDEX":
+			return e.executeDDL(ctx, result, override, "DROPPED", "TABLE", keyspace, s.Name)
+		default:
+			return errorResult(errCodeServerError, "unsupported DROP target")
+		}
+	case *parser.TruncateStatement:
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "UPDATED", "TABLE", ks, s.Table)
+	case *parser.BatchStatement:
+		return e.executeBatch(ctx, s, override)
 	default:
 		return errorResult(errCodeServerError, "unsupported statement type")
 	}
@@ -200,6 +229,37 @@ func (e *Executor) executeSelect(
 		return errorResult(errCodeServerError, err.Error())
 	}
 	return ExecuteResult{Body: body}
+}
+
+// executeBatch executes a CQL BATCH by running each inner statement
+// in a transaction using the isql.DB.Txn callback pattern.
+func (e *Executor) executeBatch(
+	ctx context.Context, batch *parser.BatchStatement, override sessiondata.InternalExecutorOverride,
+) ExecuteResult {
+	err := e.db.Txn(ctx, func(ctx context.Context, txn isql.Txn) error {
+		for _, innerStmt := range batch.Statements {
+			result, err := translate.Translate(innerStmt)
+			if err != nil {
+				return err
+			}
+			_, err = txn.ExecEx(
+				ctx,
+				redact.Sprint("cql-batch"),
+				txn.KV(),
+				override,
+				result.SQL,
+				result.Params...,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+	return ExecuteResult{Body: buildVoidBody()}
 }
 
 // buildVoidBody builds a CQL RESULT frame body with Void kind.

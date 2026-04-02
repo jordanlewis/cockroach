@@ -141,46 +141,51 @@ CREATE TABLE lt_ddl_bad_type4 (id int, data frozen, PRIMARY KEY (id))
 at position 44: unsupported CQL type "frozen"
 
 # ---------------------------------------------------------------
-# DROP TABLE (unsupported)
+# DROP TABLE
 # ---------------------------------------------------------------
 
-error
+exec
 DROP TABLE lt_ddl_basic
 ----
-at position 0: unsupported statement "DROP"
 
-error
+# Drop already-dropped table with IF EXISTS — no error.
+exec
 DROP TABLE IF EXISTS lt_ddl_basic
 ----
-at position 0: unsupported statement "DROP"
+
+# Re-create for ALTER TABLE tests below.
+exec
+CREATE TABLE lt_ddl_basic (id int, name text, PRIMARY KEY (id))
+----
 
 # ---------------------------------------------------------------
-# ALTER TABLE (unsupported)
+# ALTER TABLE
 # ---------------------------------------------------------------
 
 # Add column.
-error
+exec
 ALTER TABLE lt_ddl_basic ADD email text
 ----
-at position 0: unsupported statement "ALTER"
 
 # Drop column.
-error
-ALTER TABLE lt_ddl_basic DROP name
+exec
+ALTER TABLE lt_ddl_basic DROP email
 ----
-at position 0: unsupported statement "ALTER"
 
 # Rename column.
-error
+exec
 ALTER TABLE lt_ddl_basic RENAME name TO full_name
 ----
-at position 0: unsupported statement "ALTER"
 
-# Alter column type.
-error
+# Rename back for consistency.
+exec
+ALTER TABLE lt_ddl_basic RENAME full_name TO name
+----
+
+# Alter column type (text to varchar — both map to STRING).
+exec
 ALTER TABLE lt_ddl_basic ALTER name TYPE varchar
 ----
-at position 0: unsupported statement "ALTER"
 
 # ---------------------------------------------------------------
 # Table options (parsed but silently ignored)

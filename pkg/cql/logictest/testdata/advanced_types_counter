@@ -1,29 +1,54 @@
 # Counter tables.
 #
 # Counter columns are a special Cassandra type that supports atomic
-# increment/decrement via UPDATE. The counter type is recognized by
-# the parser but UPDATE statements are not yet supported.
+# increment/decrement via UPDATE. The counter type is mapped to INT8
+# in CRDB. Counter expressions (c = c + 1, c = c - 1) are now
+# supported by the parser and translated to SQL arithmetic.
 
 exec
 USE defaultdb
 ----
 
 # CREATE TABLE with counter column succeeds (counter type is
-# recognized and mapped to bigint).
+# recognized and mapped to INT8).
 exec
 CREATE TABLE IF NOT EXISTS counter_table (id int PRIMARY KEY, c counter)
 ----
 
-# UPDATE with counter increment is not yet supported. The lexer
-# rejects the '+' operator.
-error
+# Insert initial row (CRDB requires the row to exist for UPDATE).
+exec
+INSERT INTO counter_table (id, c) VALUES (1, 0)
+----
+
+# UPDATE with counter increment is now supported.
+exec
 UPDATE counter_table SET c = c + 1 WHERE id = 1
 ----
-unexpected character '+' at position 31
 
-# UPDATE with counter decrement is not yet supported. The lexer
-# rejects the '-' operator (when not followed immediately by a digit).
-error
+query
+SELECT id, c FROM counter_table WHERE id = 1
+----
+id c
+1 1
+
+# Increment again.
+exec
+UPDATE counter_table SET c = c + 1 WHERE id = 1
+----
+
+query
+SELECT id, c FROM counter_table WHERE id = 1
+----
+id c
+1 2
+
+# UPDATE with counter decrement is now supported.
+exec
 UPDATE counter_table SET c = c - 1 WHERE id = 1
 ----
-unexpected character '-' at position 31
+
+query
+SELECT id, c FROM counter_table WHERE id = 1
+----
+id c
+1 1

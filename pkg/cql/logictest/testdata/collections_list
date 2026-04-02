@@ -86,13 +86,13 @@ UPDATE lt_coll_list SET tags = ['prepend'] + tags WHERE id = 1
 unexpected character '[' at position 31
 
 # ---------------------------------------------------------------
-# List removal (SET col = col - [...]) — lexer rejects minus.
+# List removal (SET col = col - [...]) — lexer rejects bracket.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_list SET tags = tags - ['remove'] WHERE id = 1
 ----
-unexpected character '-' at position 36
+unexpected character '[' at position 38
 
 # ---------------------------------------------------------------
 # Nested list (list<list<int>>) — unsupported.

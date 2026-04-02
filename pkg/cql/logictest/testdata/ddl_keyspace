@@ -76,29 +76,28 @@ CREATE KEYSPACE test_ks_bad
 at position 27: expected WITH, got ""
 
 # ---------------------------------------------------------------
-# DROP KEYSPACE (unsupported)
+# DROP KEYSPACE
 # ---------------------------------------------------------------
 
-error
+exec
 DROP KEYSPACE test_ks_simple
 ----
-at position 0: unsupported statement "DROP"
 
-error
+# Drop again with IF EXISTS — no error.
+exec
 DROP KEYSPACE IF EXISTS test_ks_simple
 ----
-at position 0: unsupported statement "DROP"
 
 # ---------------------------------------------------------------
-# ALTER KEYSPACE (unsupported)
+# ALTER KEYSPACE (unsupported — ALTER only handles TABLE)
 # ---------------------------------------------------------------
 
 error
 ALTER KEYSPACE test_ks_simple WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}
 ----
-at position 0: unsupported statement "ALTER"
+at position 6: expected TABLE after ALTER, got "KEYSPACE"
 
 error
 ALTER KEYSPACE test_ks_simple WITH durable_writes = false
 ----
-at position 0: unsupported statement "ALTER"
+at position 6: expected TABLE after ALTER, got "KEYSPACE"

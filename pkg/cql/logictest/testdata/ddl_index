@@ -117,34 +117,33 @@ CREATE CUSTOM INDEX lt_idx_sasi ON lt_idx_users (email) USING 'org.apache.cassan
 at position 7: expected KEYSPACE or TABLE after CREATE, got "CUSTOM"
 
 # ---------------------------------------------------------------
-# DROP INDEX (unsupported)
+# DROP INDEX
 #
-# DROP is not a recognized statement keyword in the parser.
+# DROP INDEX is now parsed and translated. Since CREATE INDEX is
+# not yet supported, the indexes don't exist, producing errors.
 # ---------------------------------------------------------------
 
-# Drop a named index.
+# Drop a named index — doesn't exist.
 error
 DROP INDEX lt_idx_users_email_idx
 ----
-at position 0: unsupported statement "DROP"
+cql-ddl: index "lt_idx_users_email_idx" does not exist
 
-# Drop with IF EXISTS.
-error
+# Drop with IF EXISTS — no error for non-existent index.
+exec
 DROP INDEX IF EXISTS lt_idx_users_email_idx
 ----
-at position 0: unsupported statement "DROP"
 
-# Drop with qualified name (keyspace.index).
+# Drop with qualified name — doesn't exist.
 error
 DROP INDEX defaultdb.lt_idx_users_email_idx
 ----
-at position 0: unsupported statement "DROP"
+cql-ddl: index "lt_idx_users_email_idx" does not exist
 
-# Drop with IF EXISTS and qualified name.
-error
+# Drop with IF EXISTS and qualified name — no error.
+exec
 DROP INDEX IF EXISTS defaultdb.lt_idx_users_email_idx
 ----
-at position 0: unsupported statement "DROP"
 
 # ---------------------------------------------------------------
 # Table with clustering keys for index testing context.

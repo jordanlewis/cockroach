@@ -62,6 +62,14 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseUpdate()
 	case "DELETE":
 		return p.parseDelete()
+	case "ALTER":
+		return p.parseAlter()
+	case "DROP":
+		return p.parseDrop()
+	case "TRUNCATE":
+		return p.parseTruncate()
+	case "BEGIN":
+		return p.parseBatch()
 	default:
 		return nil, p.errorf("unsupported statement %q", t.val)
 	}
@@ -468,6 +476,7 @@ func (p *parser) parseDelete() (*DeleteStatement, error) {
 }
 
 // parseAssignments parses SET <col> = <val> [, <col> = <val>, ...].
+// Also handles counter expressions: col = col + val, col = col - val.
 func (p *parser) parseAssignments() ([]Assignment, error) {
 	var assignments []Assignment
 	for {
@@ -478,7 +487,9 @@ func (p *parser) parseAssignments() ([]Assignment, error) {
 		if err := p.expectToken(tokEq); err != nil {
 			return nil, err
 		}
-		val, err := p.parseExpr()
+
+		// Check for counter expression: col = ident +/- val.
+		val, err := p.parseAssignmentValue()
 		if err != nil {
 			return nil, err
 		}
@@ -489,6 +500,330 @@ func (p *parser) parseAssignments() ([]Assignment, error) {
 		p.lex.next() // consume comma
 	}
 	return assignments, nil
+}
+
+// parseAssignmentValue parses the right-hand side of a SET assignment.
+// This is either a simple expression or a counter expression
+// (ident + val / ident - val).
+func (p *parser) parseAssignmentValue() (Expr, error) {
+	// Look ahead for counter pattern: ident +/- expr
+	if p.lex.peek().kind == tokIdent {
+		next := p.lex.peek()
+		// Check the token after the identifier.
+		saved := p.lex.cur
+		p.lex.next() // consume ident
+		if p.lex.peek().kind == tokPlus || p.lex.peek().kind == tokMinus {
+			op := p.lex.next() // consume + or -
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			opStr := "+"
+			if op.kind == tokMinus {
+				opStr = "-"
+			}
+			return &CounterExpr{
+				Column: next.val,
+				Op:     opStr,
+				Value:  val,
+			}, nil
+		}
+		// Not a counter expression; backtrack and parse as normal expr.
+		p.lex.cur = saved
+	}
+	return p.parseExpr()
+}
+
+// parseAlter parses ALTER TABLE statements.
+func (p *parser) parseAlter() (Statement, error) {
+	p.lex.next() // consume ALTER
+	t := p.lex.peek()
+	if !isKeyword(t, "TABLE") {
+		return nil, p.errorf("expected TABLE after ALTER, got %q", t.val)
+	}
+	return p.parseAlterTable()
+}
+
+// parseAlterTable parses:
+//
+//	ALTER TABLE [IF EXISTS] [<ks>.]<table> (ADD|DROP|RENAME|ALTER|WITH) ...
+func (p *parser) parseAlterTable() (*AlterTableStatement, error) {
+	p.lex.next() // consume TABLE
+	stmt := &AlterTableStatement{}
+
+	// Optional IF EXISTS.
+	if isKeyword(p.lex.peek(), "IF") {
+		saved := p.lex.cur
+		p.lex.next() // IF
+		if isKeyword(p.lex.peek(), "EXISTS") {
+			p.lex.next() // EXISTS
+			stmt.IfExists = true
+		} else {
+			p.lex.cur = saved
+		}
+	}
+
+	ks, tbl, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.Table = tbl
+
+	// Dispatch on the operation keyword.
+	opTok := p.lex.peek()
+	if opTok.kind != tokIdent {
+		return nil, p.errorf("expected ADD, DROP, RENAME, ALTER, or WITH after table name, got %q", opTok.val)
+	}
+	switch strings.ToUpper(opTok.val) {
+	case "ADD":
+		p.lex.next()
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		dt, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTableAdd{Column: col, DataType: dt}
+	case "DROP":
+		p.lex.next()
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTableDrop{Column: col}
+	case "RENAME":
+		p.lex.next()
+		oldName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectKeyword("TO"); err != nil {
+			return nil, err
+		}
+		newName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTableRename{OldName: oldName, NewName: newName}
+	case "ALTER":
+		p.lex.next()
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectKeyword("TYPE"); err != nil {
+			return nil, err
+		}
+		dt, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTableAlterType{Column: col, DataType: dt}
+	case "WITH":
+		p.lex.next()
+		props, err := p.parseTableProperties()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTableWith{Properties: props}
+	default:
+		return nil, p.errorf("expected ADD, DROP, RENAME, ALTER, or WITH, got %q", opTok.val)
+	}
+	return stmt, nil
+}
+
+// parseTableProperties parses key = value [AND key = value ...].
+// Values can be string literals, integers, or map literals (stored as
+// their raw string representation).
+func (p *parser) parseTableProperties() ([]TableProperty, error) {
+	var props []TableProperty
+	for {
+		key, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(tokEq); err != nil {
+			return nil, err
+		}
+		// The value can be a string literal, integer, or map literal.
+		// We consume tokens until we hit AND, EOF, or semicolon.
+		val, err := p.parsePropertyValue()
+		if err != nil {
+			return nil, err
+		}
+		props = append(props, TableProperty{Key: key, Value: val})
+		if !isKeyword(p.lex.peek(), "AND") {
+			break
+		}
+		p.lex.next() // consume AND
+	}
+	return props, nil
+}
+
+// parsePropertyValue reads a property value: string literal, integer,
+// or map literal. Returns the raw string representation.
+func (p *parser) parsePropertyValue() (string, error) {
+	t := p.lex.peek()
+	switch t.kind {
+	case tokString:
+		p.lex.next()
+		return "'" + t.val + "'", nil
+	case tokInteger:
+		p.lex.next()
+		return t.val, nil
+	case tokIdent:
+		// Boolean values (true/false).
+		upper := strings.ToUpper(t.val)
+		if upper == "TRUE" || upper == "FALSE" {
+			p.lex.next()
+			return strings.ToLower(t.val), nil
+		}
+		return "", p.errorf("unexpected identifier %q in property value", t.val)
+	case tokLBrace:
+		// Map literal: consume everything until matching }.
+		var sb strings.Builder
+		sb.WriteByte('{')
+		p.lex.next() // consume {
+		for p.lex.peek().kind != tokRBrace && p.lex.peek().kind != tokEOF {
+			tok := p.lex.next()
+			if tok.kind == tokString {
+				sb.WriteString("'" + tok.val + "'")
+			} else {
+				sb.WriteString(tok.val)
+			}
+		}
+		if p.lex.peek().kind == tokRBrace {
+			p.lex.next()
+			sb.WriteByte('}')
+		}
+		return sb.String(), nil
+	default:
+		return "", p.errorf("expected property value, got %q", t.val)
+	}
+}
+
+// parseDrop parses DROP TABLE/KEYSPACE/INDEX [IF EXISTS] [<ks>.]<name>.
+func (p *parser) parseDrop() (*DropStatement, error) {
+	p.lex.next() // consume DROP
+	t := p.lex.peek()
+	if t.kind != tokIdent {
+		return nil, p.errorf("expected TABLE, KEYSPACE, or INDEX after DROP, got %q", t.val)
+	}
+	objType := strings.ToUpper(t.val)
+	switch objType {
+	case "TABLE", "KEYSPACE", "INDEX":
+		p.lex.next()
+	default:
+		return nil, p.errorf("expected TABLE, KEYSPACE, or INDEX after DROP, got %q", t.val)
+	}
+
+	stmt := &DropStatement{ObjectType: objType}
+
+	// Optional IF EXISTS.
+	if isKeyword(p.lex.peek(), "IF") {
+		saved := p.lex.cur
+		p.lex.next() // IF
+		if isKeyword(p.lex.peek(), "EXISTS") {
+			p.lex.next() // EXISTS
+			stmt.IfExists = true
+		} else {
+			p.lex.cur = saved
+		}
+	}
+
+	ks, name, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.Name = name
+
+	return stmt, nil
+}
+
+// parseTruncate parses TRUNCATE [TABLE] [<ks>.]<name>.
+func (p *parser) parseTruncate() (*TruncateStatement, error) {
+	p.lex.next() // consume TRUNCATE
+
+	// Optional TABLE keyword.
+	if isKeyword(p.lex.peek(), "TABLE") {
+		p.lex.next()
+	}
+
+	ks, tbl, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	return &TruncateStatement{Keyspace: ks, Table: tbl}, nil
+}
+
+// parseBatch parses BEGIN [UNLOGGED|COUNTER] BATCH
+// [USING TIMESTAMP <ts>] <statements> APPLY BATCH.
+func (p *parser) parseBatch() (*BatchStatement, error) {
+	p.lex.next() // consume BEGIN
+	stmt := &BatchStatement{}
+
+	// Optional batch type: UNLOGGED or COUNTER.
+	if isKeyword(p.lex.peek(), "UNLOGGED") {
+		p.lex.next()
+		stmt.Type = "UNLOGGED"
+	} else if isKeyword(p.lex.peek(), "COUNTER") {
+		p.lex.next()
+		stmt.Type = "COUNTER"
+	}
+
+	if err := p.expectKeyword("BATCH"); err != nil {
+		return nil, err
+	}
+
+	// Optional USING TIMESTAMP <ts>.
+	if isKeyword(p.lex.peek(), "USING") {
+		p.lex.next() // USING
+		if err := p.expectKeyword("TIMESTAMP"); err != nil {
+			return nil, err
+		}
+		tsTok := p.lex.next()
+		if tsTok.kind != tokInteger {
+			return nil, fmt.Errorf("at position %d: expected integer timestamp, got %q", tsTok.pos, tsTok.val)
+		}
+		ts, err := strconv.ParseInt(tsTok.val, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("at position %d: invalid timestamp %q", tsTok.pos, tsTok.val)
+		}
+		stmt.Timestamp = &ts
+	}
+
+	// Parse inner statements until APPLY BATCH.
+	for {
+		if isKeyword(p.lex.peek(), "APPLY") {
+			break
+		}
+		if p.lex.peek().kind == tokEOF {
+			return nil, p.errorf("expected APPLY BATCH, got EOF")
+		}
+		innerStmt, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Statements = append(stmt.Statements, innerStmt)
+		// Consume optional semicolons between statements.
+		for p.lex.peek().kind == tokSemicolon {
+			p.lex.next()
+		}
+	}
+
+	// Consume APPLY BATCH.
+	if err := p.expectKeyword("APPLY"); err != nil {
+		return nil, err
+	}
+	if err := p.expectKeyword("BATCH"); err != nil {
+		return nil, err
+	}
+
+	return stmt, nil
 }
 
 // parseIfConditions parses IF <col> <op> <val> [AND <col> <op> <val>, ...].
@@ -1116,6 +1451,10 @@ func kindName(kind tokenKind) string {
 		return "':'"
 	case tokQMark:
 		return "'?'"
+	case tokPlus:
+		return "'+'"
+	case tokMinus:
+		return "'-'"
 	default:
 		return "unknown"
 	}

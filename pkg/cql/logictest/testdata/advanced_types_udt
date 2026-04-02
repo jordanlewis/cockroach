@@ -15,11 +15,11 @@ CREATE TYPE address (street text, city text, zip text)
 ----
 at position 7: expected KEYSPACE or TABLE after CREATE, got "TYPE"
 
-# ALTER TYPE is not yet supported.
+# ALTER TYPE is not yet supported (ALTER only handles TABLE).
 error
 ALTER TYPE address ADD state text
 ----
-at position 0: unsupported statement "ALTER"
+at position 6: expected TABLE after ALTER, got "TYPE"
 
 # UDT as a column type is not supported (unknown type name).
 error

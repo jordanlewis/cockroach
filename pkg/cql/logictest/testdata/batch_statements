@@ -1,40 +1,74 @@
 # BATCH statements.
 #
 # CQL BATCH groups multiple DML statements into an atomic unit.
-# BEGIN BATCH, UNLOGGED BATCH, and COUNTER BATCH are all
-# unsupported by the parser. Individual DELETE and UPDATE
-# statements are now supported (tested in lwt_delete/lwt_update).
+# BEGIN BATCH ... APPLY BATCH is now parsed and executed as a
+# transaction. Individual DELETE and UPDATE are supported.
 
 exec
 USE defaultdb
 ----
 
+# Create test tables for batch operations.
+exec
+CREATE TABLE IF NOT EXISTS batch_t (a int PRIMARY KEY, b text)
+----
+
 # Basic BATCH with multiple INSERTs.
-error
-BEGIN BATCH INSERT INTO t (a) VALUES (1) INSERT INTO t (a) VALUES (2) APPLY BATCH
+exec
+BEGIN BATCH INSERT INTO batch_t (a, b) VALUES (1, 'one') INSERT INTO batch_t (a, b) VALUES (2, 'two') APPLY BATCH
 ----
-at position 0: unsupported statement "BEGIN"
 
-# UNLOGGED BATCH (no Paxos commit log).
-error
-BEGIN UNLOGGED BATCH INSERT INTO t (a) VALUES (1) APPLY BATCH
+query rowsort
+SELECT a, b FROM batch_t
 ----
-at position 0: unsupported statement "BEGIN"
+a b
+1 one
+2 two
 
-# COUNTER BATCH for counter updates. The lexer rejects '+' before
-# the parser even sees BEGIN.
-error
+# UNLOGGED BATCH (no Paxos commit log — treated the same as logged).
+exec
+BEGIN UNLOGGED BATCH INSERT INTO batch_t (a, b) VALUES (3, 'three') APPLY BATCH
+----
+
+query
+SELECT a, b FROM batch_t WHERE a = 3
+----
+a b
+3 three
+
+# COUNTER BATCH for counter updates.
+# In CRDB, counter columns are INT8. Rows must exist before
+# counter increment (unlike Cassandra's implicit upsert).
+exec
+CREATE TABLE IF NOT EXISTS counters (id int PRIMARY KEY, c counter)
+----
+
+exec
+INSERT INTO counters (id, c) VALUES (1, 0)
+----
+
+exec
 BEGIN COUNTER BATCH UPDATE counters SET c = c + 1 WHERE id = 1 APPLY BATCH
 ----
-unexpected character '+' at position 46
+
+query
+SELECT id, c FROM counters WHERE id = 1
+----
+id c
+1 1
 
 # BATCH with USING TIMESTAMP.
-error
-BEGIN BATCH USING TIMESTAMP 1234567890 INSERT INTO t (a) VALUES (1) APPLY BATCH
+exec
+BEGIN BATCH USING TIMESTAMP 1234567890 INSERT INTO batch_t (a, b) VALUES (4, 'ts') APPLY BATCH
 ----
-at position 0: unsupported statement "BEGIN"
 
-# DELETE is now supported as a standalone statement.
+query
+SELECT a, b FROM batch_t WHERE a = 4
+----
+a b
+4 ts
+
+# DELETE is supported as a standalone statement.
 exec
 CREATE TABLE IF NOT EXISTS batch_del_test (a int PRIMARY KEY, b text)
 ----
@@ -47,7 +81,7 @@ exec
 DELETE FROM batch_del_test WHERE a = 1
 ----
 
-# UPDATE is now supported as a standalone statement.
+# UPDATE is supported as a standalone statement.
 exec
 CREATE TABLE IF NOT EXISTS batch_upd_test (a int PRIMARY KEY, b text)
 ----

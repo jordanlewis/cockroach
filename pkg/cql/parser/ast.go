@@ -247,3 +247,102 @@ type TupleLiteral struct {
 }
 
 func (*TupleLiteral) exprNode() {}
+
+// CounterExpr represents a counter increment/decrement expression:
+// col + val or col - val.
+type CounterExpr struct {
+	Column string
+	Op     string // "+" or "-"
+	Value  Expr
+}
+
+func (*CounterExpr) exprNode() {}
+
+// AlterTableStatement represents ALTER TABLE [IF EXISTS] [<ks>.]<table> <op>.
+type AlterTableStatement struct {
+	Table    string
+	Keyspace string
+	IfExists bool
+	Op       AlterTableOp
+}
+
+func (*AlterTableStatement) statementNode() {}
+
+// AlterTableOp is the interface implemented by ALTER TABLE operation types.
+type AlterTableOp interface {
+	alterTableOp()
+}
+
+// AlterTableAdd represents ALTER TABLE ... ADD <col> <type>.
+type AlterTableAdd struct {
+	Column   string
+	DataType DataType
+}
+
+func (*AlterTableAdd) alterTableOp() {}
+
+// AlterTableDrop represents ALTER TABLE ... DROP <col>.
+type AlterTableDrop struct {
+	Column string
+}
+
+func (*AlterTableDrop) alterTableOp() {}
+
+// AlterTableRename represents ALTER TABLE ... RENAME <old> TO <new>.
+type AlterTableRename struct {
+	OldName string
+	NewName string
+}
+
+func (*AlterTableRename) alterTableOp() {}
+
+// AlterTableAlterType represents ALTER TABLE ... ALTER <col> TYPE <type>.
+type AlterTableAlterType struct {
+	Column   string
+	DataType DataType
+}
+
+func (*AlterTableAlterType) alterTableOp() {}
+
+// AlterTableWith represents ALTER TABLE ... WITH <properties>.
+// Properties are stored as raw key-value pairs; the translator
+// decides what to do with them.
+type AlterTableWith struct {
+	Properties []TableProperty
+}
+
+func (*AlterTableWith) alterTableOp() {}
+
+// TableProperty is a single key = value table property.
+type TableProperty struct {
+	Key   string
+	Value string // raw string representation of the value
+}
+
+// DropStatement represents DROP TABLE/KEYSPACE/INDEX [IF EXISTS] <name>.
+type DropStatement struct {
+	ObjectType string // "TABLE", "KEYSPACE", "INDEX"
+	Name       string
+	Keyspace   string // empty when unqualified
+	IfExists   bool
+}
+
+func (*DropStatement) statementNode() {}
+
+// TruncateStatement represents TRUNCATE [TABLE] [<ks>.]<name>.
+type TruncateStatement struct {
+	Table    string
+	Keyspace string
+}
+
+func (*TruncateStatement) statementNode() {}
+
+// BatchStatement represents BEGIN [UNLOGGED|COUNTER] BATCH
+// [USING TIMESTAMP <ts>] <stmts> APPLY BATCH.
+type BatchStatement struct {
+	Type       string // "", "UNLOGGED", "COUNTER"
+	Statements []Statement
+	Timestamp  *int64
+}
+
+func (*BatchStatement) statementNode() {}

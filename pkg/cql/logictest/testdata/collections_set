@@ -68,22 +68,24 @@ UPDATE lt_coll_set SET emails = {'x@test.com'} WHERE id = 1
 at position 32: expected expression, got "{"
 
 # ---------------------------------------------------------------
-# Set add (SET col = col + {...}) — lexer rejects plus operator.
+# Set add (SET col = col + {...}) — parser rejects set literal
+# in expression position.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_set SET emails = emails + {'new@test.com'} WHERE id = 1
 ----
-unexpected character '+' at position 39
+at position 41: expected expression, got "{"
 
 # ---------------------------------------------------------------
-# Set removal (SET col = col - {...}) — lexer rejects minus.
+# Set removal (SET col = col - {...}) — parser rejects set
+# literal in expression position.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_set SET emails = emails - {'old@test.com'} WHERE id = 1
 ----
-unexpected character '-' at position 39
+at position 41: expected expression, got "{"
 
 # ---------------------------------------------------------------
 # Nested set (set<set<int>>) — unsupported.
