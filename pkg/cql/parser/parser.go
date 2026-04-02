@@ -259,10 +259,17 @@ func (p *parser) parseInsert() (*InsertStatement, error) {
 
 // parseSelect parses:
 //
-//	SELECT <selectors> FROM [<ks>.]<table> [WHERE <conds>] [LIMIT <n>]
+//	SELECT [DISTINCT] <selectors> FROM [<ks>.]<table> [WHERE <conds>]
+//	  [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>] [ALLOW FILTERING]
 func (p *parser) parseSelect() (*SelectStatement, error) {
 	p.lex.next() // consume SELECT
 	stmt := &SelectStatement{}
+
+	// Optional DISTINCT.
+	if isKeyword(p.lex.peek(), "DISTINCT") {
+		p.lex.next()
+		stmt.Distinct = true
+	}
 
 	// Selectors.
 	selectors, err := p.parseSelectors()
@@ -292,6 +299,19 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 		stmt.Where = where
 	}
 
+	// Optional ORDER BY.
+	if isKeyword(p.lex.peek(), "ORDER") {
+		p.lex.next() // consume ORDER
+		if err := p.expectKeyword("BY"); err != nil {
+			return nil, err
+		}
+		orderBy, err := p.parseOrderByClauses()
+		if err != nil {
+			return nil, err
+		}
+		stmt.OrderBy = orderBy
+	}
+
 	// Optional LIMIT.
 	if isKeyword(p.lex.peek(), "LIMIT") {
 		p.lex.next()
@@ -300,6 +320,15 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 			return nil, err
 		}
 		stmt.Limit = expr
+	}
+
+	// Optional ALLOW FILTERING (accepted and ignored — CRDB performs
+	// full scans as needed).
+	if isKeyword(p.lex.peek(), "ALLOW") {
+		p.lex.next() // consume ALLOW
+		if err := p.expectKeyword("FILTERING"); err != nil {
+			return nil, err
+		}
 	}
 
 	return stmt, nil
@@ -636,7 +665,8 @@ func (p *parser) parseSelectors() ([]Selector, error) {
 	return selectors, nil
 }
 
-// parseWhereClauses parses <col> <op> <val> [AND ...].
+// parseWhereClauses parses <col> <op> <val> [AND ...] with support for
+// the IN operator: <col> IN (<val>, <val>, ...).
 func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 	var clauses []WhereClause
 	for {
@@ -644,19 +674,63 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 		if err != nil {
 			return nil, err
 		}
-		op, err := p.parseOperator()
-		if err != nil {
-			return nil, err
+		// Check for IN operator before trying comparison operators.
+		if isKeyword(p.lex.peek(), "IN") {
+			p.lex.next() // consume IN
+			if err := p.expectToken(tokLParen); err != nil {
+				return nil, err
+			}
+			vals, err := p.parseExprList()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(tokRParen); err != nil {
+				return nil, err
+			}
+			clauses = append(clauses, WhereClause{
+				Column:   col,
+				Operator: "IN",
+				Value:    &TupleLiteral{Values: vals},
+			})
+		} else {
+			op, err := p.parseOperator()
+			if err != nil {
+				return nil, err
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			clauses = append(clauses, WhereClause{Column: col, Operator: op, Value: val})
 		}
-		val, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		clauses = append(clauses, WhereClause{Column: col, Operator: op, Value: val})
 		if !isKeyword(p.lex.peek(), "AND") {
 			break
 		}
 		p.lex.next() // consume AND
+	}
+	return clauses, nil
+}
+
+// parseOrderByClauses parses <col> [ASC|DESC] [, <col> [ASC|DESC], ...].
+func (p *parser) parseOrderByClauses() ([]OrderByClause, error) {
+	var clauses []OrderByClause
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		clause := OrderByClause{Column: col}
+		if isKeyword(p.lex.peek(), "DESC") {
+			p.lex.next()
+			clause.Desc = true
+		} else if isKeyword(p.lex.peek(), "ASC") {
+			p.lex.next()
+		}
+		clauses = append(clauses, clause)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
 	}
 	return clauses, nil
 }
