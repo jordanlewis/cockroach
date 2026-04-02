@@ -1,9 +1,8 @@
 # DISTINCT on partition key.
 #
 # CQL DISTINCT returns only distinct partition key values, avoiding
-# duplicate rows from clustering columns. The parser does not handle
-# DISTINCT: it reads "DISTINCT" as a column name in the selector list,
-# then fails because the next token is not FROM.
+# duplicate rows from clustering columns. The CQL layer translates
+# DISTINCT directly to SQL DISTINCT.
 
 exec
 USE defaultdb
@@ -13,20 +12,53 @@ exec
 CREATE TABLE IF NOT EXISTS sel_dist (pk int, ck int, val text, PRIMARY KEY (pk, ck))
 ----
 
-# DISTINCT on partition key.
-error
+exec
+INSERT INTO sel_dist (pk, ck, val) VALUES (1, 10, 'a')
+----
+
+exec
+INSERT INTO sel_dist (pk, ck, val) VALUES (1, 20, 'b')
+----
+
+exec
+INSERT INTO sel_dist (pk, ck, val) VALUES (2, 10, 'c')
+----
+
+exec
+INSERT INTO sel_dist (pk, ck, val) VALUES (3, 10, 'd')
+----
+
+exec
+INSERT INTO sel_dist (pk, ck, val) VALUES (3, 20, 'e')
+----
+
+# DISTINCT on partition key returns unique pk values.
+query rowsort
 SELECT DISTINCT pk FROM sel_dist
 ----
-at position 16: expected FROM, got "pk"
+pk
+1
+2
+3
 
-# DISTINCT with multiple partition key columns.
-error
+# DISTINCT with multiple columns.
+query rowsort
 SELECT DISTINCT pk, ck FROM sel_dist
 ----
-at position 16: expected FROM, got "pk"
+pk ck
+1 10
+1 20
+2 10
+3 10
+3 20
 
 # DISTINCT *.
-error
+query rowsort
 SELECT DISTINCT * FROM sel_dist
 ----
-at position 16: expected FROM, got "*"
+pk ck val
+1 10 a
+1 20 b
+2 10 c
+3 10 d
+3 20 e

@@ -447,6 +447,146 @@ func TestParseCreateTableClusteringKeys(t *testing.T) {
 	}
 }
 
+func TestParseSelectDistinct(t *testing.T) {
+	input := `SELECT DISTINCT pk FROM users`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if !sel.Distinct {
+		t.Error("Distinct should be true")
+	}
+	if len(sel.Columns) != 1 || sel.Columns[0].Column != "pk" {
+		t.Errorf("columns = %v, want [pk]", sel.Columns)
+	}
+}
+
+func TestParseSelectOrderBy(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantCol string
+		wantDir bool // true = DESC
+	}{
+		{
+			name:    "implicit ASC",
+			input:   "SELECT * FROM t WHERE pk = 1 ORDER BY ck",
+			wantCol: "ck",
+			wantDir: false,
+		},
+		{
+			name:    "explicit ASC",
+			input:   "SELECT * FROM t WHERE pk = 1 ORDER BY ck ASC",
+			wantCol: "ck",
+			wantDir: false,
+		},
+		{
+			name:    "explicit DESC",
+			input:   "SELECT * FROM t WHERE pk = 1 ORDER BY ck DESC",
+			wantCol: "ck",
+			wantDir: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := Parse(tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sel := stmt.(*SelectStatement)
+			if len(sel.OrderBy) != 1 {
+				t.Fatalf("orderBy count = %d, want 1", len(sel.OrderBy))
+			}
+			if sel.OrderBy[0].Column != tt.wantCol {
+				t.Errorf("orderBy column = %q, want %q", sel.OrderBy[0].Column, tt.wantCol)
+			}
+			if sel.OrderBy[0].Desc != tt.wantDir {
+				t.Errorf("orderBy desc = %v, want %v", sel.OrderBy[0].Desc, tt.wantDir)
+			}
+		})
+	}
+}
+
+func TestParseSelectOrderByMultiple(t *testing.T) {
+	input := `SELECT * FROM t ORDER BY ck1 ASC, ck2 DESC`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.OrderBy) != 2 {
+		t.Fatalf("orderBy count = %d, want 2", len(sel.OrderBy))
+	}
+	if sel.OrderBy[0].Column != "ck1" || sel.OrderBy[0].Desc {
+		t.Errorf("orderBy[0] = %+v, want ck1 ASC", sel.OrderBy[0])
+	}
+	if sel.OrderBy[1].Column != "ck2" || !sel.OrderBy[1].Desc {
+		t.Errorf("orderBy[1] = %+v, want ck2 DESC", sel.OrderBy[1])
+	}
+}
+
+func TestParseSelectWhereIn(t *testing.T) {
+	input := `SELECT * FROM t WHERE pk IN (1, 2, 3)`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.Where) != 1 {
+		t.Fatalf("where count = %d, want 1", len(sel.Where))
+	}
+	w := sel.Where[0]
+	if w.Column != "pk" || w.Operator != "IN" {
+		t.Errorf("where = %+v, want pk IN", w)
+	}
+	tuple, ok := w.Value.(*TupleLiteral)
+	if !ok {
+		t.Fatalf("value: want *TupleLiteral, got %T", w.Value)
+	}
+	if len(tuple.Values) != 3 {
+		t.Errorf("tuple values count = %d, want 3", len(tuple.Values))
+	}
+}
+
+func TestParseSelectAllowFiltering(t *testing.T) {
+	input := `SELECT * FROM t WHERE a = 1 ALLOW FILTERING`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if sel.Table != "t" {
+		t.Errorf("table = %q, want %q", sel.Table, "t")
+	}
+	if len(sel.Where) != 1 {
+		t.Errorf("where count = %d, want 1", len(sel.Where))
+	}
+}
+
+func TestParseSelectFullSyntax(t *testing.T) {
+	// SELECT with all optional clauses combined.
+	input := `SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk DESC LIMIT 10 ALLOW FILTERING`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if !sel.Distinct {
+		t.Error("Distinct should be true")
+	}
+	if len(sel.Where) != 1 || sel.Where[0].Operator != "IN" {
+		t.Errorf("where = %+v, want IN", sel.Where)
+	}
+	if len(sel.OrderBy) != 1 || !sel.OrderBy[0].Desc {
+		t.Errorf("orderBy = %+v, want DESC", sel.OrderBy)
+	}
+	lim := sel.Limit.(*IntegerLiteral)
+	if lim.Value != 10 {
+		t.Errorf("limit = %d, want 10", lim.Value)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsAt(s, substr)
 }
