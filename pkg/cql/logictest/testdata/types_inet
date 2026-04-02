@@ -1,0 +1,68 @@
+# Inet type.
+#
+# CQL inet maps to CRDB INET. IP addresses are inserted as string
+# literals. The wire protocol encodes IPv4 as 4 bytes; the test
+# runner formats them as dotted decimal.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_inet (id int, ip inet, PRIMARY KEY (id))
+----
+
+# Standard IPv4 address.
+exec
+INSERT INTO lt_inet (id, ip) VALUES (1, '192.168.1.1')
+----
+
+query
+SELECT id, ip FROM lt_inet WHERE id = 1
+----
+id ip
+1 192.168.1.1
+
+# Loopback address.
+exec
+INSERT INTO lt_inet (id, ip) VALUES (2, '127.0.0.1')
+----
+
+query
+SELECT id, ip FROM lt_inet WHERE id = 2
+----
+id ip
+2 127.0.0.1
+
+# Broadcast address.
+exec
+INSERT INTO lt_inet (id, ip) VALUES (3, '255.255.255.255')
+----
+
+query
+SELECT id, ip FROM lt_inet WHERE id = 3
+----
+id ip
+3 255.255.255.255
+
+# All zeros.
+exec
+INSERT INTO lt_inet (id, ip) VALUES (4, '0.0.0.0')
+----
+
+query
+SELECT id, ip FROM lt_inet WHERE id = 4
+----
+id ip
+4 0.0.0.0
+
+# NULL inet.
+exec
+INSERT INTO lt_inet (id, ip) VALUES (5, NULL)
+----
+
+query
+SELECT id, ip FROM lt_inet WHERE id = 5
+----
+id ip
+5 NULL

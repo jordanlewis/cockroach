@@ -1,0 +1,53 @@
+# Boolean type.
+#
+# CQL boolean maps to CRDB BOOL. Values are true/false.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_bool (id int, b boolean, PRIMARY KEY (id))
+----
+
+# true value.
+exec
+INSERT INTO lt_bool (id, b) VALUES (1, TRUE)
+----
+
+query
+SELECT id, b FROM lt_bool WHERE id = 1
+----
+id b
+1 true
+
+# false value.
+exec
+INSERT INTO lt_bool (id, b) VALUES (2, FALSE)
+----
+
+query
+SELECT id, b FROM lt_bool WHERE id = 2
+----
+id b
+2 false
+
+# NULL value.
+exec
+INSERT INTO lt_bool (id, b) VALUES (3, NULL)
+----
+
+query
+SELECT id, b FROM lt_bool WHERE id = 3
+----
+id b
+3 NULL
+
+# Verify all boolean rows.
+query rowsort
+SELECT id, b FROM lt_bool
+----
+id b
+1 true
+2 false
+3 NULL
