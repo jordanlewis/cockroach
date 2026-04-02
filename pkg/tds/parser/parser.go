@@ -64,6 +64,10 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseCreate()
 	case tokenINSERT:
 		return p.parseInsert()
+	case tokenDELETE:
+		return p.parseDelete()
+	case tokenUPDATE:
+		return p.parseUpdate()
 	case tokenSELECT:
 		return p.parseSelect()
 	default:
@@ -267,6 +271,67 @@ func (p *parser) parseValueRow() ([]Expr, error) {
 		return nil, err
 	}
 	return exprs, nil
+}
+
+// parseDelete parses: DELETE [FROM] <table> [WHERE <expr>]
+func (p *parser) parseDelete() (*DeleteStmt, error) {
+	p.lex.next() // consume DELETE
+	// FROM is optional in T-SQL DELETE.
+	if p.lex.peek().typ == tokenFROM {
+		p.lex.next()
+	}
+	table, err := p.parseTableName()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &DeleteStmt{Table: table}
+	if p.lex.peek().typ == tokenWHERE {
+		p.lex.next()
+		stmt.Where, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return stmt, nil
+}
+
+// parseUpdate parses: UPDATE <table> SET <col>=<expr>, ... [WHERE <expr>]
+func (p *parser) parseUpdate() (*UpdateStmt, error) {
+	p.lex.next() // consume UPDATE
+	table, err := p.parseTableName()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenSET); err != nil {
+		return nil, err
+	}
+	stmt := &UpdateStmt{Table: table}
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenEq); err != nil {
+			return nil, err
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Assignments = append(stmt.Assignments, Assignment{Column: col, Value: val})
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	if p.lex.peek().typ == tokenWHERE {
+		p.lex.next()
+		stmt.Where, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return stmt, nil
 }
 
 // parseSelect parses: SELECT [TOP n] <columns> [FROM <tables>]
@@ -888,7 +953,8 @@ func isKeywordToken(typ tokenType) bool {
 		tokenINTO, tokenVALUES, tokenSELECT, tokenFROM, tokenWHERE,
 		tokenORDER, tokenBY, tokenTOP, tokenAS, tokenNOT, tokenNULL,
 		tokenAND, tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
-		tokenBETWEEN, tokenLIKE, tokenISNULL, tokenCONVERT, tokenGETDATE:
+		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
+		tokenISNULL, tokenCONVERT, tokenGETDATE:
 		return true
 	}
 	return false
