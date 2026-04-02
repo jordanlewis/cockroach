@@ -198,13 +198,13 @@ func handleSystemSelect(
 			}
 			return ExecuteResult{Body: body}, true
 		case "tables":
-			body, err := buildSystemSchemaTablesBody()
+			body, err := buildSystemSchemaTablesBody(ctx, db)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
 			return ExecuteResult{Body: body}, true
 		case "columns":
-			body, err := buildSystemSchemaColumnsBody()
+			body, err := buildSystemSchemaColumnsBody(ctx, db)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -351,8 +351,8 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 	}
 
 	for _, name := range keyspaceNames {
-		writeText(name)                         // keyspace_name
-		writeBool(true)                         // durable_writes
+		writeText(name)                          // keyspace_name
+		writeBool(true)                          // durable_writes
 		writeText("{'class': 'SimpleStrategy'}") // replication
 	}
 
@@ -360,10 +360,10 @@ func buildSystemSchemaKeyspacesBody(ctx context.Context, db isql.DB) ([]byte, er
 }
 
 // buildSystemSchemaTablesBody builds a CQL RESULT Rows frame body for
-// system_schema.tables listing the system.local and system.peers
-// virtual tables. cqlsh uses this to resolve table names when
-// formatting query results.
-func buildSystemSchemaTablesBody() ([]byte, error) {
+// system_schema.tables. It includes the synthetic system tables plus
+// any user-created tables discovered via CRDB's information_schema.
+// cqlsh uses this to validate table names before issuing queries.
+func buildSystemSchemaTablesBody(ctx context.Context, db isql.DB) ([]byte, error) {
 	cols := systemSchemaTables["tables"].columns
 	var buf bytes.Buffer
 
@@ -385,6 +385,36 @@ func buildSystemSchemaTablesBody() ([]byte, error) {
 		{"system", "local"},
 		{"system", "peers"},
 		{"system", "peers_v2"},
+	}
+
+	// Query CRDB for real user tables.
+	if db != nil {
+		executor := db.Executor()
+		rows, err := executor.QueryBufferedEx(
+			ctx,
+			redact.Sprint("cql-list-tables"),
+			nil, // txn
+			sessiondata.InternalExecutorOverride{
+				User: username.RootUserName(),
+			},
+			`SELECT table_catalog, table_name
+			 FROM "".information_schema.tables
+			 WHERE table_schema = 'public'
+			   AND table_type = 'BASE TABLE'
+			 ORDER BY table_catalog, table_name`,
+		)
+		if err == nil {
+			for _, row := range rows {
+				if len(row) >= 2 {
+					dbName := string(*row[0].(*tree.DString))
+					tblName := string(*row[1].(*tree.DString))
+					tables = append(tables, tableRow{
+						keyspaceName: dbName,
+						tableName:    tblName,
+					})
+				}
+			}
+		}
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(tables)))
@@ -420,10 +450,43 @@ func buildSystemSchemaTablesBody() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// crdbTypeToCQLTypeName maps a CRDB data_type string (from
+// information_schema.columns) to a CQL type name. Returns "varchar"
+// for unrecognized types since cqlsh needs something parseable.
+func crdbTypeToCQLTypeName(crdbType string) string {
+	// Normalize by lowercasing and stripping precision/length.
+	t := strings.ToLower(crdbType)
+	switch {
+	case t == "uuid":
+		return "uuid"
+	case t == "text", t == "character varying", strings.HasPrefix(t, "varchar"),
+		strings.HasPrefix(t, "string"), strings.HasPrefix(t, "char"):
+		return "text"
+	case t == "integer", t == "int4", t == "int2", t == "smallint":
+		return "int"
+	case t == "bigint", t == "int8", t == "int":
+		return "bigint"
+	case t == "boolean", t == "bool":
+		return "boolean"
+	case t == "double precision", t == "float8":
+		return "double"
+	case t == "real", t == "float4":
+		return "float"
+	case strings.HasPrefix(t, "timestamp"):
+		return "timestamp"
+	case t == "bytea", t == "bytes", t == "blob":
+		return "blob"
+	case t == "inet":
+		return "inet"
+	default:
+		return "text"
+	}
+}
+
 // buildSystemSchemaColumnsBody builds a CQL RESULT Rows frame body
-// for system_schema.columns listing columns for system.local and
-// system.peers.
-func buildSystemSchemaColumnsBody() ([]byte, error) {
+// for system_schema.columns listing columns for system tables and
+// any user-created tables discovered via CRDB's information_schema.
+func buildSystemSchemaColumnsBody(ctx context.Context, db isql.DB) ([]byte, error) {
 	cols := systemSchemaTables["columns"].columns
 	var buf bytes.Buffer
 
@@ -483,6 +546,68 @@ func buildSystemSchemaColumnsBody() ([]byte, error) {
 			position:        pos,
 			colType:         c.cqlType.String(),
 		})
+	}
+
+	// Query CRDB for real user-table columns.
+	if db != nil {
+		executor := db.Executor()
+		rows, err := executor.QueryBufferedEx(
+			ctx,
+			redact.Sprint("cql-list-columns"),
+			nil, // txn
+			sessiondata.InternalExecutorOverride{
+				User: username.RootUserName(),
+			},
+			`SELECT c.table_catalog, c.table_name, c.column_name, c.data_type,
+			        c.ordinal_position,
+			        COALESCE(
+			          (SELECT 'partition_key'
+			           FROM "".information_schema.table_constraints tc
+			           JOIN "".information_schema.constraint_column_usage ccu
+			             ON tc.constraint_name = ccu.constraint_name
+			            AND tc.table_catalog = ccu.table_catalog
+			            AND tc.table_schema = ccu.table_schema
+			           WHERE tc.constraint_type = 'PRIMARY KEY'
+			             AND tc.table_catalog = c.table_catalog
+			             AND tc.table_schema = c.table_schema
+			             AND tc.table_name = c.table_name
+			             AND ccu.column_name = c.column_name
+			           LIMIT 1),
+			          'regular'
+			        ) AS kind
+			 FROM "".information_schema.columns c
+			 JOIN "".information_schema.tables t
+			   ON c.table_catalog = t.table_catalog
+			  AND c.table_schema = t.table_schema
+			  AND c.table_name = t.table_name
+			 WHERE c.table_schema = 'public'
+			   AND t.table_type = 'BASE TABLE'
+			 ORDER BY c.table_catalog, c.table_name, c.ordinal_position`,
+		)
+		if err == nil {
+			for _, row := range rows {
+				if len(row) >= 6 {
+					dbName := string(*row[0].(*tree.DString))
+					tblName := string(*row[1].(*tree.DString))
+					colName := string(*row[2].(*tree.DString))
+					dataType := string(*row[3].(*tree.DString))
+					kind := string(*row[5].(*tree.DString))
+					pos := int32(0)
+					if kind == "partition_key" {
+						pos = 0
+					}
+					columnRows = append(columnRows, colRow{
+						keyspaceName:    dbName,
+						tableName:       tblName,
+						columnName:      colName,
+						clusteringOrder: "none",
+						kind:            kind,
+						position:        pos,
+						colType:         crdbTypeToCQLTypeName(dataType),
+					})
+				}
+			}
+		}
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(columnRows)))
@@ -573,20 +698,20 @@ func buildSystemLocalBody() ([]byte, error) {
 		buf.Write(u[:])
 	}
 
-	writeText("local")                                                   // key
-	writeText("COMPLETED")                                               // bootstrapped
-	writeInet(localhost)                                                  // broadcast_address
-	writeText("cockroachdb")                                             // cluster_name
-	writeText("3.4.5")                                                   // cql_version
-	writeText("datacenter1")                                             // data_center
-	writeUUID(fixedHostID)                                               // host_id
-	writeInet(localhost)                                                  // listen_address
-	writeText("4")                                                       // native_protocol_version
-	writeText("org.apache.cassandra.dht.Murmur3Partitioner")             // partitioner
-	writeText("rack1")                                                   // rack
-	writeText("4.0.0")                                                   // release_version
-	writeInet(localhost)                                                  // rpc_address
-	writeUUID(fixedSchemaVersion) // schema_version
+	writeText("local")                                       // key
+	writeText("COMPLETED")                                   // bootstrapped
+	writeInet(localhost)                                     // broadcast_address
+	writeText("cockroachdb")                                 // cluster_name
+	writeText("3.4.5")                                       // cql_version
+	writeText("datacenter1")                                 // data_center
+	writeUUID(fixedHostID)                                   // host_id
+	writeInet(localhost)                                     // listen_address
+	writeText("4")                                           // native_protocol_version
+	writeText("org.apache.cassandra.dht.Murmur3Partitioner") // partitioner
+	writeText("rack1")                                       // rack
+	writeText("4.0.0")                                       // release_version
+	writeInet(localhost)                                     // rpc_address
+	writeUUID(fixedSchemaVersion)                            // schema_version
 
 	return buf.Bytes(), nil
 }
