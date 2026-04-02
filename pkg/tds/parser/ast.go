@@ -198,14 +198,17 @@ type Assignment struct {
 	Value  Expr
 }
 
-// SelectStmt represents SELECT [TOP n] <columns> [FROM <table>]
-// [WHERE <expr>] [ORDER BY <exprs>].
+// SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
+// [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>] [ORDER BY <exprs>].
 type SelectStmt struct {
-	Top     *int
-	Columns []SelectColumn
-	From    []TableRef
-	Where   Expr
-	OrderBy []OrderByExpr
+	Distinct bool
+	Top      *int
+	Columns  []SelectColumn
+	From     []TableRef
+	Where    Expr
+	GroupBy  []Expr
+	Having   Expr
+	OrderBy  []OrderByExpr
 }
 
 func (*SelectStmt) statementNode() {}
@@ -213,6 +216,9 @@ func (*SelectStmt) statementNode() {}
 func (s *SelectStmt) String() string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
+	if s.Distinct {
+		b.WriteString("DISTINCT ")
+	}
 	if s.Top != nil {
 		fmt.Fprintf(&b, "TOP %d ", *s.Top)
 	}
@@ -233,6 +239,18 @@ func (s *SelectStmt) String() string {
 	}
 	if s.Where != nil {
 		fmt.Fprintf(&b, " WHERE %s", s.Where)
+	}
+	if len(s.GroupBy) > 0 {
+		b.WriteString(" GROUP BY ")
+		for i, g := range s.GroupBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(g.String())
+		}
+	}
+	if s.Having != nil {
+		fmt.Fprintf(&b, " HAVING %s", s.Having)
 	}
 	if len(s.OrderBy) > 0 {
 		b.WriteString(" ORDER BY ")

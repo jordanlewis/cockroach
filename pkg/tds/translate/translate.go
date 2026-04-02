@@ -150,6 +150,9 @@ func translateInsert(s *parser.InsertStmt) string {
 func translateSelect(s *parser.SelectStmt) string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
+	if s.Distinct {
+		b.WriteString("DISTINCT ")
+	}
 	for i, col := range s.Columns {
 		if i > 0 {
 			b.WriteString(", ")
@@ -173,6 +176,18 @@ func translateSelect(s *parser.SelectStmt) string {
 	}
 	if s.Where != nil {
 		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+	}
+	if len(s.GroupBy) > 0 {
+		b.WriteString(" GROUP BY ")
+		for i, gb := range s.GroupBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(gb))
+		}
+	}
+	if s.Having != nil {
+		fmt.Fprintf(&b, " HAVING %s", translateExpr(s.Having))
 	}
 	if len(s.OrderBy) > 0 {
 		b.WriteString(" ORDER BY ")
