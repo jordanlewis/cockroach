@@ -86,7 +86,7 @@ func (e *Executor) ExecuteQuery(
 	// tables during startup. We return synthetic results for these
 	// since CRDB does not have Cassandra system tables.
 	if sel, ok := stmt.(*parser.SelectStatement); ok {
-		if res, handled := handleSystemSelect(sel.Keyspace, sel.Table); handled {
+		if res, handled := handleSystemSelect(ctx, e.db, sel.Keyspace, sel.Table); handled {
 			return res
 		}
 	}
@@ -106,9 +106,13 @@ func (e *Executor) ExecuteQuery(
 
 	switch s := stmt.(type) {
 	case *parser.CreateKeyspaceStatement:
-		return e.executeDDL(ctx, result, override, "CREATED", "KEYSPACE", s.Keyspace)
+		return e.executeDDL(ctx, result, override, "CREATED", "KEYSPACE", s.Keyspace, "")
 	case *parser.CreateTableStatement:
-		return e.executeDDL(ctx, result, override, "CREATED", "TABLE", s.Table)
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "CREATED", "TABLE", ks, s.Table)
 	case *parser.InsertStatement:
 		return e.executeDML(ctx, result, override)
 	case *parser.SelectStatement:
@@ -119,12 +123,14 @@ func (e *Executor) ExecuteQuery(
 }
 
 // executeDDL executes a DDL statement and returns a SchemaChange
-// RESULT.
+// RESULT. The keyspace parameter is the keyspace name for the schema
+// change response; name is the object name (empty for KEYSPACE
+// targets).
 func (e *Executor) executeDDL(
 	ctx context.Context,
 	result translate.Result,
 	override sessiondata.InternalExecutorOverride,
-	changeType, target, name string,
+	changeType, target, keyspace, name string,
 ) ExecuteResult {
 	executor := e.db.Executor()
 	_, err := executor.ExecEx(
@@ -139,7 +145,7 @@ func (e *Executor) executeDDL(
 		return errorResult(errCodeServerError, err.Error())
 	}
 	return ExecuteResult{
-		Body: buildSchemaChangeBody(changeType, target, name),
+		Body: buildSchemaChangeBody(changeType, target, keyspace, name),
 	}
 }
 

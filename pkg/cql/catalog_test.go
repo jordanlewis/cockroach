@@ -14,36 +14,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHandleSystemSchemaSelect(t *testing.T) {
-	// All six tables from the bead, plus keyspaces/tables/columns.
+func TestHandleSystemSchemaSelectEmptyTables(t *testing.T) {
+	// These system_schema tables return zero rows (stubs for cqlsh
+	// startup).
 	tables := []string{
-		"keyspaces", "tables", "columns",
 		"triggers", "views", "functions",
 		"aggregates", "types", "indexes",
 	}
+	ctx := context.Background()
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
-			res, handled := handleSystemSchemaSelect("system_schema", table)
+			res, handled := handleSystemSelect(ctx, nil, "system_schema", table)
 			require.True(t, handled, "system_schema.%s should be handled", table)
 			require.False(t, res.IsError)
 
-			// Parse the result body: should be Rows with 0 rows.
 			r := bytes.NewReader(res.Body)
 			kind, err := cqlwire.ReadInt(r)
 			require.NoError(t, err)
 			require.Equal(t, resultKindRows, kind)
 
-			// Metadata flags.
-			_, err = cqlwire.ReadInt(r)
+			_, err = cqlwire.ReadInt(r) // flags
 			require.NoError(t, err)
 
-			// Column count should match schema definition.
 			colCount, err := cqlwire.ReadInt(r)
 			require.NoError(t, err)
 			schema := systemSchemaTables[table]
 			require.Equal(t, int32(len(schema.columns)), colCount)
 
-			// Skip column metadata.
 			for i := int32(0); i < colCount; i++ {
 				_, _ = cqlwire.ReadString(r) // keyspace
 				_, _ = cqlwire.ReadString(r) // table
@@ -51,7 +48,6 @@ func TestHandleSystemSchemaSelect(t *testing.T) {
 				_, _ = cqlwire.ReadShort(r)  // type
 			}
 
-			// Row count should be 0.
 			rowCount, err := cqlwire.ReadInt(r)
 			require.NoError(t, err)
 			require.Equal(t, int32(0), rowCount)
@@ -59,19 +55,106 @@ func TestHandleSystemSchemaSelect(t *testing.T) {
 	}
 }
 
+func TestHandleSystemSchemaKeyspaces(t *testing.T) {
+	// With db=nil, buildSystemSchemaKeyspacesBody returns only
+	// synthetic system keyspaces.
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "keyspaces")
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(3), colCount) // keyspace_name, durable_writes, replication
+
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		_, _ = cqlwire.ReadString(r) // name
+		_, _ = cqlwire.ReadShort(r)  // type
+	}
+
+	rowCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), rowCount) // system, system_schema, system_virtual_schema
+}
+
+func TestHandleSystemSchemaTables(t *testing.T) {
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "tables")
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(len(systemSchemaTables["tables"].columns)), colCount)
+
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		_, _ = cqlwire.ReadString(r) // name
+		_, _ = cqlwire.ReadShort(r)  // type
+	}
+
+	rowCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	// system.local, system.peers, system.peers_v2
+	require.Equal(t, int32(3), rowCount)
+}
+
+func TestHandleSystemSchemaColumns(t *testing.T) {
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "columns")
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	kind, _ := cqlwire.ReadInt(r)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(len(systemSchemaTables["columns"].columns)), colCount)
+
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		_, _ = cqlwire.ReadString(r) // name
+		_, _ = cqlwire.ReadShort(r)  // type
+	}
+
+	rowCount, _ := cqlwire.ReadInt(r)
+	// system.local (14 cols) + system.peers (8 cols) = 22
+	expectedCols := int32(len(systemLocalColumns) + len(systemPeersColumns))
+	require.Equal(t, expectedCols, rowCount)
+}
+
 func TestHandleSystemSchemaSelectCaseInsensitive(t *testing.T) {
-	res, handled := handleSystemSchemaSelect("SYSTEM_SCHEMA", "keyspaces")
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "SYSTEM_SCHEMA", "keyspaces")
 	require.True(t, handled)
 	require.False(t, res.IsError)
 }
 
 func TestHandleSystemSchemaSelectUnknownTable(t *testing.T) {
-	_, handled := handleSystemSchemaSelect("system_schema", "nonexistent")
+	ctx := context.Background()
+	_, handled := handleSystemSelect(ctx, nil, "system_schema", "nonexistent")
 	require.False(t, handled)
 }
 
 func TestHandleSystemSchemaSelectOtherKeyspace(t *testing.T) {
-	_, handled := handleSystemSchemaSelect("my_keyspace", "triggers")
+	ctx := context.Background()
+	_, handled := handleSystemSelect(ctx, nil, "my_keyspace", "triggers")
 	require.False(t, handled)
 }
 
@@ -107,7 +190,8 @@ func TestExecutorSystemSchemaTriggers(t *testing.T) {
 
 func TestExecutorSystemSchemaColumnNames(t *testing.T) {
 	// Verify column names in the result metadata match the schema.
-	res, handled := handleSystemSchemaSelect("system_schema", "indexes")
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "indexes")
 	require.True(t, handled)
 
 	r := bytes.NewReader(res.Body)

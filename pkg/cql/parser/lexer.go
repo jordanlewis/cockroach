@@ -20,6 +20,7 @@ const (
 	tokString    // single-quoted string
 	tokInteger   // integer literal
 	tokFloat     // float literal
+	tokUUID      // bare UUID literal (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
 	tokLParen    // (
 	tokRParen    // )
 	tokLBrace    // {
@@ -150,10 +151,16 @@ func (l *lexer) tokenize() error {
 			continue // lexQuotedIdent already advanced pos
 		default:
 			if isDigit(ch) || (ch == '-' && l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1])) {
+				if isHexDigit(ch) && l.tryLexUUID() {
+					continue
+				}
 				l.lexNumber()
 				continue
 			}
 			if isIdentStart(ch) {
+				if isHexDigit(ch) && l.tryLexUUID() {
+					continue
+				}
 				l.lexIdent()
 				continue
 			}
@@ -287,6 +294,32 @@ func isIdentStart(ch byte) bool {
 
 func isIdentPart(ch byte) bool {
 	return isIdentStart(ch) || isDigit(ch)
+}
+
+func isHexDigit(ch byte) bool {
+	return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+// tryLexUUID attempts to lex a bare UUID at the current position. UUIDs
+// have the form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars, groups
+// of 8-4-4-4-12 hex digits separated by dashes). Returns true if a UUID
+// was successfully lexed.
+func (l *lexer) tryLexUUID() bool {
+	if l.pos+36 > len(l.input) {
+		return false
+	}
+	candidate := l.input[l.pos : l.pos+36]
+	if !isUUID(candidate) {
+		return false
+	}
+	// Ensure the UUID is not followed by more identifier characters
+	// (which would mean it's part of a longer token).
+	if l.pos+36 < len(l.input) && isIdentPart(l.input[l.pos+36]) {
+		return false
+	}
+	l.tokens = append(l.tokens, token{kind: tokUUID, val: candidate, pos: l.pos})
+	l.pos += 36
+	return true
 }
 
 // isKeyword returns true if the token is an identifier matching kw

@@ -165,7 +165,11 @@ func (p *parser) parseCreateTable() (*CreateTableStatement, error) {
 	}
 
 	// Parse column definitions and the PRIMARY KEY clause.
-	for {
+	// CQL supports two forms:
+	//   1. Inline: id uuid PRIMARY KEY, name text
+	//   2. Trailing: id uuid, name text, PRIMARY KEY (id)
+	var inlinePKColumn string
+	for p.lex.peek().kind != tokRParen {
 		if isKeyword(p.lex.peek(), "PRIMARY") {
 			pk, err := p.parsePrimaryKeyClause()
 			if err != nil {
@@ -174,14 +178,24 @@ func (p *parser) parseCreateTable() (*CreateTableStatement, error) {
 			stmt.PrimaryKey = pk
 			break
 		}
-		col, err := p.parseColumnDef()
+		col, isPK, err := p.parseColumnDef()
 		if err != nil {
 			return nil, err
 		}
 		stmt.Columns = append(stmt.Columns, col)
+		if isPK {
+			inlinePKColumn = col.Name
+		}
 
 		if p.lex.peek().kind == tokComma {
 			p.lex.next()
+		}
+	}
+
+	// If we found an inline PRIMARY KEY, use it.
+	if inlinePKColumn != "" {
+		stmt.PrimaryKey = PrimaryKey{
+			PartitionKeys: []string{inlinePKColumn},
 		}
 	}
 
@@ -401,17 +415,31 @@ func (p *parser) parseBoolValue() (bool, error) {
 	}
 }
 
-// parseColumnDef parses <name> <type>.
-func (p *parser) parseColumnDef() (ColumnDef, error) {
+// parseColumnDef parses <name> <type> [PRIMARY KEY]. The inline
+// PRIMARY KEY is a Cassandra shorthand for single-partition-key
+// tables.
+func (p *parser) parseColumnDef() (ColumnDef, bool, error) {
 	name, err := p.expectIdent()
 	if err != nil {
-		return ColumnDef{}, err
+		return ColumnDef{}, false, err
 	}
 	dt, err := p.parseDataType()
 	if err != nil {
-		return ColumnDef{}, err
+		return ColumnDef{}, false, err
 	}
-	return ColumnDef{Name: name, DataType: dt}, nil
+	// Check for inline PRIMARY KEY.
+	isPK := false
+	if isKeyword(p.lex.peek(), "PRIMARY") {
+		saved := p.lex.cur
+		p.lex.next() // PRIMARY
+		if isKeyword(p.lex.peek(), "KEY") {
+			p.lex.next() // KEY
+			isPK = true
+		} else {
+			p.lex.cur = saved
+		}
+	}
+	return ColumnDef{Name: name, DataType: dt}, isPK, nil
 }
 
 // parseDataType parses a CQL type name.
@@ -547,6 +575,9 @@ func (p *parser) parseExpr() (Expr, error) {
 			return nil, errors.Wrapf(err, "at position %d: invalid float %q", t.pos, t.val)
 		}
 		return &FloatLiteral{Value: v}, nil
+	case tokUUID:
+		p.lex.next()
+		return &UUIDLiteral{Value: t.val}, nil
 	case tokQMark:
 		p.lex.next()
 		return &BindMarker{}, nil
@@ -668,6 +699,8 @@ func kindName(kind tokenKind) string {
 		return "integer"
 	case tokFloat:
 		return "float"
+	case tokUUID:
+		return "UUID"
 	case tokLParen:
 		return "'('"
 	case tokRParen:
