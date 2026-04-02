@@ -51,6 +51,9 @@ const (
 	CQLVarint    CQLType = 0x000E
 	CQLTimeuuid  CQLType = 0x000F
 	CQLInet      CQLType = 0x0010
+	CQLList      CQLType = 0x0020
+	CQLMap       CQLType = 0x0021
+	CQLSet       CQLType = 0x0022
 	CQLText      CQLType = CQLVarchar // text and varchar are identical in CQL
 )
 
@@ -87,6 +90,12 @@ func (t CQLType) String() string {
 		return "timeuuid"
 	case CQLInet:
 		return "inet"
+	case CQLList:
+		return "list"
+	case CQLMap:
+		return "map"
+	case CQLSet:
+		return "set"
 	case CQLCustom:
 		return "custom"
 	default:

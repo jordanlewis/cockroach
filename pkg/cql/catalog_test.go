@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	cqltypes "github.com/cockroachdb/cockroach/pkg/cql/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,8 +135,10 @@ func TestHandleSystemSchemaColumns(t *testing.T) {
 	}
 
 	rowCount, _ := cqlwire.ReadInt(r)
-	// system.local (14 cols) + system.peers (8 cols) = 22
-	expectedCols := int32(len(systemLocalColumns) + len(systemPeersColumns))
+	// system.local + system.peers + system.peers_v2
+	expectedCols := int32(
+		len(systemLocalColumns) + len(systemPeersColumns) + len(systemPeersV2Columns),
+	)
 	require.Equal(t, expectedCols, rowCount)
 }
 
@@ -212,4 +215,90 @@ func TestExecutorSystemSchemaColumnNames(t *testing.T) {
 		require.Equal(t, expected, name)
 		_, _ = cqlwire.ReadShort(r) // type
 	}
+}
+
+func TestHandleSystemLocalTokens(t *testing.T) {
+	// Verify system.local includes the tokens column and returns a
+	// set<varchar> value with a single token.
+	ctx := context.Background()
+	res, handled := handleSystemSelect(ctx, nil, "system", "local", nil)
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	kind, _ := cqlwire.ReadInt(r)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(len(systemLocalColumns)), colCount)
+
+	// Read column metadata and find the tokens column.
+	var tokensIdx int32 = -1
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		name, _ := cqlwire.ReadString(r)
+		typeID, _ := cqlwire.ReadShort(r)
+		if typeID == uint16(cqltypes.CQLSet) {
+			// Collection types have an element type short.
+			elemType, _ := cqlwire.ReadShort(r)
+			require.Equal(t, uint16(cqltypes.CQLVarchar), elemType)
+		}
+		if name == "tokens" {
+			tokensIdx = i
+		}
+	}
+	require.NotEqual(t, int32(-1), tokensIdx,
+		"system.local should have a tokens column")
+
+	// Read the single row and extract the tokens cell.
+	rowCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(1), rowCount)
+
+	for i := int32(0); i < colCount; i++ {
+		cellLen, _ := cqlwire.ReadInt(r)
+		if i == tokensIdx {
+			require.Greater(t, cellLen, int32(0),
+				"tokens cell should not be null or empty")
+			// Read the set value: [int] element_count, then elements.
+			data := make([]byte, cellLen)
+			_, err := r.Read(data)
+			require.NoError(t, err)
+			elemR := bytes.NewReader(data)
+			elemCount, _ := cqlwire.ReadInt(elemR)
+			require.Equal(t, int32(1), elemCount,
+				"tokens should have exactly one element")
+		} else if cellLen >= 0 {
+			data := make([]byte, cellLen)
+			_, _ = r.Read(data)
+		}
+	}
+}
+
+func TestHandleSystemPeersV2Schema(t *testing.T) {
+	// Verify system.peers_v2 has a different (wider) schema than
+	// system.peers, including port columns for mixed-port clusters.
+	ctx := context.Background()
+
+	resV1, handled := handleSystemSelect(ctx, nil, "system", "peers", nil)
+	require.True(t, handled)
+	resV2, handled := handleSystemSelect(ctx, nil, "system", "peers_v2", nil)
+	require.True(t, handled)
+
+	readColCount := func(body []byte) int32 {
+		r := bytes.NewReader(body)
+		_, _ = cqlwire.ReadInt(r) // kind
+		_, _ = cqlwire.ReadInt(r) // flags
+		count, _ := cqlwire.ReadInt(r)
+		return count
+	}
+
+	v1Cols := readColCount(resV1.Body)
+	v2Cols := readColCount(resV2.Body)
+
+	require.Equal(t, int32(len(systemPeersColumns)), v1Cols)
+	require.Equal(t, int32(len(systemPeersV2Columns)), v2Cols)
+	require.Greater(t, v2Cols, v1Cols,
+		"peers_v2 should have more columns than peers")
 }

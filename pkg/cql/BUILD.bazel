@@ -41,6 +41,7 @@ go_test(
     embed = [":cql"],
     deps = [
         "//pkg/cql/cqlwire",
+        "//pkg/cql/types",
         "//pkg/kv",
         "//pkg/sql/catalog",
         "//pkg/sql/catalog/colinfo",

@@ -1188,3 +1188,104 @@ func TestIntegrationSystemSchemaTables(t *testing.T) {
 			"query %q should return RESULT", query)
 	}
 }
+
+// TestIntegrationSystemPeersV2 tests that system.peers_v2 returns a
+// valid empty RESULT with a wider column schema than system.peers.
+func TestIntegrationSystemPeersV2(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendQuery(t, conn, 1, "SELECT * FROM system.peers_v2",
+		cqlwire.ConsistencyOne)
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"system.peers_v2 should return RESULT")
+
+	// Verify the column count is greater than system.peers.
+	r := bytes.NewReader(frame.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind)
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(len(systemPeersV2Columns)), colCount,
+		"peers_v2 should have the correct number of columns")
+}
+
+// TestIntegrationGocqlSchemaAgreement verifies that gocql can complete
+// schema agreement during session creation. Schema agreement requires
+// system.local to return a schema_version UUID and system.peers to
+// return zero rows (no disagreeing peers). Session creation also
+// queries system.local for tokens (token-aware routing).
+func TestIntegrationGocqlSchemaAgreement(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	host, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+
+	cluster := gocql.NewCluster(host)
+	p, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	cluster.Port = p
+	cluster.ProtoVersion = 4
+	cluster.Timeout = 5 * time.Second
+	cluster.ConnectTimeout = 5 * time.Second
+	cluster.Authenticator = nil
+
+	// CreateSession runs the full driver handshake including schema
+	// agreement and token discovery from system.local and system.peers.
+	session, err := cluster.CreateSession()
+	require.NoError(t, err, "gocql session creation (including schema agreement) should succeed")
+	session.Close()
+}
+
+// TestIntegrationSystemLocalTokens verifies that system.local returns
+// a tokens column with a set<varchar> value via the wire protocol.
+func TestIntegrationSystemLocalTokens(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendQuery(t, conn, 1, "SELECT * FROM system.local WHERE key='local'",
+		cqlwire.ConsistencyOne)
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode)
+
+	r := bytes.NewReader(frame.Body)
+	kind, _ := cqlwire.ReadInt(r)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+
+	// Find the tokens column in the metadata.
+	var hasTokens bool
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		name, _ := cqlwire.ReadString(r)
+		typeID, _ := cqlwire.ReadShort(r)
+		if typeID == 0x0022 { // set
+			_, _ = cqlwire.ReadShort(r) // element type
+		}
+		if name == "tokens" {
+			hasTokens = true
+			require.Equal(t, uint16(0x0022), typeID,
+				"tokens column should be set type")
+		}
+	}
+	require.True(t, hasTokens,
+		"system.local result should include tokens column")
+}

@@ -66,6 +66,46 @@ type systemSchemaColumn struct {
 	cqlType cqltypes.CQLType
 }
 
+// writeColumnTypeOption writes the CQL type option for a column to buf.
+// For simple types this is a single [short] type ID. For collection
+// types (set, list) the element type is also written. All collection
+// columns in our system tables use varchar elements.
+func writeColumnTypeOption(buf *bytes.Buffer, col systemSchemaColumn) {
+	_ = cqlwire.WriteShort(buf, uint16(col.cqlType))
+	switch col.cqlType {
+	case cqltypes.CQLSet, cqltypes.CQLList:
+		_ = cqlwire.WriteShort(buf, uint16(cqltypes.CQLVarchar))
+	}
+}
+
+// systemColumnTypeName returns the CQL type name for a system table
+// column. For collection types it includes the element type, e.g.
+// "set<varchar>".
+func systemColumnTypeName(col systemSchemaColumn) string {
+	switch col.cqlType {
+	case cqltypes.CQLSet:
+		return "set<varchar>"
+	case cqltypes.CQLList:
+		return "list<varchar>"
+	default:
+		return col.cqlType.String()
+	}
+}
+
+// writeSetVarcharValue writes a CQL set<varchar> cell value to buf.
+// The encoding is: [int] total_bytes, [int] element_count, then for
+// each element: [int] length, [bytes] data.
+func writeSetVarcharValue(buf *bytes.Buffer, values []string) {
+	var inner bytes.Buffer
+	_ = cqlwire.WriteInt(&inner, int32(len(values)))
+	for _, v := range values {
+		_ = cqlwire.WriteInt(&inner, int32(len(v)))
+		inner.WriteString(v)
+	}
+	_ = cqlwire.WriteInt(buf, int32(inner.Len()))
+	buf.Write(inner.Bytes())
+}
+
 // systemSchemaTable defines the column schema for a system_schema table.
 // These stubs return zero rows but must advertise the correct column
 // metadata so that cqlsh (and other CQL drivers) can parse the response
@@ -161,7 +201,8 @@ var systemSchemaTables = map[string]systemSchemaTable{
 // systemLocalColumns defines the column schema for the system.local
 // virtual table. cqlsh and the python cassandra-driver query this table
 // on connection startup to discover cluster metadata. We return a
-// single synthetic row with hardcoded values.
+// single synthetic row with hardcoded values. The tokens column is
+// required by gocql for token-aware routing.
 var systemLocalColumns = []systemSchemaColumn{
 	{"key", cqltypes.CQLVarchar},
 	{"bootstrapped", cqltypes.CQLVarchar},
@@ -177,6 +218,7 @@ var systemLocalColumns = []systemSchemaColumn{
 	{"release_version", cqltypes.CQLVarchar},
 	{"rpc_address", cqltypes.CQLInet},
 	{"schema_version", cqltypes.CQLUuid},
+	{"tokens", cqltypes.CQLSet},
 }
 
 // systemPeersColumns defines the column schema for the system.peers
@@ -190,6 +232,27 @@ var systemPeersColumns = []systemSchemaColumn{
 	{"release_version", cqltypes.CQLVarchar},
 	{"rpc_address", cqltypes.CQLInet},
 	{"schema_version", cqltypes.CQLUuid},
+	{"tokens", cqltypes.CQLSet},
+}
+
+// systemPeersV2Columns defines the column schema for the
+// system.peers_v2 virtual table. peers_v2 extends the peers schema
+// with port fields for mixed-port clusters. gocql queries peers_v2
+// first and falls back to peers on error.
+var systemPeersV2Columns = []systemSchemaColumn{
+	{"peer", cqltypes.CQLInet},
+	{"peer_port", cqltypes.CQLInt},
+	{"data_center", cqltypes.CQLVarchar},
+	{"host_id", cqltypes.CQLUuid},
+	{"native_address", cqltypes.CQLInet},
+	{"native_port", cqltypes.CQLInt},
+	{"preferred_ip", cqltypes.CQLInet},
+	{"preferred_port", cqltypes.CQLInt},
+	{"rack", cqltypes.CQLVarchar},
+	{"release_version", cqltypes.CQLVarchar},
+	{"rpc_address", cqltypes.CQLInet},
+	{"schema_version", cqltypes.CQLUuid},
+	{"tokens", cqltypes.CQLSet},
 }
 
 // systemVirtualSchemaTables maps system_virtual_schema table names to
@@ -258,7 +321,7 @@ func handleSystemSelect(
 			if !ok {
 				return ExecuteResult{}, false
 			}
-			body, err := buildEmptyRowsBody(schema.columns)
+			body, err := buildEmptyRowsBody("system_schema", tbl, schema.columns)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -270,7 +333,7 @@ func handleSystemSelect(
 		if !ok {
 			return ExecuteResult{}, false
 		}
-		body, err := buildEmptyRowsBody(schema.columns)
+		body, err := buildEmptyRowsBody("system_virtual_schema", tbl, schema.columns)
 		if err != nil {
 			return errorResult(errCodeServerError, err.Error()), true
 		}
@@ -284,8 +347,14 @@ func handleSystemSelect(
 				return errorResult(errCodeServerError, err.Error()), true
 			}
 			return ExecuteResult{Body: body}, true
-		case "peers", "peers_v2":
-			body, err := buildEmptyRowsBody(systemPeersColumns)
+		case "peers":
+			body, err := buildEmptyRowsBody("system", "peers", systemPeersColumns)
+			if err != nil {
+				return errorResult(errCodeServerError, err.Error()), true
+			}
+			return ExecuteResult{Body: body}, true
+		case "peers_v2":
+			body, err := buildEmptyRowsBody("system", "peers_v2", systemPeersV2Columns)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -300,10 +369,10 @@ func handleSystemSelect(
 }
 
 // buildEmptyRowsBody builds a CQL RESULT Rows frame body with the
-// given column metadata and zero rows. This is the same wire format
-// as buildRowsBody but avoids the CRDB type mapping since we already
-// have CQL types.
-func buildEmptyRowsBody(cols []systemSchemaColumn) ([]byte, error) {
+// given column metadata and zero rows. The ksName and tableName
+// parameters are written into per-column metadata so drivers see
+// correct provenance.
+func buildEmptyRowsBody(ksName, tableName string, cols []systemSchemaColumn) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// RESULT kind: Rows.
@@ -317,10 +386,10 @@ func buildEmptyRowsBody(cols []systemSchemaColumn) ([]byte, error) {
 
 	// Per-column metadata: keyspace, table, name, type.
 	for _, col := range cols {
-		_ = cqlwire.WriteString(&buf, "system_schema") // keyspace
-		_ = cqlwire.WriteString(&buf, "")              // table
+		_ = cqlwire.WriteString(&buf, ksName)
+		_ = cqlwire.WriteString(&buf, tableName)
 		_ = cqlwire.WriteString(&buf, col.name)
-		_ = cqlwire.WriteShort(&buf, uint16(col.cqlType))
+		writeColumnTypeOption(&buf, col)
 	}
 
 	// Row count: 0.
@@ -390,7 +459,7 @@ func buildSystemSchemaKeyspacesBody(
 		_ = cqlwire.WriteString(&buf, "system_schema")
 		_ = cqlwire.WriteString(&buf, "keyspaces")
 		_ = cqlwire.WriteString(&buf, col.name)
-		_ = cqlwire.WriteShort(&buf, uint16(col.cqlType))
+		writeColumnTypeOption(&buf, col)
 	}
 
 	_ = cqlwire.WriteInt(&buf, int32(len(keyspaceNames)))
@@ -436,7 +505,7 @@ func buildSystemSchemaTablesBody(
 		_ = cqlwire.WriteString(&buf, "system_schema")
 		_ = cqlwire.WriteString(&buf, "tables")
 		_ = cqlwire.WriteString(&buf, col.name)
-		_ = cqlwire.WriteShort(&buf, uint16(col.cqlType))
+		writeColumnTypeOption(&buf, col)
 	}
 
 	type tableRow struct {
@@ -578,7 +647,7 @@ func buildSystemSchemaColumnsBody(
 		_ = cqlwire.WriteString(&buf, "system_schema")
 		_ = cqlwire.WriteString(&buf, "columns")
 		_ = cqlwire.WriteString(&buf, col.name)
-		_ = cqlwire.WriteShort(&buf, uint16(col.cqlType))
+		writeColumnTypeOption(&buf, col)
 	}
 
 	type colRow struct {
@@ -607,7 +676,7 @@ func buildSystemSchemaColumnsBody(
 			clusteringOrder: "none",
 			kind:            kind,
 			position:        pos,
-			colType:         c.cqlType.String(),
+			colType:         systemColumnTypeName(c),
 		})
 	}
 
@@ -625,7 +694,25 @@ func buildSystemSchemaColumnsBody(
 			clusteringOrder: "none",
 			kind:            kind,
 			position:        pos,
-			colType:         c.cqlType.String(),
+			colType:         systemColumnTypeName(c),
+		})
+	}
+
+	// system.peers_v2 columns.
+	for _, c := range systemPeersV2Columns {
+		kind := "regular"
+		pos := int32(0)
+		if c.name == "peer" {
+			kind = "partition_key"
+		}
+		columnRows = append(columnRows, colRow{
+			keyspaceName:    "system",
+			tableName:       "peers_v2",
+			columnName:      c.name,
+			clusteringOrder: "none",
+			kind:            kind,
+			position:        pos,
+			colType:         systemColumnTypeName(c),
 		})
 	}
 
@@ -771,7 +858,7 @@ func buildSystemLocalBody() ([]byte, error) {
 		_ = cqlwire.WriteString(&buf, "system")
 		_ = cqlwire.WriteString(&buf, "local")
 		_ = cqlwire.WriteString(&buf, col.name)
-		_ = cqlwire.WriteShort(&buf, uint16(col.cqlType))
+		writeColumnTypeOption(&buf, col)
 	}
 
 	// Row count: 1.
@@ -794,20 +881,21 @@ func buildSystemLocalBody() ([]byte, error) {
 		buf.Write(u[:])
 	}
 
-	writeText("local")                                       // key
-	writeText("COMPLETED")                                   // bootstrapped
-	writeInet(localhost)                                     // broadcast_address
-	writeText("cockroachdb")                                 // cluster_name
-	writeText("3.4.5")                                       // cql_version
-	writeText("datacenter1")                                 // data_center
-	writeUUID(fixedHostID)                                   // host_id
-	writeInet(localhost)                                     // listen_address
-	writeText("4")                                           // native_protocol_version
-	writeText("org.apache.cassandra.dht.Murmur3Partitioner") // partitioner
-	writeText("rack1")                                       // rack
-	writeText("4.0.0")                                       // release_version
-	writeInet(localhost)                                     // rpc_address
-	writeUUID(fixedSchemaVersion)                            // schema_version
+	writeText("local")                                           // key
+	writeText("COMPLETED")                                       // bootstrapped
+	writeInet(localhost)                                         // broadcast_address
+	writeText("cockroachdb")                                     // cluster_name
+	writeText("3.4.5")                                           // cql_version
+	writeText("datacenter1")                                     // data_center
+	writeUUID(fixedHostID)                                       // host_id
+	writeInet(localhost)                                         // listen_address
+	writeText("4")                                               // native_protocol_version
+	writeText("org.apache.cassandra.dht.Murmur3Partitioner")     // partitioner
+	writeText("rack1")                                           // rack
+	writeText("4.0.0")                                           // release_version
+	writeInet(localhost)                                         // rpc_address
+	writeUUID(fixedSchemaVersion)                                // schema_version
+	writeSetVarcharValue(&buf, []string{"-9223372036854775808"}) // tokens
 
 	return buf.Bytes(), nil
 }
