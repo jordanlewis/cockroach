@@ -241,6 +241,12 @@ func (tw *TokenWriter) writeU32(v uint32) error {
 	return err
 }
 
+func (tw *TokenWriter) writeU32BE(v uint32) error {
+	binary.BigEndian.PutUint32(tw.buf, v)
+	_, err := tw.w.Write(tw.buf[:4])
+	return err
+}
+
 func (tw *TokenWriter) writeI32(v int32) error {
 	binary.LittleEndian.PutUint32(tw.buf, uint32(v))
 	_, err := tw.w.Write(tw.buf[:4])
@@ -536,7 +542,11 @@ func (tw *TokenWriter) WriteLoginAck(la LoginAckToken) error {
 	if err := tw.writeU8(la.Interface); err != nil {
 		return err
 	}
-	if err := tw.writeU32(la.TDSVersion); err != nil {
+	// The TDS version in LOGINACK is written big-endian. Clients
+	// (FreeTDS, go-mssqldb) read the 4 bytes as a version identifier
+	// in byte order (major.minor.build-hi.build-lo). The LOGIN7
+	// packet stores the version as a LE DWORD, so we byte-swap here.
+	if err := tw.writeU32BE(la.TDSVersion); err != nil {
 		return err
 	}
 	if err := tw.writeBVarchar(la.ProgName); err != nil {
@@ -594,6 +604,11 @@ func (tr *TokenReader) readU16() (uint16, error) {
 func (tr *TokenReader) readU32() (uint32, error) {
 	_, err := io.ReadFull(tr.r, tr.buf[:4])
 	return binary.LittleEndian.Uint32(tr.buf[:4]), err
+}
+
+func (tr *TokenReader) readU32BE() (uint32, error) {
+	_, err := io.ReadFull(tr.r, tr.buf[:4])
+	return binary.BigEndian.Uint32(tr.buf[:4]), err
 }
 
 func (tr *TokenReader) readI32() (int32, error) {
@@ -881,7 +896,8 @@ func (tr *TokenReader) ReadLoginAck() (LoginAckToken, error) {
 	if err != nil {
 		return la, err
 	}
-	la.TDSVersion, err = tr.readU32()
+	// TDSVersion uses big-endian byte order (see WriteLoginAck).
+	la.TDSVersion, err = tr.readU32BE()
 	if err != nil {
 		return la, err
 	}
