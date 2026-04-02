@@ -1,0 +1,226 @@
+# DDL tests for CQL tables (CREATE, DROP, ALTER).
+#
+# CREATE TABLE is supported with column definitions and PRIMARY KEY.
+# DROP TABLE and ALTER TABLE are not yet implemented in the parser.
+
+exec
+CREATE KEYSPACE IF NOT EXISTS test_ddl_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+----
+
+exec
+USE test_ddl_ks
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE: basic forms
+# ---------------------------------------------------------------
+
+# Simple table with a single partition key.
+exec
+CREATE TABLE lt_ddl_basic (id int, name text, PRIMARY KEY (id))
+----
+
+# Insert and query to verify the table exists.
+exec
+INSERT INTO lt_ddl_basic (id, name) VALUES (1, 'alice')
+----
+
+query
+SELECT id, name FROM lt_ddl_basic WHERE id = 1
+----
+id name
+1 alice
+
+# CREATE TABLE IF NOT EXISTS on an existing table.
+exec
+CREATE TABLE IF NOT EXISTS lt_ddl_basic (id int, name text, PRIMARY KEY (id))
+----
+
+# Table with inline PRIMARY KEY syntax.
+exec
+CREATE TABLE lt_ddl_inline_pk (id uuid PRIMARY KEY, value text)
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE: composite and clustering keys
+# ---------------------------------------------------------------
+
+# Table with composite partition key.
+exec
+CREATE TABLE lt_ddl_composite_pk (region text, user_id int, data text, PRIMARY KEY ((region, user_id)))
+----
+
+# Insert and verify composite partition key table.
+exec
+INSERT INTO lt_ddl_composite_pk (region, user_id, data) VALUES ('us-east', 1, 'hello')
+----
+
+query
+SELECT region, user_id, data FROM lt_ddl_composite_pk WHERE region = 'us-east' AND user_id = 1
+----
+region user_id data
+us-east 1 hello
+
+# Table with clustering keys.
+exec
+CREATE TABLE lt_ddl_clustering (tenant text, ts timestamp, event text, PRIMARY KEY ((tenant), ts))
+----
+
+# Table with multiple clustering keys.
+exec
+CREATE TABLE lt_ddl_multi_ck (app text, env text, ts bigint, msg text, PRIMARY KEY ((app), env, ts))
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE: various data types
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE lt_ddl_types (pk int, col_text text, col_varchar varchar, col_ascii ascii, col_int int, col_bigint bigint, col_float float, col_double double, col_boolean boolean, col_timestamp timestamp, col_uuid uuid, col_blob blob, col_inet inet, col_decimal decimal, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO lt_ddl_types (pk, col_text, col_int, col_boolean) VALUES (1, 'hello', 42, true)
+----
+
+query
+SELECT pk, col_text, col_int, col_boolean FROM lt_ddl_types WHERE pk = 1
+----
+pk col_text col_int col_boolean
+1 hello 42 true
+
+# ---------------------------------------------------------------
+# CREATE TABLE: qualified name (keyspace.table)
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE test_ddl_ks.lt_ddl_qualified (id int, val text, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO test_ddl_ks.lt_ddl_qualified (id, val) VALUES (1, 'qualified')
+----
+
+query
+SELECT id, val FROM test_ddl_ks.lt_ddl_qualified WHERE id = 1
+----
+id val
+1 qualified
+
+# ---------------------------------------------------------------
+# Error: duplicate table without IF NOT EXISTS
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_ddl_basic (id int, name text, PRIMARY KEY (id))
+----
+cql-ddl: relation "test_ddl_ks.public.lt_ddl_basic" already exists
+
+# ---------------------------------------------------------------
+# Error: unsupported column types
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_ddl_bad_type (id int, data list, PRIMARY KEY (id))
+----
+at position 43: unsupported CQL type "list"
+
+error
+CREATE TABLE lt_ddl_bad_type2 (id int, data map, PRIMARY KEY (id))
+----
+at position 44: unsupported CQL type "map"
+
+error
+CREATE TABLE lt_ddl_bad_type3 (id int, data set, PRIMARY KEY (id))
+----
+at position 44: unsupported CQL type "set"
+
+error
+CREATE TABLE lt_ddl_bad_type4 (id int, data frozen, PRIMARY KEY (id))
+----
+at position 44: unsupported CQL type "frozen"
+
+# ---------------------------------------------------------------
+# DROP TABLE (unsupported)
+# ---------------------------------------------------------------
+
+error
+DROP TABLE lt_ddl_basic
+----
+at position 0: unsupported statement "DROP"
+
+error
+DROP TABLE IF EXISTS lt_ddl_basic
+----
+at position 0: unsupported statement "DROP"
+
+# ---------------------------------------------------------------
+# ALTER TABLE (unsupported)
+# ---------------------------------------------------------------
+
+# Add column.
+error
+ALTER TABLE lt_ddl_basic ADD email text
+----
+at position 0: unsupported statement "ALTER"
+
+# Drop column.
+error
+ALTER TABLE lt_ddl_basic DROP name
+----
+at position 0: unsupported statement "ALTER"
+
+# Rename column.
+error
+ALTER TABLE lt_ddl_basic RENAME name TO full_name
+----
+at position 0: unsupported statement "ALTER"
+
+# Alter column type.
+error
+ALTER TABLE lt_ddl_basic ALTER name TYPE varchar
+----
+at position 0: unsupported statement "ALTER"
+
+# ---------------------------------------------------------------
+# Table options (unsupported — WITH clause not parsed)
+# ---------------------------------------------------------------
+
+# Table with compaction option.
+error
+CREATE TABLE lt_ddl_compact (id int PRIMARY KEY, val text) WITH compaction = {'class': 'LeveledCompactionStrategy'}
+----
+at position 59: unexpected token "WITH" after statement
+
+# Table with gc_grace_seconds.
+error
+CREATE TABLE lt_ddl_gc (id int PRIMARY KEY, val text) WITH gc_grace_seconds = 86400
+----
+at position 54: unexpected token "WITH" after statement
+
+# Table with comment.
+error
+CREATE TABLE lt_ddl_comment (id int PRIMARY KEY, val text) WITH comment = 'A test table'
+----
+at position 59: unexpected token "WITH" after statement
+
+# Table with default_time_to_live.
+error
+CREATE TABLE lt_ddl_ttl (id int PRIMARY KEY, val text) WITH default_time_to_live = 3600
+----
+at position 55: unexpected token "WITH" after statement
+
+# Table with multiple options combined with AND.
+error
+CREATE TABLE lt_ddl_multi_opts (id int PRIMARY KEY, val text) WITH gc_grace_seconds = 86400 AND compaction = {'class': 'SizeTieredCompactionStrategy'}
+----
+at position 62: unexpected token "WITH" after statement
+
+# ---------------------------------------------------------------
+# CREATE INDEX (unsupported)
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX lt_ddl_basic_name_idx ON lt_ddl_basic (name)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
