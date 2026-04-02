@@ -1,0 +1,104 @@
+# String types: text, varchar, ascii.
+#
+# All three map to CRDB STRING. text and varchar are identical in CQL;
+# ascii is semantically restricted to US-ASCII but stored the same way.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_string (id int, t text, v varchar, a ascii, PRIMARY KEY (id))
+----
+
+# Basic round-trip: text, varchar, ascii.
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (1, 'hello', 'world', 'test')
+----
+
+query
+SELECT id, t, v, a FROM lt_string WHERE id = 1
+----
+id t v a
+1 hello world test
+
+# Empty string insert succeeds. Verify the row exists by selecting
+# non-empty columns (empty strings produce trailing spaces in
+# space-separated output, which can't be captured in test files).
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (2, '', 'notempty', 'ok')
+----
+
+query
+SELECT id, v, a FROM lt_string WHERE id = 2
+----
+id v a
+2 notempty ok
+
+# String with spaces and mixed case.
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (3, 'Hello World', 'foo bar baz', 'UPPER lower')
+----
+
+query
+SELECT id, t, v, a FROM lt_string WHERE id = 3
+----
+id t v a
+3 Hello World foo bar baz UPPER lower
+
+# Escaped single quote (CQL escapes '' inside strings).
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (4, 'it''s', 'she''s', 'they''re')
+----
+
+query
+SELECT id, t, v, a FROM lt_string WHERE id = 4
+----
+id t v a
+4 it's she's they're
+
+# NULL values for string types.
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (5, NULL, NULL, NULL)
+----
+
+query
+SELECT id, t, v, a FROM lt_string WHERE id = 5
+----
+id t v a
+5 NULL NULL NULL
+
+# Long string value.
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (6, 'abcdefghijklmnopqrstuvwxyz0123456789', 'repeated', 'ok')
+----
+
+query
+SELECT id, t FROM lt_string WHERE id = 6
+----
+id t
+6 abcdefghijklmnopqrstuvwxyz0123456789
+
+# Mixed NULL and non-NULL in same row.
+exec
+INSERT INTO lt_string (id, t, v, a) VALUES (7, 'present', NULL, 'also here')
+----
+
+query
+SELECT id, t, v, a FROM lt_string WHERE id = 7
+----
+id t v a
+7 present NULL also here
+
+# Verify all rows with rowsort (order is non-deterministic).
+# Excludes id=2 (empty text produces trailing whitespace in output).
+query rowsort
+SELECT id, t FROM lt_string WHERE id != 2
+----
+id t
+1 hello
+3 Hello World
+4 it's
+5 NULL
+6 abcdefghijklmnopqrstuvwxyz0123456789
+7 present

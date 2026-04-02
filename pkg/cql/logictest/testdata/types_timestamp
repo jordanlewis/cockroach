@@ -1,0 +1,80 @@
+# Timestamp type.
+#
+# CQL timestamp maps to CRDB TIMESTAMPTZ. Timestamps are inserted as
+# string literals that CRDB coerces to TIMESTAMPTZ. The wire protocol
+# encodes timestamps as milliseconds since Unix epoch; the test runner
+# formats them as RFC3339 (e.g. 2024-01-15T10:30:00Z).
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_ts (id int, ts timestamp, PRIMARY KEY (id))
+----
+
+# Standard timestamp.
+exec
+INSERT INTO lt_ts (id, ts) VALUES (1, '2024-01-15 10:30:00+0000')
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 1
+----
+id ts
+1 2024-01-15T10:30:00Z
+
+# Unix epoch (zero timestamp).
+exec
+INSERT INTO lt_ts (id, ts) VALUES (2, '1970-01-01 00:00:00+0000')
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 2
+----
+id ts
+2 1970-01-01T00:00:00Z
+
+# Date-only string (CRDB interprets as midnight UTC).
+exec
+INSERT INTO lt_ts (id, ts) VALUES (3, '2024-06-15')
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 3
+----
+id ts
+3 2024-06-15T00:00:00Z
+
+# Timestamp with fractional seconds (truncated to millis).
+exec
+INSERT INTO lt_ts (id, ts) VALUES (4, '2024-12-31 23:59:59.999+0000')
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 4
+----
+id ts
+4 2024-12-31T23:59:59Z
+
+# NULL timestamp.
+exec
+INSERT INTO lt_ts (id, ts) VALUES (5, NULL)
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 5
+----
+id ts
+5 NULL
+
+# Older timestamp (pre-2000).
+exec
+INSERT INTO lt_ts (id, ts) VALUES (6, '1999-12-31 23:59:59+0000')
+----
+
+query
+SELECT id, ts FROM lt_ts WHERE id = 6
+----
+id ts
+6 1999-12-31T23:59:59Z

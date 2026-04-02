@@ -1,0 +1,144 @@
+# Integer types: int (INT4), bigint (INT8), varint (INT8).
+#
+# CQL int maps to CRDB INT4 (32-bit), bigint to INT8 (64-bit).
+# varint maps to INT8 in CRDB and round-trips as bigint since
+# CQLTypeFromCRDB returns CQLBigint for 64-bit integers.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_int (id int, i int, b bigint, PRIMARY KEY (id))
+----
+
+# Basic integer values.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (1, 42, 100)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 1
+----
+id i b
+1 42 100
+
+# Zero values.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (2, 0, 0)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 2
+----
+id i b
+2 0 0
+
+# Negative values.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (3, -1, -999)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 3
+----
+id i b
+3 -1 -999
+
+# INT4 max and min values.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (4, 2147483647, 2147483647)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 4
+----
+id i b
+4 2147483647 2147483647
+
+exec
+INSERT INTO lt_int (id, i, b) VALUES (5, -2147483648, -2147483648)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 5
+----
+id i b
+5 -2147483648 -2147483648
+
+# Large bigint values beyond INT4 range.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (6, 1, 9999999999)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 6
+----
+id i b
+6 1 9999999999
+
+exec
+INSERT INTO lt_int (id, i, b) VALUES (7, 1, -9999999999)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 7
+----
+id i b
+7 1 -9999999999
+
+# NULL integer values.
+exec
+INSERT INTO lt_int (id, i, b) VALUES (8, NULL, NULL)
+----
+
+query
+SELECT id, i, b FROM lt_int WHERE id = 8
+----
+id i b
+8 NULL NULL
+
+# Varint type: maps to INT8 in CRDB, round-trips as bigint.
+exec
+CREATE TABLE IF NOT EXISTS lt_varint (id int, v varint, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_varint (id, v) VALUES (1, 42)
+----
+
+query
+SELECT id, v FROM lt_varint WHERE id = 1
+----
+id v
+1 42
+
+exec
+INSERT INTO lt_varint (id, v) VALUES (2, -100)
+----
+
+query
+SELECT id, v FROM lt_varint WHERE id = 2
+----
+id v
+2 -100
+
+exec
+INSERT INTO lt_varint (id, v) VALUES (3, 9999999999)
+----
+
+query
+SELECT id, v FROM lt_varint WHERE id = 3
+----
+id v
+3 9999999999
+
+exec
+INSERT INTO lt_varint (id, v) VALUES (4, NULL)
+----
+
+query
+SELECT id, v FROM lt_varint WHERE id = 4
+----
+id v
+4 NULL

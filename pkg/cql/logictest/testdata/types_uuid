@@ -1,0 +1,68 @@
+# UUID and timeuuid types.
+#
+# Both CQL uuid and timeuuid map to CRDB UUID. The CQL wire protocol
+# uses 16 raw bytes; the test runner formats them as lowercase
+# 8-4-4-4-12 hex.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_uuid (id int, u uuid, tu timeuuid, PRIMARY KEY (id))
+----
+
+# Standard UUID (version 4).
+exec
+INSERT INTO lt_uuid (id, u, tu) VALUES (1, 550e8400-e29b-41d4-a716-446655440000, 550e8400-e29b-11d4-a716-446655440000)
+----
+
+query
+SELECT id, u, tu FROM lt_uuid WHERE id = 1
+----
+id u tu
+1 550e8400-e29b-41d4-a716-446655440000 550e8400-e29b-11d4-a716-446655440000
+
+# Nil UUID (all zeros).
+exec
+INSERT INTO lt_uuid (id, u, tu) VALUES (2, 00000000-0000-0000-0000-000000000000, 00000000-0000-0000-0000-000000000000)
+----
+
+query
+SELECT id, u, tu FROM lt_uuid WHERE id = 2
+----
+id u tu
+2 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000000
+
+# Max UUID (all f's).
+exec
+INSERT INTO lt_uuid (id, u, tu) VALUES (3, ffffffff-ffff-ffff-ffff-ffffffffffff, ffffffff-ffff-ffff-ffff-ffffffffffff)
+----
+
+query
+SELECT id, u, tu FROM lt_uuid WHERE id = 3
+----
+id u tu
+3 ffffffff-ffff-ffff-ffff-ffffffffffff ffffffff-ffff-ffff-ffff-ffffffffffff
+
+# NULL UUID values.
+exec
+INSERT INTO lt_uuid (id, u, tu) VALUES (4, NULL, NULL)
+----
+
+query
+SELECT id, u, tu FROM lt_uuid WHERE id = 4
+----
+id u tu
+4 NULL NULL
+
+# Mixed NULL and non-NULL.
+exec
+INSERT INTO lt_uuid (id, u, tu) VALUES (5, a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11, NULL)
+----
+
+query
+SELECT id, u, tu FROM lt_uuid WHERE id = 5
+----
+id u tu
+5 a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 NULL
