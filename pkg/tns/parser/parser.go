@@ -83,7 +83,7 @@ func (p *parser) match(types ...TokenType) bool {
 }
 
 func (p *parser) errorf(format string, args ...interface{}) error {
-	return errors.Newf("line %d, col %d: "+format, append([]interface{}{p.cur.Line, p.cur.Col}, args...)...)
+	return errors.Newf("line %d, col %d: %s", p.cur.Line, p.cur.Col, fmt.Sprintf(format, args...))
 }
 
 // -----------------------------------------------------------------------
