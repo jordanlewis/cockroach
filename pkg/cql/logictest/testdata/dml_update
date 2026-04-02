@@ -1,0 +1,180 @@
+# DML tests for CQL UPDATE statements.
+#
+# CQL UPDATE modifies existing rows in place. Unlike SQL UPDATE, CQL
+# UPDATE is also an upsert in some interpretations, but CockroachDB's
+# CQL layer translates it to a standard SQL UPDATE which only modifies
+# existing rows. UPDATE IF EXISTS is accepted (a no-op guard since SQL
+# UPDATE WHERE on a missing row is already a no-op). UPDATE with IF
+# conditions (lightweight transactions) is not yet supported.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS dml_upd (pk int, ck int, name text, val int, active boolean, PRIMARY KEY (pk, ck))
+----
+
+# Seed data.
+exec
+INSERT INTO dml_upd (pk, ck, name, val, active) VALUES (1, 10, 'alice', 100, true)
+----
+
+exec
+INSERT INTO dml_upd (pk, ck, name, val, active) VALUES (1, 20, 'bob', 200, true)
+----
+
+exec
+INSERT INTO dml_upd (pk, ck, name, val, active) VALUES (2, 10, 'carol', 300, false)
+----
+
+# ---------------------------------------------------------------
+# UPDATE single column.
+# ---------------------------------------------------------------
+
+exec
+UPDATE dml_upd SET name = 'ALICE' WHERE pk = 1 AND ck = 10
+----
+
+query
+SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck name val active
+1 10 ALICE 100 true
+
+# ---------------------------------------------------------------
+# UPDATE multiple columns.
+# ---------------------------------------------------------------
+
+exec
+UPDATE dml_upd SET name = 'BOB', val = 250, active = false WHERE pk = 1 AND ck = 20
+----
+
+query
+SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 1 AND ck = 20
+----
+pk ck name val active
+1 20 BOB 250 false
+
+# ---------------------------------------------------------------
+# UPDATE setting a column to NULL.
+# ---------------------------------------------------------------
+
+exec
+UPDATE dml_upd SET name = null WHERE pk = 2 AND ck = 10
+----
+
+query
+SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 2 AND ck = 10
+----
+pk ck name val active
+2 10 NULL 300 false
+
+# ---------------------------------------------------------------
+# UPDATE non-existent row → no-op (SQL UPDATE WHERE is a no-op).
+# ---------------------------------------------------------------
+
+exec
+UPDATE dml_upd SET name = 'ghost' WHERE pk = 999 AND ck = 1
+----
+
+# Verify no row was created.
+query
+SELECT pk, ck, name FROM dml_upd WHERE pk = 999
+----
+pk ck name
+
+# ---------------------------------------------------------------
+# UPDATE IF EXISTS: row exists → update succeeds.
+#
+# IF EXISTS is accepted by the parser. SQL UPDATE WHERE already
+# handles non-existence as a no-op, so this is semantically
+# equivalent to a plain UPDATE.
+# ---------------------------------------------------------------
+
+exec
+UPDATE dml_upd SET val = 999 WHERE pk = 1 AND ck = 10 IF EXISTS
+----
+
+query
+SELECT pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 ALICE 999
+
+# UPDATE IF EXISTS on a non-existent row → no-op.
+exec
+UPDATE dml_upd SET val = 1 WHERE pk = 888 AND ck = 1 IF EXISTS
+----
+
+query
+SELECT pk, ck, name FROM dml_upd WHERE pk = 888
+----
+pk ck name
+
+# ---------------------------------------------------------------
+# UPDATE with IF conditions (lightweight transactions) — unsupported.
+#
+# CQL UPDATE with IF <col> = <val> performs a conditional update.
+# This is not yet supported by the translator.
+# ---------------------------------------------------------------
+
+error
+UPDATE dml_upd SET name = 'new' WHERE pk = 1 AND ck = 10 IF name = 'ALICE'
+----
+UPDATE with IF conditions is not yet supported
+
+error
+UPDATE dml_upd SET val = 0 WHERE pk = 1 AND ck = 10 IF val != 100
+----
+UPDATE with IF conditions is not yet supported
+
+error
+UPDATE dml_upd SET active = true WHERE pk = 1 AND ck = 10 IF active = false AND val = 999
+----
+UPDATE with IF conditions is not yet supported
+
+# ---------------------------------------------------------------
+# UPDATE counter columns — unsupported.
+#
+# Counter columns in Cassandra support atomic increment/decrement
+# via UPDATE SET c = c + N. The lexer does not recognize arithmetic
+# operators in this context.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS dml_upd_counter (id int PRIMARY KEY, c counter)
+----
+
+# Counter increment.
+error
+UPDATE dml_upd_counter SET c = c + 1 WHERE id = 1
+----
+unexpected character '+' at position 33
+
+# Counter decrement.
+error
+UPDATE dml_upd_counter SET c = c - 1 WHERE id = 1
+----
+unexpected character '-' at position 33
+
+# ---------------------------------------------------------------
+# UPDATE with USING TTL (unsupported).
+#
+# CQL allows USING TTL before SET to apply a TTL to the update.
+# The parser expects SET immediately after the table name.
+# ---------------------------------------------------------------
+
+error
+UPDATE dml_upd USING TTL 7200 SET val = 1 WHERE pk = 1 AND ck = 10
+----
+at position 15: expected SET, got "USING"
+
+# ---------------------------------------------------------------
+# UPDATE with USING TIMESTAMP (unsupported).
+# ---------------------------------------------------------------
+
+error
+UPDATE dml_upd USING TIMESTAMP 1234567890 SET val = 1 WHERE pk = 1 AND ck = 10
+----
+at position 15: expected SET, got "USING"
