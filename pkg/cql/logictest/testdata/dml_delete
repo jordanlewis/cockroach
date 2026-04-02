@@ -122,17 +122,12 @@ DELETE FROM dml_del WHERE pk = 1 AND ck = 30 IF EXISTS
 ----
 
 # ---------------------------------------------------------------
-# DELETE with IN clause — unsupported in translator.
-#
-# The parser accepts IN in the WHERE clause, but the DELETE
-# translator does not handle TupleLiteral values (only the
-# SELECT translator does). This produces a translation error.
+# DELETE with IN clause.
 # ---------------------------------------------------------------
 
-error
+exec
 DELETE FROM dml_del WHERE pk IN (10, 11)
 ----
-translating WHERE value: unsupported expression type: *parser.TupleLiteral
 
 # ---------------------------------------------------------------
 # DELETE specific columns (tombstones) — unsupported.

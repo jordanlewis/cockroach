@@ -5,11 +5,10 @@
 # fromJson() convert between CQL values and JSON text. CAST(col AS
 # type) performs explicit type conversions.
 #
-# None of these are supported by the parser. INSERT JSON fails because
-# the parser expects INTO after INSERT. SELECT JSON fails because JSON
-# is parsed as a column name and then the next token is not FROM.
-# toJson()/fromJson() fail because function call syntax (parentheses)
-# is not supported. CAST fails for the same reason.
+# INSERT JSON and SELECT JSON parse successfully but are not yet
+# supported at translation time. toJson() maps to CRDB's to_jsonb()
+# but JSONB results may not map to a CQL type. fromJson() is not
+# supported. CAST maps directly to SQL CAST.
 
 exec
 USE defaultdb
@@ -28,133 +27,123 @@ INSERT INTO json_t (id, name, age, active) VALUES (2, 'bob', 25, false)
 ----
 
 # ---------------------------------------------------------------
-# INSERT JSON (unsupported)
+# INSERT JSON
 #
-# INSERT JSON replaces the INSERT INTO ... VALUES syntax with a
-# JSON string. After consuming INSERT, the parser expects INTO.
+# INSERT JSON (bare, without INTO) is not valid CQL syntax.
+# INSERT INTO <table> JSON '...' parses but is not yet supported.
 # ---------------------------------------------------------------
 
-# INSERT JSON with a JSON string body.
+# INSERT JSON without INTO — invalid CQL syntax.
 error
 INSERT JSON '{"id": 10, "name": "charlie", "age": 35, "active": true}'
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT JSON with DEFAULT UNSET (handles missing fields).
+# INSERT JSON with DEFAULT UNSET — invalid CQL syntax.
 error
 INSERT JSON '{"id": 11, "name": "dave"}' DEFAULT UNSET
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT JSON with DEFAULT NULL (nulls for missing fields).
+# INSERT JSON with DEFAULT NULL — invalid CQL syntax.
 error
 INSERT JSON '{"id": 12}' DEFAULT NULL
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT JSON into a specific table.
+# INSERT INTO <table> JSON — parses but not yet supported.
 error
 INSERT INTO json_t JSON '{"id": 13, "name": "eve"}'
 ----
-at position 19: expected '(', got "JSON"
+INSERT JSON is not yet supported
 
 # ---------------------------------------------------------------
-# SELECT JSON (unsupported)
+# SELECT JSON
 #
-# SELECT JSON returns each row as a single JSON-encoded column.
-# The parser reads JSON as a column name, then the next token
-# fails the FROM expectation.
+# SELECT JSON parses but is not yet supported at translation time.
 # ---------------------------------------------------------------
 
-# SELECT JSON * — parser reads "JSON" as a column, then finds "*".
+# SELECT JSON * — not yet supported.
 error
 SELECT JSON * FROM json_t
 ----
-at position 12: expected FROM, got "*"
+SELECT JSON is not yet supported
 
 # SELECT JSON with specific columns.
 error
 SELECT JSON id, name FROM json_t
 ----
-at position 12: expected FROM, got "id"
+SELECT JSON is not yet supported
 
 # SELECT JSON with WHERE clause.
 error
 SELECT JSON * FROM json_t WHERE id = 1
 ----
-at position 12: expected FROM, got "*"
+SELECT JSON is not yet supported
 
 # ---------------------------------------------------------------
-# toJson() function (unsupported)
+# toJson() function
 #
-# toJson() converts a CQL value to its JSON text representation.
-# The parser reads "toJson" as a column identifier and fails on
-# the opening parenthesis.
+# toJson() maps to CRDB's to_jsonb(). The result is JSONB which
+# may not map to a CQL wire type.
 # ---------------------------------------------------------------
 
-# toJson on a column.
+# toJson on a column — translates to to_jsonb() but CRDB returns JSONB,
+# which is not mapped to a CQL wire type.
 error
 SELECT toJson(name) FROM json_t WHERE id = 1
 ----
-at position 13: expected FROM, got "("
+mapping column "to_jsonb": no CQL type mapping for CRDB type JSONB (family 18)
 
-# toJson on the entire row via *.
+# toJson on the entire row via * — not valid SQL.
 error
 SELECT toJson(*) FROM json_t
 ----
-at position 13: expected FROM, got "("
+translating selector: unsupported CQL function "toJson"
 
 # ---------------------------------------------------------------
-# fromJson() function (unsupported)
+# fromJson() function
 #
-# fromJson() converts a JSON text value to a CQL type. Typically
-# used in INSERT or UPDATE to parse JSON strings into CQL values.
+# fromJson() is not yet supported.
 # ---------------------------------------------------------------
 
 # fromJson in INSERT VALUES.
 error
 INSERT INTO json_t (id, name) VALUES (20, fromJson('"frank"'))
 ----
-at position 42: expected expression, got identifier "fromJson"
+translating INSERT value: unsupported CQL function "fromJson"
 
 # fromJson in SELECT.
 error
 SELECT fromJson(name) FROM json_t WHERE id = 1
 ----
-at position 15: expected FROM, got "("
+translating selector: unsupported CQL function "fromJson"
 
 # ---------------------------------------------------------------
-# CAST operations (unsupported)
+# CAST operations
 #
-# CAST(column AS type) performs explicit type conversion. The
-# parser reads "CAST" as a column name and fails on the opening
-# parenthesis.
+# CAST(column AS type) maps to SQL CAST with CQL-to-CRDB type mapping.
 # ---------------------------------------------------------------
 
 # CAST in SELECT list.
-error
+exec
 SELECT CAST(id AS bigint) FROM json_t
 ----
-at position 11: expected FROM, got "("
 
 # CAST with text type.
-error
+exec
 SELECT CAST(age AS text) FROM json_t
 ----
-at position 11: expected FROM, got "("
 
 # Multiple CASTs.
-error
+exec
 SELECT CAST(id AS bigint), CAST(age AS text) FROM json_t
 ----
-at position 11: expected FROM, got "("
 
-# CAST in WHERE clause — parser reads CAST as column name,
-# then expects comparison operator but gets parenthesis.
-error
+# CAST in WHERE clause.
+exec
 SELECT * FROM json_t WHERE CAST(id AS bigint) > 0
 ----
-at position 31: expected comparison operator, got "("
 
 # ---------------------------------------------------------------
 # Verify normal operations still work.

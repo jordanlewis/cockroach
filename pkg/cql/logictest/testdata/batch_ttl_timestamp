@@ -28,18 +28,17 @@ exec
 INSERT INTO ttl_test (id, val) VALUES (3, 'both') USING TTL 3600 AND TIMESTAMP 1234567890
 ----
 
-# TTL() function in SELECT is not supported (function call syntax).
-# The parser reads TTL as a column name and fails on the parenthesis.
+# TTL() function in SELECT — Cassandra-specific, not supported.
 error
 SELECT TTL(val) FROM ttl_test
 ----
-at position 10: expected FROM, got "("
+translating selector: unsupported CQL function "TTL"
 
-# writetime() function in SELECT.
+# writetime() function in SELECT — Cassandra-specific, not supported.
 error
 SELECT writetime(val) FROM ttl_test
 ----
-at position 16: expected FROM, got "("
+translating selector: unsupported CQL function "writetime"
 
 # UPDATE with USING TTL to change TTL on existing rows. Parsed but ignored.
 exec

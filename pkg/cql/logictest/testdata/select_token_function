@@ -1,9 +1,8 @@
 # token() function for partition key range scans.
 #
 # CQL token() returns the hash token of a partition key, enabling
-# range scans across partitions by token value. The parser does not
-# support function calls in WHERE clauses: it reads the function name
-# as a column identifier and fails on the opening parenthesis.
+# range scans across partitions by token value. token() is a
+# Cassandra-specific partitioner concept and is not supported.
 
 exec
 USE defaultdb
@@ -13,21 +12,20 @@ exec
 CREATE TABLE IF NOT EXISTS sel_tok (pk int, val text, PRIMARY KEY (pk))
 ----
 
-# token() on partition key in WHERE clause.
+# token() on partition key in WHERE clause — not supported.
 error
 SELECT * FROM sel_tok WHERE token(pk) > 0
 ----
-at position 33: expected comparison operator, got "("
+translating WHERE expression: unsupported CQL function "token"
 
-# token() with range between two token values.
+# token() with range between two token values — not supported.
 error
 SELECT * FROM sel_tok WHERE token(pk) > -100 AND token(pk) < 100
 ----
-at position 33: expected comparison operator, got "("
+translating WHERE expression: unsupported CQL function "token"
 
-# token() in SELECT list (function call syntax is not supported
-# in selectors either).
+# token() in SELECT list — not supported.
 error
 SELECT token(pk), val FROM sel_tok
 ----
-at position 12: expected FROM, got "("
+translating selector: unsupported CQL function "token"

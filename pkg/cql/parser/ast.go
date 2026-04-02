@@ -100,7 +100,8 @@ type UsingClause struct {
 }
 
 // InsertStatement represents
-// INSERT INTO <table> (<cols>) VALUES (<vals>) [IF NOT EXISTS] [USING ...].
+// INSERT INTO <table> (<cols>) VALUES (<vals>) [IF NOT EXISTS] [USING ...]
+// or INSERT INTO <table> JSON '<json>' [DEFAULT UNSET|NULL] [IF NOT EXISTS].
 type InsertStatement struct {
 	Table       string
 	Keyspace    string // empty when unqualified
@@ -108,6 +109,11 @@ type InsertStatement struct {
 	Values      []Expr
 	IfNotExists bool
 	Using       *UsingClause // USING TTL/TIMESTAMP, nil if absent
+	// JSON is true for INSERT INTO <table> JSON '<json>' syntax.
+	JSON         bool
+	JSONValue    string // the JSON string for INSERT JSON
+	DefaultUnset bool   // DEFAULT UNSET
+	DefaultNull  bool   // DEFAULT NULL
 }
 
 func (*InsertStatement) statementNode() {}
@@ -149,24 +155,33 @@ type DeleteStatement struct {
 func (*DeleteStatement) statementNode() {}
 
 // SelectStatement represents
-// SELECT [DISTINCT] <cols> FROM <table> [WHERE <conds>]
-// [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>] [ALLOW FILTERING].
+// SELECT [JSON] [DISTINCT] <cols> FROM <table> [WHERE <conds>]
+// [GROUP BY <cols>] [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>]
+// [ALLOW FILTERING].
 type SelectStatement struct {
 	Table    string
 	Keyspace string // empty when unqualified
 	Columns  []Selector
 	Distinct bool
+	JSON     bool // SELECT JSON
 	Where    []WhereClause
+	GroupBy  []string
 	OrderBy  []OrderByClause
 	Limit    Expr // nil if no LIMIT
 }
 
 func (*SelectStatement) statementNode() {}
 
-// Selector is a single item in a SELECT list.
+// Selector is a single item in a SELECT list. For simple column
+// references, Column is set. For function calls or CAST expressions,
+// Expr is non-nil and takes precedence over Column during translation.
 type Selector struct {
 	// Column is the column name. "*" represents all columns.
 	Column string
+	// Expr is non-nil when the selector is a function call or CAST.
+	Expr Expr
+	// Alias is the optional AS alias.
+	Alias string
 }
 
 // OrderByClause specifies a single column ordering in ORDER BY.
@@ -176,11 +191,13 @@ type OrderByClause struct {
 }
 
 // WhereClause is a single <col> <op> <val> condition. For the IN operator,
-// Value is a *TupleLiteral containing the list of values.
+// Value is a *TupleLiteral containing the list of values. When the left-hand
+// side is a function call (e.g. token(pk) > 0), ColumnExpr is non-nil.
 type WhereClause struct {
-	Column   string
-	Operator string // "=", "<", ">", "<=", ">=", "!=", "IN"
-	Value    Expr
+	Column     string
+	ColumnExpr Expr   // non-nil when left side is a function call
+	Operator   string // "=", "<", ">", "<=", ">=", "!=", "IN"
+	Value      Expr
 }
 
 // Expr is the interface for value expressions in CQL.
@@ -258,6 +275,37 @@ type CounterExpr struct {
 
 func (*CounterExpr) exprNode() {}
 
+// FunctionCall represents a function invocation: name(args...).
+// For aggregate functions like COUNT(DISTINCT col), Distinct is true.
+type FunctionCall struct {
+	Name     string
+	Args     []Expr
+	Distinct bool // COUNT(DISTINCT col)
+}
+
+func (*FunctionCall) exprNode() {}
+
+// StarExpr represents * used as a function argument (e.g. COUNT(*)).
+type StarExpr struct{}
+
+func (*StarExpr) exprNode() {}
+
+// ColumnRef is a column name used as an expression, typically as a function
+// argument (e.g. the pk in token(pk)).
+type ColumnRef struct {
+	Name string
+}
+
+func (*ColumnRef) exprNode() {}
+
+// CastExpr represents CAST(expr AS type).
+type CastExpr struct {
+	Expr Expr
+	Type DataType
+}
+
+func (*CastExpr) exprNode() {}
+
 // AlterTableStatement represents ALTER TABLE [IF EXISTS] [<ks>.]<table> <op>.
 type AlterTableStatement struct {
 	Table    string
@@ -312,12 +360,6 @@ type AlterTableWith struct {
 }
 
 func (*AlterTableWith) alterTableOp() {}
-
-// TableProperty is a single key = value table property.
-type TableProperty struct {
-	Key   string
-	Value string // raw string representation of the value
-}
 
 // DropStatement represents DROP TABLE/KEYSPACE/INDEX [IF EXISTS] <name>.
 type DropStatement struct {

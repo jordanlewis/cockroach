@@ -1,9 +1,8 @@
 # Aggregate functions: COUNT, SUM, AVG, MIN, MAX.
 #
-# CQL supports aggregate functions in SELECT lists. The parser does
-# not support function call syntax: it reads the function name as a
-# column identifier and then fails when it encounters the opening
-# parenthesis instead of FROM.
+# CQL aggregate functions are parsed and translated to their SQL
+# equivalents. COUNT, MIN, MAX map directly. SUM and AVG return
+# DECIMAL in CRDB, which is not yet mapped to a CQL wire type.
 
 exec
 USE defaultdb
@@ -30,75 +29,65 @@ INSERT INTO agg_t (pk, ck, val, name) VALUES (2, 2, NULL, 'delta')
 ----
 
 # COUNT(*) — count all rows.
-# "COUNT" is parsed as a column name; "(" at position 12 is unexpected.
-error
+exec
 SELECT COUNT(*) FROM agg_t
 ----
-at position 12: expected FROM, got "("
 
 # COUNT(column) — count non-null values.
-error
+exec
 SELECT COUNT(val) FROM agg_t
 ----
-at position 12: expected FROM, got "("
 
-# SUM(column).
+# SUM(column) — CRDB returns DECIMAL, no CQL type mapping yet.
 error
 SELECT SUM(val) FROM agg_t
 ----
-at position 10: expected FROM, got "("
+mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
-# AVG(column).
+# AVG(column) — CRDB returns DECIMAL, no CQL type mapping yet.
 error
 SELECT AVG(val) FROM agg_t
 ----
-at position 10: expected FROM, got "("
+mapping column "avg": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # MIN(column).
-error
+exec
 SELECT MIN(val) FROM agg_t
 ----
-at position 10: expected FROM, got "("
 
 # MAX(column).
-error
+exec
 SELECT MAX(val) FROM agg_t
 ----
-at position 10: expected FROM, got "("
 
-# Multiple aggregates in one SELECT.
+# Multiple aggregates — SUM returns DECIMAL, fails type mapping.
 error
 SELECT COUNT(*), SUM(val) FROM agg_t
 ----
-at position 12: expected FROM, got "("
+mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # Aggregate with alias (AS).
-error
+exec
 SELECT COUNT(*) AS total FROM agg_t
 ----
-at position 12: expected FROM, got "("
 
-# Aggregate with WHERE clause.
+# Aggregate with WHERE clause — SUM returns DECIMAL.
 error
 SELECT SUM(val) FROM agg_t WHERE pk = 1
 ----
-at position 10: expected FROM, got "("
+mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # Aggregate on text column.
-error
+exec
 SELECT MIN(name) FROM agg_t
 ----
-at position 10: expected FROM, got "("
 
 # MAX on text column.
-error
+exec
 SELECT MAX(name) FROM agg_t
 ----
-at position 10: expected FROM, got "("
 
-# COUNT with DISTINCT inside the function call. The parser reads
-# "COUNT" as a column, then fails on "(" regardless.
-error
+# COUNT with DISTINCT inside the function call.
+exec
 SELECT COUNT(DISTINCT val) FROM agg_t
 ----
-at position 12: expected FROM, got "("

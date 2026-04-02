@@ -29,6 +29,20 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
+// cqlFunctionToSQL maps lowercase CQL function names to their CockroachDB SQL
+// equivalents. Functions not in this map are unsupported.
+var cqlFunctionToSQL = map[string]string{
+	"now":   "now",
+	"uuid":  "gen_random_uuid",
+	"count": "count",
+	"sum":   "sum",
+	"avg":   "avg",
+	"min":   "min",
+	"max":   "max",
+	// toJson maps to CRDB's to_jsonb which converts any value to JSONB.
+	"tojson": "to_jsonb",
+}
+
 // cqlTypeToCRDBSQL maps CQL type names (as produced by the parser's DataType.Name)
 // to CockroachDB SQL type names.
 var cqlTypeToCRDBSQL = map[string]string{
@@ -161,6 +175,10 @@ func translateCreateTable(s *parser.CreateTableStatement) (Result, error) {
 // (last-write-wins) unless IF NOT EXISTS is specified, in which case it is a
 // conditional insert.
 func translateInsert(s *parser.InsertStatement) (Result, error) {
+	if s.JSON {
+		return Result{}, errors.Newf("INSERT JSON is not yet supported")
+	}
+
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -204,6 +222,10 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 
 // translateSelect maps CQL SELECT to CRDB SQL SELECT.
 func translateSelect(s *parser.SelectStatement) (Result, error) {
+	if s.JSON {
+		return Result{}, errors.Newf("SELECT JSON is not yet supported")
+	}
+
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -219,10 +241,24 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		if sel.Column == "*" {
+		if sel.Expr != nil {
+			sqlExpr, _, err := exprToSQL(sel.Expr, &paramIdx)
+			if err != nil {
+				return Result{}, errors.Wrap(err, "translating selector")
+			}
+			sb.WriteString(sqlExpr)
+			if sel.Alias != "" {
+				sb.WriteString(" AS ")
+				sb.WriteString(quoteIdent(sel.Alias))
+			}
+		} else if sel.Column == "*" {
 			sb.WriteByte('*')
 		} else {
 			sb.WriteString(quoteIdent(sel.Column))
+			if sel.Alias != "" {
+				sb.WriteString(" AS ")
+				sb.WriteString(quoteIdent(sel.Alias))
+			}
 		}
 	}
 
@@ -232,45 +268,19 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 	// WHERE clauses.
 	if len(s.Where) > 0 {
 		sb.WriteString(" WHERE ")
-		for i, w := range s.Where {
+		if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
+			return Result{}, err
+		}
+	}
+
+	// GROUP BY.
+	if len(s.GroupBy) > 0 {
+		sb.WriteString(" GROUP BY ")
+		for i, col := range s.GroupBy {
 			if i > 0 {
-				sb.WriteString(" AND ")
+				sb.WriteString(", ")
 			}
-			if w.Operator == "IN" {
-				tuple, ok := w.Value.(*parser.TupleLiteral)
-				if !ok {
-					return Result{}, errors.Newf("IN operator requires tuple value")
-				}
-				sb.WriteString(quoteIdent(w.Column))
-				sb.WriteString(" IN (")
-				for j, val := range tuple.Values {
-					if j > 0 {
-						sb.WriteString(", ")
-					}
-					sqlVal, param, err := exprToSQL(val, &paramIdx)
-					if err != nil {
-						return Result{}, errors.Wrap(err, "translating IN value")
-					}
-					sb.WriteString(sqlVal)
-					if param != nil {
-						params = append(params, param)
-					}
-				}
-				sb.WriteByte(')')
-			} else {
-				sb.WriteString(quoteIdent(w.Column))
-				sb.WriteByte(' ')
-				sb.WriteString(w.Operator)
-				sb.WriteByte(' ')
-				sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
-				if err != nil {
-					return Result{}, errors.Wrap(err, "translating WHERE value")
-				}
-				sb.WriteString(sqlVal)
-				if param != nil {
-					params = append(params, param)
-				}
-			}
+			sb.WriteString(quoteIdent(col))
 		}
 	}
 
@@ -302,6 +312,73 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 	}
 
 	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// writeWhereClauses writes WHERE conditions to sb, handling both plain column
+// references and function call expressions on the left-hand side.
+func writeWhereClauses(
+	sb *strings.Builder, where []parser.WhereClause, params *[]interface{}, paramIdx *int,
+) error {
+	for i, w := range where {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+
+		// Left-hand side: function call or plain column.
+		writeCol := func() error {
+			if w.ColumnExpr != nil {
+				colSQL, _, err := exprToSQL(w.ColumnExpr, paramIdx)
+				if err != nil {
+					return errors.Wrap(err, "translating WHERE expression")
+				}
+				sb.WriteString(colSQL)
+			} else {
+				sb.WriteString(quoteIdent(w.Column))
+			}
+			return nil
+		}
+
+		if w.Operator == "IN" {
+			tuple, ok := w.Value.(*parser.TupleLiteral)
+			if !ok {
+				return errors.Newf("IN operator requires tuple value")
+			}
+			if err := writeCol(); err != nil {
+				return err
+			}
+			sb.WriteString(" IN (")
+			for j, val := range tuple.Values {
+				if j > 0 {
+					sb.WriteString(", ")
+				}
+				sqlVal, param, err := exprToSQL(val, paramIdx)
+				if err != nil {
+					return errors.Wrap(err, "translating IN value")
+				}
+				sb.WriteString(sqlVal)
+				if param != nil {
+					*params = append(*params, param)
+				}
+			}
+			sb.WriteByte(')')
+		} else {
+			if err := writeCol(); err != nil {
+				return err
+			}
+			sb.WriteByte(' ')
+			sb.WriteString(w.Operator)
+			sb.WriteByte(' ')
+			sqlVal, param, err := exprToSQL(w.Value, paramIdx)
+			if err != nil {
+				return errors.Wrap(err, "translating WHERE value")
+			}
+			sb.WriteString(sqlVal)
+			if param != nil {
+				*params = append(*params, param)
+			}
+		}
+	}
+	return nil
 }
 
 // translateUpdate maps CQL UPDATE to CRDB SQL UPDATE.
@@ -339,22 +416,8 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 	}
 
 	sb.WriteString(" WHERE ")
-	for i, w := range s.Where {
-		if i > 0 {
-			sb.WriteString(" AND ")
-		}
-		sb.WriteString(quoteIdent(w.Column))
-		sb.WriteByte(' ')
-		sb.WriteString(w.Operator)
-		sb.WriteByte(' ')
-		sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
-		if err != nil {
-			return Result{}, errors.Wrap(err, "translating WHERE value")
-		}
-		sb.WriteString(sqlVal)
-		if param != nil {
-			params = append(params, param)
-		}
+	if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
+		return Result{}, err
 	}
 
 	return Result{SQL: sb.String(), Params: params}, nil
@@ -378,22 +441,8 @@ func translateDelete(s *parser.DeleteStatement) (Result, error) {
 	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
 	sb.WriteString(" WHERE ")
 
-	for i, w := range s.Where {
-		if i > 0 {
-			sb.WriteString(" AND ")
-		}
-		sb.WriteString(quoteIdent(w.Column))
-		sb.WriteByte(' ')
-		sb.WriteString(w.Operator)
-		sb.WriteByte(' ')
-		sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
-		if err != nil {
-			return Result{}, errors.Wrap(err, "translating WHERE value")
-		}
-		sb.WriteString(sqlVal)
-		if param != nil {
-			params = append(params, param)
-		}
+	if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
+		return Result{}, err
 	}
 
 	return Result{SQL: sb.String(), Params: params}, nil
@@ -449,9 +498,68 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 			return "", nil, err
 		}
 		return fmt.Sprintf("%s %s %s", quoteIdent(v.Column), v.Op, valSQL), param, nil
+	case *parser.ColumnRef:
+		return quoteIdent(v.Name), nil, nil
+	case *parser.StarExpr:
+		return "*", nil, nil
+	case *parser.FunctionCall:
+		return functionCallToSQL(v, paramIdx)
+	case *parser.CastExpr:
+		return castExprToSQL(v, paramIdx)
 	default:
 		return "", nil, errors.Newf("unsupported expression type: %T", e)
 	}
+}
+
+// functionCallToSQL translates a CQL function call to CRDB SQL.
+func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
+	lower := strings.ToLower(fc.Name)
+	sqlName, ok := cqlFunctionToSQL[lower]
+	if !ok {
+		return "", nil, errors.Newf("unsupported CQL function %q", fc.Name)
+	}
+
+	// Only COUNT accepts a * argument.
+	for _, arg := range fc.Args {
+		if _, isStar := arg.(*parser.StarExpr); isStar && lower != "count" {
+			return "", nil, errors.Newf("unsupported CQL function %q", fc.Name)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(sqlName)
+	sb.WriteByte('(')
+
+	if fc.Distinct {
+		sb.WriteString("DISTINCT ")
+	}
+
+	for i, arg := range fc.Args {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		argSQL, _, err := exprToSQL(arg, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		sb.WriteString(argSQL)
+	}
+
+	sb.WriteByte(')')
+	return sb.String(), nil, nil
+}
+
+// castExprToSQL translates CAST(expr AS type) to CRDB SQL.
+func castExprToSQL(c *parser.CastExpr, paramIdx *int) (string, interface{}, error) {
+	sqlType, ok := cqlTypeToCRDBSQL[c.Type.Name]
+	if !ok {
+		return "", nil, errors.Newf("unsupported CQL type %q in CAST", c.Type.Name)
+	}
+	innerSQL, _, err := exprToSQL(c.Expr, paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf("CAST(%s AS %s)", innerSQL, sqlType), nil, nil
 }
 
 // quoteIdent quotes a SQL identifier with double quotes. CQL identifiers are

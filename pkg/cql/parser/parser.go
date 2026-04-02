@@ -228,6 +228,7 @@ func (p *parser) parseCreateTable() (*CreateTableStatement, error) {
 // parseInsert parses:
 //
 //	INSERT INTO [<ks>.]<table> (<cols>) VALUES (<vals>) [IF NOT EXISTS]
+//	INSERT INTO [<ks>.]<table> JSON '<json>' [DEFAULT UNSET|NULL] [IF NOT EXISTS]
 func (p *parser) parseInsert() (*InsertStatement, error) {
 	p.lex.next() // consume INSERT
 	if err := p.expectKeyword("INTO"); err != nil {
@@ -241,6 +242,32 @@ func (p *parser) parseInsert() (*InsertStatement, error) {
 	}
 	stmt.Keyspace = ks
 	stmt.Table = tbl
+
+	// Check for INSERT INTO <table> JSON '<json>' syntax.
+	if isKeyword(p.lex.peek(), "JSON") {
+		p.lex.next() // consume JSON
+		jsonTok := p.lex.next()
+		if jsonTok.kind != tokString {
+			return nil, fmt.Errorf(
+				"at position %d: expected JSON string, got %q", jsonTok.pos, jsonTok.val,
+			)
+		}
+		stmt.JSON = true
+		stmt.JSONValue = jsonTok.val
+		// Optional DEFAULT UNSET | DEFAULT NULL.
+		if isKeyword(p.lex.peek(), "DEFAULT") {
+			p.lex.next() // consume DEFAULT
+			if isKeyword(p.lex.peek(), "UNSET") {
+				p.lex.next()
+				stmt.DefaultUnset = true
+			} else if isKeyword(p.lex.peek(), "NULL") {
+				p.lex.next()
+				stmt.DefaultNull = true
+			}
+		}
+		stmt.IfNotExists = p.tryIfNotExists()
+		return stmt, nil
+	}
 
 	// Column list.
 	if err := p.expectToken(tokLParen); err != nil {
@@ -286,11 +313,18 @@ func (p *parser) parseInsert() (*InsertStatement, error) {
 
 // parseSelect parses:
 //
-//	SELECT [DISTINCT] <selectors> FROM [<ks>.]<table> [WHERE <conds>]
-//	  [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>] [ALLOW FILTERING]
+//	SELECT [JSON] [DISTINCT] <selectors> FROM [<ks>.]<table> [WHERE <conds>]
+//	  [GROUP BY <cols>] [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>]
+//	  [ALLOW FILTERING]
 func (p *parser) parseSelect() (*SelectStatement, error) {
 	p.lex.next() // consume SELECT
 	stmt := &SelectStatement{}
+
+	// Optional JSON.
+	if isKeyword(p.lex.peek(), "JSON") {
+		p.lex.next()
+		stmt.JSON = true
+	}
 
 	// Optional DISTINCT.
 	if isKeyword(p.lex.peek(), "DISTINCT") {
@@ -324,6 +358,19 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 			return nil, err
 		}
 		stmt.Where = where
+	}
+
+	// Optional GROUP BY.
+	if isKeyword(p.lex.peek(), "GROUP") {
+		p.lex.next() // consume GROUP
+		if err := p.expectKeyword("BY"); err != nil {
+			return nil, err
+		}
+		groupBy, err := p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		stmt.GroupBy = groupBy
 	}
 
 	// Optional ORDER BY.
@@ -636,73 +683,21 @@ func (p *parser) parseAlterTable() (*AlterTableStatement, error) {
 }
 
 // parseTableProperties parses key = value [AND key = value ...].
-// Values can be string literals, integers, or map literals (stored as
-// their raw string representation).
+// Values can be string literals, integers, or map literals.
 func (p *parser) parseTableProperties() ([]TableProperty, error) {
 	var props []TableProperty
 	for {
-		key, err := p.expectIdent()
+		prop, err := p.parseTableProperty()
 		if err != nil {
 			return nil, err
 		}
-		if err := p.expectToken(tokEq); err != nil {
-			return nil, err
-		}
-		// The value can be a string literal, integer, or map literal.
-		// We consume tokens until we hit AND, EOF, or semicolon.
-		val, err := p.parsePropertyValue()
-		if err != nil {
-			return nil, err
-		}
-		props = append(props, TableProperty{Key: key, Value: val})
+		props = append(props, prop)
 		if !isKeyword(p.lex.peek(), "AND") {
 			break
 		}
 		p.lex.next() // consume AND
 	}
 	return props, nil
-}
-
-// parsePropertyValue reads a property value: string literal, integer,
-// or map literal. Returns the raw string representation.
-func (p *parser) parsePropertyValue() (string, error) {
-	t := p.lex.peek()
-	switch t.kind {
-	case tokString:
-		p.lex.next()
-		return "'" + t.val + "'", nil
-	case tokInteger:
-		p.lex.next()
-		return t.val, nil
-	case tokIdent:
-		// Boolean values (true/false).
-		upper := strings.ToUpper(t.val)
-		if upper == "TRUE" || upper == "FALSE" {
-			p.lex.next()
-			return strings.ToLower(t.val), nil
-		}
-		return "", p.errorf("unexpected identifier %q in property value", t.val)
-	case tokLBrace:
-		// Map literal: consume everything until matching }.
-		var sb strings.Builder
-		sb.WriteByte('{')
-		p.lex.next() // consume {
-		for p.lex.peek().kind != tokRBrace && p.lex.peek().kind != tokEOF {
-			tok := p.lex.next()
-			if tok.kind == tokString {
-				sb.WriteString("'" + tok.val + "'")
-			} else {
-				sb.WriteString(tok.val)
-			}
-		}
-		if p.lex.peek().kind == tokRBrace {
-			p.lex.next()
-			sb.WriteByte('}')
-		}
-		return sb.String(), nil
-	default:
-		return "", p.errorf("expected property value, got %q", t.val)
-	}
 }
 
 // parseDrop parses DROP TABLE/KEYSPACE/INDEX [IF EXISTS] [<ks>.]<name>.
@@ -1227,7 +1222,8 @@ func (p *parser) parseExprList() ([]Expr, error) {
 	return result, nil
 }
 
-// parseExpr parses a single value expression (literal, bind marker, etc.).
+// parseExpr parses a single value expression (literal, bind marker,
+// function call, or CAST).
 func (p *parser) parseExpr() (Expr, error) {
 	t := p.lex.peek()
 	switch t.kind {
@@ -1274,10 +1270,18 @@ func (p *parser) parseExpr() (Expr, error) {
 			p.lex.next()
 			return &NullLiteral{}, nil
 		default:
-			// Check if this looks like a UUID (bare hex-dash string won't lex
-			// as a single ident because of the dashes). UUIDs appear as
-			// single-quoted strings in CQL, so this path is for identifiers
-			// used in certain contexts. Fall through to error for now.
+			// Check for function call: ident(...) or CAST(... AS type).
+			saved := p.lex.cur
+			name := t.val
+			p.lex.next() // consume identifier
+			if p.lex.peek().kind == tokLParen {
+				if strings.EqualFold(name, "CAST") {
+					return p.parseCastExpr()
+				}
+				return p.parseFunctionCall(name)
+			}
+			// Not a function call; restore position and error.
+			p.lex.cur = saved
 			return nil, p.errorf("expected expression, got identifier %q", t.val)
 		}
 	default:
@@ -1285,32 +1289,80 @@ func (p *parser) parseExpr() (Expr, error) {
 	}
 }
 
-// parseSelectors parses the SELECT list: either * or a comma-separated list of
-// column names.
+// parseSelectors parses the SELECT list: either * or a comma-separated list
+// of column names, function calls, or CAST expressions, each with an optional
+// AS alias.
 func (p *parser) parseSelectors() ([]Selector, error) {
 	if p.lex.peek().kind == tokStar {
 		p.lex.next()
 		return []Selector{{Column: "*"}}, nil
 	}
 	var selectors []Selector
-	name, err := p.expectIdent()
-	if err != nil {
-		return nil, err
-	}
-	selectors = append(selectors, Selector{Column: name})
-	for p.lex.peek().kind == tokComma {
-		p.lex.next()
-		name, err := p.expectIdent()
+	for {
+		sel, err := p.parseOneSelector()
 		if err != nil {
 			return nil, err
 		}
-		selectors = append(selectors, Selector{Column: name})
+		selectors = append(selectors, sel)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
 	}
 	return selectors, nil
 }
 
+// parseOneSelector parses a single selector: a column name, function call,
+// or CAST expression, optionally followed by AS <alias>.
+func (p *parser) parseOneSelector() (Selector, error) {
+	t := p.lex.peek()
+	if t.kind != tokIdent {
+		return Selector{}, p.errorf("expected column name or function, got %q", t.val)
+	}
+
+	name := t.val
+	p.lex.next() // consume identifier
+
+	// Function call or CAST in SELECT list.
+	if p.lex.peek().kind == tokLParen {
+		var expr Expr
+		var err error
+		if strings.EqualFold(name, "CAST") {
+			expr, err = p.parseCastExpr()
+		} else {
+			expr, err = p.parseFunctionCall(name)
+		}
+		if err != nil {
+			return Selector{}, err
+		}
+		sel := Selector{Expr: expr}
+		if isKeyword(p.lex.peek(), "AS") {
+			p.lex.next() // consume AS
+			alias, aliasErr := p.expectIdent()
+			if aliasErr != nil {
+				return Selector{}, aliasErr
+			}
+			sel.Alias = alias
+		}
+		return sel, nil
+	}
+
+	// Plain column name.
+	sel := Selector{Column: name}
+	if isKeyword(p.lex.peek(), "AS") {
+		p.lex.next() // consume AS
+		alias, err := p.expectIdent()
+		if err != nil {
+			return Selector{}, err
+		}
+		sel.Alias = alias
+	}
+	return sel, nil
+}
+
 // parseWhereClauses parses <col> <op> <val> [AND ...] with support for
-// the IN operator: <col> IN (<val>, <val>, ...).
+// the IN operator: <col> IN (<val>, <val>, ...) and function calls on
+// the left-hand side: token(pk) > 0.
 func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 	var clauses []WhereClause
 	for {
@@ -1318,6 +1370,24 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		wc := WhereClause{Column: col}
+
+		// Check if the left side is a function call (e.g. token(pk)).
+		if p.lex.peek().kind == tokLParen {
+			var expr Expr
+			if strings.EqualFold(col, "CAST") {
+				expr, err = p.parseCastExpr()
+			} else {
+				expr, err = p.parseFunctionCall(col)
+			}
+			if err != nil {
+				return nil, err
+			}
+			wc.ColumnExpr = expr
+			wc.Column = ""
+		}
+
 		// Check for IN operator before trying comparison operators.
 		if isKeyword(p.lex.peek(), "IN") {
 			p.lex.next() // consume IN
@@ -1331,11 +1401,8 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 			if err := p.expectToken(tokRParen); err != nil {
 				return nil, err
 			}
-			clauses = append(clauses, WhereClause{
-				Column:   col,
-				Operator: "IN",
-				Value:    &TupleLiteral{Values: vals},
-			})
+			wc.Operator = "IN"
+			wc.Value = &TupleLiteral{Values: vals}
 		} else {
 			op, err := p.parseOperator()
 			if err != nil {
@@ -1345,8 +1412,10 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 			if err != nil {
 				return nil, err
 			}
-			clauses = append(clauses, WhereClause{Column: col, Operator: op, Value: val})
+			wc.Operator = op
+			wc.Value = val
 		}
+		clauses = append(clauses, wc)
 		if !isKeyword(p.lex.peek(), "AND") {
 			break
 		}
@@ -1377,6 +1446,108 @@ func (p *parser) parseOrderByClauses() ([]OrderByClause, error) {
 		p.lex.next() // consume comma
 	}
 	return clauses, nil
+}
+
+// parseFunctionCall parses the argument list of a function call. The function
+// name has already been consumed; the next token must be '('.
+func (p *parser) parseFunctionCall(name string) (*FunctionCall, error) {
+	p.lex.next() // consume (
+
+	fc := &FunctionCall{Name: name}
+
+	// COUNT(DISTINCT col).
+	if strings.EqualFold(name, "COUNT") && isKeyword(p.lex.peek(), "DISTINCT") {
+		p.lex.next() // consume DISTINCT
+		fc.Distinct = true
+	}
+
+	// Empty arg list: func().
+	if p.lex.peek().kind == tokRParen {
+		p.lex.next()
+		return fc, nil
+	}
+
+	// Star argument: func(*).
+	if p.lex.peek().kind == tokStar {
+		p.lex.next()
+		fc.Args = []Expr{&StarExpr{}}
+		if err := p.expectToken(tokRParen); err != nil {
+			return nil, err
+		}
+		return fc, nil
+	}
+
+	// Comma-separated arguments.
+	for {
+		arg, err := p.parseFuncArgExpr()
+		if err != nil {
+			return nil, err
+		}
+		fc.Args = append(fc.Args, arg)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+
+	if err := p.expectToken(tokRParen); err != nil {
+		return nil, err
+	}
+	return fc, nil
+}
+
+// parseFuncArgExpr parses a single function argument. Unlike parseExpr, bare
+// identifiers are treated as column references rather than errors.
+func (p *parser) parseFuncArgExpr() (Expr, error) {
+	t := p.lex.peek()
+	if t.kind == tokIdent {
+		upper := strings.ToUpper(t.val)
+		switch upper {
+		case "TRUE":
+			p.lex.next()
+			return &BoolLiteral{Value: true}, nil
+		case "FALSE":
+			p.lex.next()
+			return &BoolLiteral{Value: false}, nil
+		case "NULL":
+			p.lex.next()
+			return &NullLiteral{}, nil
+		default:
+			name := t.val
+			p.lex.next()
+			if p.lex.peek().kind == tokLParen {
+				if strings.EqualFold(name, "CAST") {
+					return p.parseCastExpr()
+				}
+				return p.parseFunctionCall(name)
+			}
+			return &ColumnRef{Name: name}, nil
+		}
+	}
+	return p.parseExpr()
+}
+
+// parseCastExpr parses the interior of CAST(expr AS type). The opening '('
+// is the next token to consume.
+func (p *parser) parseCastExpr() (*CastExpr, error) {
+	if err := p.expectToken(tokLParen); err != nil {
+		return nil, err
+	}
+	arg, err := p.parseFuncArgExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectKeyword("AS"); err != nil {
+		return nil, err
+	}
+	dt, err := p.parseDataType()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(tokRParen); err != nil {
+		return nil, err
+	}
+	return &CastExpr{Expr: arg, Type: dt}, nil
 }
 
 func (p *parser) parseOperator() (string, error) {

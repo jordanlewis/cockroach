@@ -1,12 +1,9 @@
 # Built-in scalar functions.
 #
 # CQL provides built-in functions for time, UUID, type conversion,
-# and metadata. The parser does not support function call syntax in
-# either SELECT lists or WHERE clauses. In SELECT lists, the function
-# name is read as a column identifier and the parser fails on the
-# opening parenthesis. In WHERE clauses, the function name is read
-# as a column identifier and the parser expects a comparison operator
-# but gets the opening parenthesis.
+# and metadata. The parser supports function call syntax in SELECT
+# lists, WHERE clauses, and INSERT VALUES. Unsupported Cassandra-
+# specific functions produce a translation error.
 
 exec
 USE defaultdb
@@ -22,167 +19,137 @@ INSERT INTO fn_t (pk, ts, uid, val) VALUES (1, '2024-01-15T10:30:00Z', 550e8400-
 
 # -- Time functions --
 
-# now() — returns current timestamp as timeuuid.
-# "now" (3 chars) starts at offset 7; "(" is at offset 10.
-error
+# now() — returns current timestamp. Maps to CRDB now().
+exec
 SELECT now() FROM fn_t
 ----
-at position 10: expected FROM, got "("
 
-# toTimestamp(timeuuid) — converts timeuuid to timestamp.
-# "toTimestamp" (11 chars) starts at 7; "(" is at 18.
+# toTimestamp(timeuuid) — Cassandra-specific, not supported.
 error
 SELECT toTimestamp(uid) FROM fn_t
 ----
-at position 18: expected FROM, got "("
+translating selector: unsupported CQL function "toTimestamp"
 
-# toDate(timestamp) — converts timestamp to date.
-# "toDate" (6 chars) starts at 7; "(" is at 13.
+# toDate(timestamp) — Cassandra-specific, not supported.
 error
 SELECT toDate(ts) FROM fn_t
 ----
-at position 13: expected FROM, got "("
+translating selector: unsupported CQL function "toDate"
 
-# toUnixTimestamp(timestamp) — converts to unix timestamp (bigint).
-# "toUnixTimestamp" (15 chars) starts at 7; "(" is at 22.
+# toUnixTimestamp(timestamp) — Cassandra-specific, not supported.
 error
 SELECT toUnixTimestamp(ts) FROM fn_t
 ----
-at position 22: expected FROM, got "("
+translating selector: unsupported CQL function "toUnixTimestamp"
 
-# dateOf(timeuuid) — extracts timestamp from timeuuid (deprecated).
-# "dateOf" (6 chars) starts at 7; "(" is at 13.
+# dateOf(timeuuid) — deprecated Cassandra function, not supported.
 error
 SELECT dateOf(uid) FROM fn_t
 ----
-at position 13: expected FROM, got "("
+translating selector: unsupported CQL function "dateOf"
 
-# unixTimestampOf(timeuuid) — extracts unix timestamp (deprecated).
-# "unixTimestampOf" (15 chars) starts at 7; "(" is at 22.
+# unixTimestampOf(timeuuid) — deprecated Cassandra function, not supported.
 error
 SELECT unixTimestampOf(uid) FROM fn_t
 ----
-at position 22: expected FROM, got "("
+translating selector: unsupported CQL function "unixTimestampOf"
 
 # -- UUID functions --
 
-# uuid() — generates a random UUID.
-# "uuid" (4 chars) starts at 7; "(" is at 11.
-error
+# uuid() — generates a random UUID. Maps to CRDB gen_random_uuid().
+exec
 SELECT uuid() FROM fn_t
 ----
-at position 11: expected FROM, got "("
 
-# minTimeuuid(timestamp) — returns smallest timeuuid for a timestamp.
-# "minTimeuuid" (11 chars) starts at 7; "(" is at 18.
+# minTimeuuid(timestamp) — Cassandra-specific, not supported.
 error
 SELECT minTimeuuid(ts) FROM fn_t
 ----
-at position 18: expected FROM, got "("
+translating selector: unsupported CQL function "minTimeuuid"
 
-# maxTimeuuid(timestamp) — returns largest timeuuid for a timestamp.
-# "maxTimeuuid" (11 chars) starts at 7; "(" is at 18.
+# maxTimeuuid(timestamp) — Cassandra-specific, not supported.
 error
 SELECT maxTimeuuid(ts) FROM fn_t
 ----
-at position 18: expected FROM, got "("
+translating selector: unsupported CQL function "maxTimeuuid"
 
 # -- token() function --
-# (Also tested in select_token_function; included here for
-# completeness of the built-in function catalog.)
 
-# token() in SELECT list.
-# "token" (5 chars) starts at 7; "(" is at 12.
+# token() in SELECT list — Cassandra partitioner concept, not supported.
 error
 SELECT token(pk) FROM fn_t
 ----
-at position 12: expected FROM, got "("
+translating selector: unsupported CQL function "token"
 
-# token() in WHERE clause: parser reads "token" as a column name,
-# then expects a comparison operator but finds "(". "token" starts
-# at offset 25, "(" is at offset 30.
+# token() in WHERE clause — not supported.
 error
 SELECT * FROM fn_t WHERE token(pk) > 0
 ----
-at position 30: expected comparison operator, got "("
+translating WHERE expression: unsupported CQL function "token"
 
 # -- Metadata functions --
 
-# writetime(column) — returns write timestamp of a column.
-# "writetime" (9 chars) starts at 7; "(" is at 16.
+# writetime(column) — Cassandra per-cell timestamp, not supported.
 error
 SELECT writetime(val) FROM fn_t
 ----
-at position 16: expected FROM, got "("
+translating selector: unsupported CQL function "writetime"
 
-# ttl(column) — returns TTL of a column value.
-# "ttl" (3 chars) starts at 7; "(" is at 10.
+# ttl(column) — Cassandra per-cell TTL, not supported.
 error
 SELECT ttl(val) FROM fn_t
 ----
-at position 10: expected FROM, got "("
+translating selector: unsupported CQL function "ttl"
 
 # -- Type conversion functions --
 
-# blobAsInt — converts blob to int.
-# "blobAsInt" (9 chars) starts at 7; "(" is at 16.
+# blobAsInt — Cassandra-specific, not supported.
 error
 SELECT blobAsInt(val) FROM fn_t
 ----
-at position 16: expected FROM, got "("
+translating selector: unsupported CQL function "blobAsInt"
 
-# intAsBlob — converts int to blob.
-# "intAsBlob" (9 chars) starts at 7; "(" is at 16.
+# intAsBlob — Cassandra-specific, not supported.
 error
 SELECT intAsBlob(pk) FROM fn_t
 ----
-at position 16: expected FROM, got "("
+translating selector: unsupported CQL function "intAsBlob"
 
-# blobAsText — converts blob to text.
-# "blobAsText" (10 chars) starts at 7; "(" is at 17.
+# blobAsText — Cassandra-specific, not supported.
 error
 SELECT blobAsText(val) FROM fn_t
 ----
-at position 17: expected FROM, got "("
+translating selector: unsupported CQL function "blobAsText"
 
-# textAsBlob — converts text to blob.
-# "textAsBlob" (10 chars) starts at 7; "(" is at 17.
+# textAsBlob — Cassandra-specific, not supported.
 error
 SELECT textAsBlob(val) FROM fn_t
 ----
-at position 17: expected FROM, got "("
+translating selector: unsupported CQL function "textAsBlob"
 
 # -- CAST function --
 
-# CAST(column AS type). The parser reads "CAST" as a column name
-# (4 chars at offset 7); "(" is at 11.
-error
+# CAST(column AS type) — maps to SQL CAST.
+exec
 SELECT CAST(pk AS bigint) FROM fn_t
 ----
-at position 11: expected FROM, got "("
 
 # -- Function in WHERE clause (non-token) --
 
-# minTimeuuid() in WHERE clause for time range queries.
-# After "uid > ", parseExpr sees "minTimeuuid" (an identifier at
-# offset 31) which it cannot handle as an expression.
+# minTimeuuid() in WHERE clause — not supported.
 error
 SELECT * FROM fn_t WHERE uid > minTimeuuid('2024-01-01')
 ----
-at position 31: expected expression, got identifier "minTimeuuid"
+translating WHERE value: unsupported CQL function "minTimeuuid"
 
-# now() in WHERE clause.
-# After "ts > ", parseExpr sees "now" (an identifier at offset 30).
-error
+# now() in WHERE clause — supported, maps to CRDB now().
+exec
 SELECT * FROM fn_t WHERE ts > now()
 ----
-at position 30: expected expression, got identifier "now"
 
 # -- Functions with no arguments in INSERT --
 
-# now() in INSERT VALUES. The parser reads "now" as an identifier
-# and cannot parse it as an expression. "now" is at offset 47.
-error
+# now() and uuid() in INSERT VALUES — supported.
+exec
 INSERT INTO fn_t (pk, ts, uid, val) VALUES (2, now(), uuid(), 'test')
 ----
-at position 47: expected expression, got identifier "now"

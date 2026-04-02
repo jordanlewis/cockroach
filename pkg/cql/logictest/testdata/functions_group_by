@@ -1,10 +1,6 @@
 # GROUP BY for aggregate queries.
 #
-# CQL supports GROUP BY on partition key columns and clustering
-# columns to compute per-group aggregates. The parser does not
-# recognize the GROUP keyword: after parsing FROM + WHERE + ORDER BY
-# + LIMIT + ALLOW FILTERING, any unexpected token triggers an
-# "unexpected token after statement" error.
+# CQL GROUP BY is parsed and translated to SQL GROUP BY.
 
 exec
 USE defaultdb
@@ -30,55 +26,37 @@ exec
 INSERT INTO grp_t (pk, ck, val) VALUES (2, 2, 40)
 ----
 
-# GROUP BY partition key. The parser finishes parsing the SELECT
-# statement after "grp_t", then sees "GROUP" as an unexpected token
-# at offset 21.
-error
+# GROUP BY partition key.
+exec
 SELECT pk FROM grp_t GROUP BY pk
 ----
-at position 21: unexpected token "GROUP" after statement
 
-# GROUP BY with aggregate function. The parser fails on the opening
-# parenthesis of COUNT(*) before reaching GROUP BY.
-# "SELECT pk, COUNT(*) FROM grp_t GROUP BY pk"
-# After "pk," the parser reads "COUNT" as a column, then "(" at 16.
-error
+# GROUP BY with aggregate function.
+exec
 SELECT pk, COUNT(*) FROM grp_t GROUP BY pk
 ----
-at position 16: expected FROM, got "("
 
 # GROUP BY clustering column.
-error
+exec
 SELECT ck FROM grp_t GROUP BY ck
 ----
-at position 21: unexpected token "GROUP" after statement
 
 # GROUP BY with multiple columns.
-# "SELECT pk, ck FROM grp_t GROUP BY pk, ck"
-# "GROUP" at offset 25.
-error
+exec
 SELECT pk, ck FROM grp_t GROUP BY pk, ck
 ----
-at position 25: unexpected token "GROUP" after statement
 
 # GROUP BY with WHERE clause.
-# "SELECT pk FROM grp_t WHERE pk = 1 GROUP BY pk"
-# Parser consumes WHERE clause; "GROUP" at offset 34.
-error
+exec
 SELECT pk FROM grp_t WHERE pk = 1 GROUP BY pk
 ----
-at position 34: unexpected token "GROUP" after statement
 
 # GROUP BY partition key with ORDER BY listed after GROUP BY.
-# Parser sees GROUP before ORDER BY, so it fails at GROUP (offset 21).
-error
+exec
 SELECT pk FROM grp_t GROUP BY pk ORDER BY pk
 ----
-at position 21: unexpected token "GROUP" after statement
 
-# GROUP BY with LIMIT. LIMIT is not reached because GROUP is
-# encountered first (offset 21).
-error
+# GROUP BY with LIMIT.
+exec
 SELECT pk FROM grp_t GROUP BY pk LIMIT 10
 ----
-at position 21: unexpected token "GROUP" after statement
