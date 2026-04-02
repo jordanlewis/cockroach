@@ -2,10 +2,9 @@
 #
 # CQL maps are key-value collections (e.g., map<text, int>). They
 # support element insertion, update by key, and element removal.
-# Maps are currently unsupported: the parser rejects the "map" type
-# name. The brace/colon syntax used for map literals is partially
-# recognized by the lexer but not by the expression parser. These
-# tests document the expected errors.
+# The parser accepts map<K,V> type syntax and map literal syntax
+# ({key: val, ...}), but the translator does not yet map these to
+# CRDB SQL types. These tests document the expected errors.
 
 exec
 USE defaultdb
@@ -18,25 +17,25 @@ USE defaultdb
 error
 CREATE TABLE lt_coll_map (id int PRIMARY KEY, attrs map<text, text>)
 ----
-at position 52: unsupported CQL type "map"
+unsupported CQL type "map" for column "attrs"
 
 # Bare map type (without angle brackets).
 error
 CREATE TABLE lt_coll_map2 (id int, data map, PRIMARY KEY (id))
 ----
-at position 40: unsupported CQL type "map"
+at position 40: map type requires type parameters (e.g. map<text, int>)
 
 # Map with int values.
 error
 CREATE TABLE lt_coll_map3 (id int PRIMARY KEY, scores map<text, int>)
 ----
-at position 54: unsupported CQL type "map"
+unsupported CQL type "map" for column "scores"
 
 # Map with boolean values.
 error
 CREATE TABLE lt_coll_map4 (id int PRIMARY KEY, flags map<text, boolean>)
 ----
-at position 53: unsupported CQL type "map"
+unsupported CQL type "map" for column "flags"
 
 # ---------------------------------------------------------------
 # Frozen map column — unsupported frozen modifier.
@@ -45,59 +44,57 @@ at position 53: unsupported CQL type "map"
 error
 CREATE TABLE lt_coll_fmap (id int PRIMARY KEY, data frozen<map<text, text>>)
 ----
-at position 52: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "data"
 
 # ---------------------------------------------------------------
-# INSERT with map literal — parser expects expression, gets brace.
+# INSERT with map literal — translator rejects map expression.
 #
 # CQL map literals use braces with colon-separated entries:
-# {'key1': 'val1', 'key2': 'val2'}. The lexer recognizes braces
-# but the expression parser does not support brace literals.
+# {'key1': 'val1', 'key2': 'val2'}. The parser accepts this
+# syntax but the translator cannot convert it to SQL.
 # ---------------------------------------------------------------
 
 error
 INSERT INTO lt_coll_map (id, attrs) VALUES (1, {'color': 'red', 'size': 'large'})
 ----
-at position 47: expected expression, got "{"
+translating INSERT value: unsupported expression type: *parser.MapExprLiteral
 
 # ---------------------------------------------------------------
-# UPDATE with map literal — parser rejects brace in expression.
+# UPDATE with map literal — translator rejects map expression.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = {'key': 'val'} WHERE id = 1
 ----
-at position 31: expected expression, got "{"
+translating SET value: unsupported expression type: *parser.MapExprLiteral
 
 # ---------------------------------------------------------------
-# Map element insertion (SET col[key] = val) — lexer rejects
-# square brackets.
+# Map element insertion (SET col[key] = val) — subscript
+# assignment unsupported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs['newkey'] = 'newval' WHERE id = 1
 ----
-unexpected character '[' at position 28
+at position 28: expected '=', got "["
 
 # ---------------------------------------------------------------
-# Map append (SET col = col + {...}) — parser rejects map literal
-# in expression position.
+# Map append (SET col = col + {...}) — binary expressions unsupported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = attrs + {'extra': 'val'} WHERE id = 1
 ----
-at position 39: expected expression, got "{"
+translating SET value: unsupported expression type: *parser.MapExprLiteral
 
 # ---------------------------------------------------------------
-# Map key removal (SET col = col - {...}) — parser rejects map
-# literal in expression position.
+# Map key removal (SET col = col - {...}) — binary expressions unsupported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lt_coll_map SET attrs = attrs - {'unwanted'} WHERE id = 1
 ----
-at position 39: expected expression, got "{"
+translating SET value: unsupported expression type: *parser.SetLiteral
 
 # ---------------------------------------------------------------
 # Nested map (map<text, map<text, int>>) — unsupported.
@@ -106,7 +103,7 @@ at position 39: expected expression, got "{"
 error
 CREATE TABLE lt_coll_nested_map (id int PRIMARY KEY, nested map<text, map<text, int>>)
 ----
-at position 60: unsupported CQL type "map"
+unsupported CQL type "map" for column "nested"
 
 # ---------------------------------------------------------------
 # Map used as clustering key — unsupported type.
@@ -115,4 +112,4 @@ at position 60: unsupported CQL type "map"
 error
 CREATE TABLE lt_coll_map_ck (pk int, ck map<text, int>, val text, PRIMARY KEY (pk, ck))
 ----
-at position 40: unsupported CQL type "map"
+unsupported CQL type "map" for column "ck"

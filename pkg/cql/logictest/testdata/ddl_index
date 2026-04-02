@@ -1,10 +1,9 @@
 # DDL tests for CQL secondary indexes (CREATE INDEX, DROP INDEX).
 #
 # CQL secondary indexes allow queries on non-primary-key columns.
-# CREATE INDEX, DROP INDEX, and querying by indexed columns are not
-# yet implemented in the parser. CREATE INDEX fails because the
-# parser only accepts KEYSPACE or TABLE after CREATE; DROP INDEX
-# fails because DROP is not a recognized statement keyword.
+# The parser accepts CREATE INDEX, CREATE CUSTOM INDEX, and DROP
+# INDEX syntax, but the translator does not yet map these to CRDB
+# SQL operations. These tests document the expected errors.
 
 exec
 USE defaultdb
@@ -35,42 +34,42 @@ user_id email
 1 alice@example.com
 
 # ---------------------------------------------------------------
-# CREATE INDEX (unsupported)
+# CREATE INDEX — translator rejects.
 #
-# The parser dispatches CREATE to parseCreate(), which only
-# recognizes KEYSPACE and TABLE as valid targets. INDEX falls
-# through to the default case.
+# The parser accepts CREATE INDEX syntax and produces a
+# CreateIndexStatement AST node. The translator does not yet
+# handle this statement type.
 # ---------------------------------------------------------------
 
 # Basic named index on a single column.
 error
 CREATE INDEX lt_idx_users_email_idx ON lt_idx_users (email)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Named index on an integer column.
 error
 CREATE INDEX lt_idx_users_age_idx ON lt_idx_users (age)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Named index on a text column used for filtering.
 error
 CREATE INDEX lt_idx_users_city_idx ON lt_idx_users (city)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # CREATE INDEX IF NOT EXISTS.
 error
 CREATE INDEX IF NOT EXISTS lt_idx_users_email_idx ON lt_idx_users (email)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index with a qualified table name (keyspace.table).
 error
 CREATE INDEX lt_idx_qual_idx ON defaultdb.lt_idx_users (email)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # ---------------------------------------------------------------
 # CREATE INDEX: composite and special forms (unsupported)
@@ -80,31 +79,31 @@ at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
 error
 CREATE INDEX lt_idx_composite ON lt_idx_users (city, age)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index using a Cassandra KEYS() function on a collection column.
 error
 CREATE INDEX lt_idx_keys ON lt_idx_users (KEYS(email))
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index using VALUES() for collection indexing.
 error
 CREATE INDEX lt_idx_values ON lt_idx_users (VALUES(email))
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index using ENTRIES() for map collection indexing.
 error
 CREATE INDEX lt_idx_entries ON lt_idx_users (ENTRIES(email))
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index using FULL() for frozen collection indexing.
 error
 CREATE INDEX lt_idx_full ON lt_idx_users (FULL(email))
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # ---------------------------------------------------------------
 # CREATE INDEX: custom index class (unsupported)
@@ -114,7 +113,7 @@ at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
 error
 CREATE CUSTOM INDEX lt_idx_sasi ON lt_idx_users (email) USING 'org.apache.cassandra.index.sasi.SASIIndex'
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "CUSTOM"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # ---------------------------------------------------------------
 # DROP INDEX
@@ -169,16 +168,16 @@ INSERT INTO lt_idx_events (sensor_id, ts, category, reading) VALUES (2, 1000, 't
 error
 CREATE INDEX lt_idx_events_cat_idx ON lt_idx_events (category)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index on the clustering key column itself.
 error
 CREATE INDEX lt_idx_events_ts_idx ON lt_idx_events (ts)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 # Index on a double column.
 error
 CREATE INDEX lt_idx_events_reading_idx ON lt_idx_events (reading)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement

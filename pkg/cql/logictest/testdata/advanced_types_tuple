@@ -1,7 +1,8 @@
 # Tuples and frozen collection types.
 #
-# Tuple types and frozen collections are currently unsupported by the
-# parser. These tests document the expected errors.
+# The parser accepts tuple<T,...> and frozen<T> type syntax, but the
+# translator does not yet map these to CRDB SQL types. These tests
+# document the expected errors.
 
 exec
 USE defaultdb
@@ -11,28 +12,28 @@ USE defaultdb
 error
 CREATE TABLE tuple_table (id int PRIMARY KEY, coords tuple<int, int>)
 ----
-at position 53: unsupported CQL type "tuple"
+unsupported CQL type "tuple" for column "coords"
 
 # Frozen tuple column type.
 error
 CREATE TABLE frozen_tuple_table (id int PRIMARY KEY, coords frozen<tuple<int, int>>)
 ----
-at position 60: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "coords"
 
 # Frozen map column type.
 error
 CREATE TABLE frozen_map_table (id int PRIMARY KEY, data frozen<map<text, text>>)
 ----
-at position 56: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "data"
 
 # Frozen set column type.
 error
 CREATE TABLE frozen_set_table (id int PRIMARY KEY, tags frozen<set<text>>)
 ----
-at position 56: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "tags"
 
 # Frozen list column type.
 error
 CREATE TABLE frozen_list_table (id int PRIMARY KEY, items frozen<list<int>>)
 ----
-at position 58: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "items"

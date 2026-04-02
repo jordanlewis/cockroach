@@ -96,6 +96,7 @@ func (p *parser) parseCreate() (Statement, error) {
 	case "TABLE":
 		return p.parseCreateTable()
 	case "INDEX":
+		p.lex.next() // consume INDEX
 		return p.parseCreateIndex(false /* isCustom */)
 	case "CUSTOM":
 		p.lex.next() // consume CUSTOM
@@ -1685,7 +1686,7 @@ func (p *parser) parseOperator() (string, error) {
 //	  (<col> | KEYS(<col>) | VALUES(<col>) | ENTRIES(<col>) | FULL(<col>))
 //	  [USING '<class>']
 func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) {
-	p.lex.next() // consume INDEX
+	// INDEX already consumed by the caller.
 	stmt := &CreateIndexStatement{IsCustom: isCustom}
 
 	stmt.IfNotExists = p.tryIfNotExists()
@@ -1711,13 +1712,18 @@ func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) 
 	if err := p.expectToken(tokLParen); err != nil {
 		return nil, err
 	}
-	for {
+	for p.lex.peek().kind != tokRParen {
+		if len(stmt.Columns) > 0 {
+			if err := p.expectToken(tokComma); err != nil {
+				return nil, err
+			}
+		}
 		var col IndexColumn
-		// Check for collection indexing functions.
+		// Check for collection indexing functions (KEYS, VALUES, etc.).
 		if p.lex.peek().kind == tokIdent {
 			upper := strings.ToUpper(p.lex.peek().val)
-			switch upper {
-			case "KEYS", "VALUES", "ENTRIES", "FULL":
+			if upper == "KEYS" || upper == "VALUES" ||
+				upper == "ENTRIES" || upper == "FULL" {
 				col.Function = upper
 				p.lex.next() // consume function name
 				if err := p.expectToken(tokLParen); err != nil {
@@ -1732,10 +1738,6 @@ func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) 
 					return nil, err
 				}
 				stmt.Columns = append(stmt.Columns, col)
-				if p.lex.peek().kind != tokComma {
-					break
-				}
-				p.lex.next() // consume comma
 				continue
 			}
 		}
@@ -1745,10 +1747,6 @@ func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) 
 		}
 		col.Name = colName
 		stmt.Columns = append(stmt.Columns, col)
-		if p.lex.peek().kind != tokComma {
-			break
-		}
-		p.lex.next() // consume comma
 	}
 	if err := p.expectToken(tokRParen); err != nil {
 		return nil, err

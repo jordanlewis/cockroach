@@ -1,19 +1,20 @@
 # User-Defined Types (UDTs): CREATE TYPE, ALTER TYPE, UDT columns,
 # nested UDTs, and field access.
 #
-# All UDT operations are currently unsupported and produce parse
-# errors. These tests document the expected errors and serve as a
-# roadmap for future implementation.
+# The parser accepts CREATE TYPE syntax and recognizes unknown type
+# names as potential UDTs. ALTER TYPE and field access (addr.street)
+# remain unsupported at the parser level. The translator does not
+# yet handle UDT operations. These tests document the expected errors.
 
 exec
 USE defaultdb
 ----
 
-# CREATE TYPE is not yet supported.
+# CREATE TYPE — parsed but translator rejects.
 error
 CREATE TYPE address (street text, city text, zip text)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "TYPE"
+unsupported CQL statement type: *parser.CreateTypeStatement
 
 # ALTER TYPE is not yet supported (ALTER only handles TABLE).
 error
@@ -21,23 +22,23 @@ ALTER TYPE address ADD state text
 ----
 at position 6: expected TABLE after ALTER, got "TYPE"
 
-# UDT as a column type is not supported (unknown type name).
+# UDT as a column type — parsed as unknown type, translator rejects.
 error
 CREATE TABLE udt_table (id int PRIMARY KEY, addr address)
 ----
-at position 49: unsupported CQL type "address"
+unsupported CQL type "address" for column "addr"
 
 # Frozen UDT column type.
 error
 CREATE TABLE frozen_udt_table (id int PRIMARY KEY, addr frozen<address>)
 ----
-at position 56: unsupported CQL type "frozen"
+unsupported CQL type "frozen" for column "addr"
 
 # Nested UDTs (a UDT containing another UDT).
 error
 CREATE TYPE full_address (base address, country text)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "TYPE"
+unsupported CQL statement type: *parser.CreateTypeStatement
 
 # UDT field access in SELECT (column.field syntax).
 # The parser reads "addr" as a column, then fails on "." when

@@ -213,9 +213,9 @@ ALTER TABLE ddl_ine_t DROP email
 error
 CREATE INDEX ddl_ine_idx ON ddl_ine_t (val)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
 
 error
 CREATE INDEX IF NOT EXISTS ddl_ine_idx ON ddl_ine_t (val)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement

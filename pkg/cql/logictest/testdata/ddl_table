@@ -123,22 +123,22 @@ cql-ddl: relation "test_ddl_ks.public.lt_ddl_basic" already exists
 error
 CREATE TABLE lt_ddl_bad_type (id int, data list, PRIMARY KEY (id))
 ----
-at position 43: unsupported CQL type "list"
+at position 43: list type requires type parameters (e.g. list<text>)
 
 error
 CREATE TABLE lt_ddl_bad_type2 (id int, data map, PRIMARY KEY (id))
 ----
-at position 44: unsupported CQL type "map"
+at position 44: map type requires type parameters (e.g. map<text, int>)
 
 error
 CREATE TABLE lt_ddl_bad_type3 (id int, data set, PRIMARY KEY (id))
 ----
-at position 44: unsupported CQL type "set"
+at position 44: set type requires type parameters (e.g. set<text>)
 
 error
 CREATE TABLE lt_ddl_bad_type4 (id int, data frozen, PRIMARY KEY (id))
 ----
-at position 44: unsupported CQL type "frozen"
+at position 44: frozen type requires type parameters (e.g. frozen<text>)
 
 # ---------------------------------------------------------------
 # DROP TABLE
@@ -223,4 +223,4 @@ CREATE TABLE lt_ddl_multi_opts (id int PRIMARY KEY, val text) WITH gc_grace_seco
 error
 CREATE INDEX lt_ddl_basic_name_idx ON lt_ddl_basic (name)
 ----
-at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+unsupported CQL statement type: *parser.CreateIndexStatement
