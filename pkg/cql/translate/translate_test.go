@@ -195,6 +195,36 @@ func TestTranslateSelect(t *testing.T) {
 			cql:  "SELECT * FROM ks1.users WHERE id = 1",
 			want: `SELECT * FROM "ks1"."users" WHERE "id" = 1`,
 		},
+		{
+			name: "select distinct",
+			cql:  "SELECT DISTINCT pk FROM users",
+			want: `SELECT DISTINCT "pk" FROM "users"`,
+		},
+		{
+			name: "select with order by",
+			cql:  "SELECT * FROM events WHERE pk = 1 ORDER BY ck DESC",
+			want: `SELECT * FROM "events" WHERE "pk" = 1 ORDER BY "ck" DESC`,
+		},
+		{
+			name: "select with order by asc",
+			cql:  "SELECT * FROM events ORDER BY ck ASC",
+			want: `SELECT * FROM "events" ORDER BY "ck"`,
+		},
+		{
+			name: "select with where in",
+			cql:  "SELECT * FROM users WHERE id IN (1, 2, 3)",
+			want: `SELECT * FROM "users" WHERE "id" IN (1, 2, 3)`,
+		},
+		{
+			name: "select with allow filtering",
+			cql:  "SELECT * FROM users WHERE name = 'alice' ALLOW FILTERING",
+			want: `SELECT * FROM "users" WHERE "name" = 'alice'`,
+		},
+		{
+			name: "select with all clauses",
+			cql:  "SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk DESC LIMIT 5 ALLOW FILTERING",
+			want: `SELECT DISTINCT "pk" FROM "t" WHERE "pk" IN (1, 2) ORDER BY "pk" DESC LIMIT 5`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,6 +284,11 @@ func TestTranslateRoundTrip(t *testing.T) {
 		"INSERT INTO users (id, name) VALUES (1, 'test')",
 		"SELECT * FROM users WHERE id = 1",
 		"SELECT name, email FROM users WHERE id = 1 LIMIT 10",
+		"SELECT DISTINCT pk FROM t",
+		"SELECT * FROM t ORDER BY ck DESC",
+		"SELECT * FROM t WHERE id IN (1, 2, 3)",
+		"SELECT * FROM t WHERE a = 1 ALLOW FILTERING",
+		"SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk LIMIT 5 ALLOW FILTERING",
 	}
 	for _, cql := range cqlStatements {
 		t.Run(cql, func(t *testing.T) {

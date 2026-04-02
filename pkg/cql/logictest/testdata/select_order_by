@@ -1,8 +1,8 @@
 # ORDER BY clause.
 #
 # CQL ORDER BY is limited to clustering columns and only reverses the
-# clustering order (ASC/DESC). The parser does not handle ORDER BY, so
-# it appears as an unexpected token after the parsed statement.
+# clustering order (ASC/DESC). Since the CQL layer translates ORDER BY
+# directly to SQL, CRDB handles ordering on any column.
 
 exec
 USE defaultdb
@@ -12,27 +12,50 @@ exec
 CREATE TABLE IF NOT EXISTS sel_ob (pk int, ck int, val text, PRIMARY KEY (pk, ck))
 ----
 
-# ORDER BY on clustering column.
-error
-SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck
+exec
+INSERT INTO sel_ob (pk, ck, val) VALUES (1, 10, 'alpha')
 ----
-at position 34: unexpected token "ORDER" after statement
+
+exec
+INSERT INTO sel_ob (pk, ck, val) VALUES (1, 30, 'gamma')
+----
+
+exec
+INSERT INTO sel_ob (pk, ck, val) VALUES (1, 20, 'beta')
+----
+
+# ORDER BY on clustering column (default ASC).
+query
+SELECT pk, ck, val FROM sel_ob WHERE pk = 1 ORDER BY ck
+----
+pk ck val
+1 10 alpha
+1 20 beta
+1 30 gamma
 
 # ORDER BY with ASC.
-error
-SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck ASC
+query
+SELECT pk, ck, val FROM sel_ob WHERE pk = 1 ORDER BY ck ASC
 ----
-at position 34: unexpected token "ORDER" after statement
+pk ck val
+1 10 alpha
+1 20 beta
+1 30 gamma
 
 # ORDER BY with DESC.
-error
-SELECT * FROM sel_ob WHERE pk = 1 ORDER BY ck DESC
+query
+SELECT pk, ck, val FROM sel_ob WHERE pk = 1 ORDER BY ck DESC
 ----
-at position 34: unexpected token "ORDER" after statement
+pk ck val
+1 30 gamma
+1 20 beta
+1 10 alpha
 
-# ORDER BY on non-clustering column (would be invalid even in
-# Cassandra, but the parser rejects it at the syntax level).
-error
-SELECT * FROM sel_ob ORDER BY val
+# ORDER BY on non-clustering column (valid in CRDB, not in Cassandra).
+query
+SELECT pk, ck, val FROM sel_ob WHERE pk = 1 ORDER BY val
 ----
-at position 21: unexpected token "ORDER" after statement
+pk ck val
+1 10 alpha
+1 20 beta
+1 30 gamma

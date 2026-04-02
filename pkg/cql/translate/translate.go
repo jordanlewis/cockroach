@@ -196,7 +196,11 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 	var params []interface{}
 	paramIdx := 1
 
-	sb.WriteString("SELECT ")
+	if s.Distinct {
+		sb.WriteString("SELECT DISTINCT ")
+	} else {
+		sb.WriteString("SELECT ")
+	}
 
 	// Column list.
 	for i, sel := range s.Columns {
@@ -220,17 +224,54 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 			if i > 0 {
 				sb.WriteString(" AND ")
 			}
-			sb.WriteString(quoteIdent(w.Column))
-			sb.WriteByte(' ')
-			sb.WriteString(w.Operator)
-			sb.WriteByte(' ')
-			sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
-			if err != nil {
-				return Result{}, errors.Wrap(err, "translating WHERE value")
+			if w.Operator == "IN" {
+				tuple, ok := w.Value.(*parser.TupleLiteral)
+				if !ok {
+					return Result{}, errors.Newf("IN operator requires tuple value")
+				}
+				sb.WriteString(quoteIdent(w.Column))
+				sb.WriteString(" IN (")
+				for j, val := range tuple.Values {
+					if j > 0 {
+						sb.WriteString(", ")
+					}
+					sqlVal, param, err := exprToSQL(val, &paramIdx)
+					if err != nil {
+						return Result{}, errors.Wrap(err, "translating IN value")
+					}
+					sb.WriteString(sqlVal)
+					if param != nil {
+						params = append(params, param)
+					}
+				}
+				sb.WriteByte(')')
+			} else {
+				sb.WriteString(quoteIdent(w.Column))
+				sb.WriteByte(' ')
+				sb.WriteString(w.Operator)
+				sb.WriteByte(' ')
+				sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
+				if err != nil {
+					return Result{}, errors.Wrap(err, "translating WHERE value")
+				}
+				sb.WriteString(sqlVal)
+				if param != nil {
+					params = append(params, param)
+				}
 			}
-			sb.WriteString(sqlVal)
-			if param != nil {
-				params = append(params, param)
+		}
+	}
+
+	// ORDER BY.
+	if len(s.OrderBy) > 0 {
+		sb.WriteString(" ORDER BY ")
+		for i, ob := range s.OrderBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(ob.Column))
+			if ob.Desc {
+				sb.WriteString(" DESC")
 			}
 		}
 	}

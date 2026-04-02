@@ -1,8 +1,7 @@
 # IN clause on partition key and clustering columns.
 #
 # CQL IN allows multi-value lookups on partition and clustering keys.
-# The parser does not support IN: WHERE conditions expect a comparison
-# operator (=, <, >, <=, >=, !=), so IN is rejected.
+# The CQL layer translates IN directly to SQL IN.
 
 exec
 USE defaultdb
@@ -12,20 +11,42 @@ exec
 CREATE TABLE IF NOT EXISTS sel_in (pk int, ck int, val text, PRIMARY KEY (pk, ck))
 ----
 
-# IN on partition key.
-error
-SELECT * FROM sel_in WHERE pk IN (1, 2)
+exec
+INSERT INTO sel_in (pk, ck, val) VALUES (1, 10, 'a')
 ----
-at position 30: expected comparison operator, got "IN"
+
+exec
+INSERT INTO sel_in (pk, ck, val) VALUES (2, 20, 'b')
+----
+
+exec
+INSERT INTO sel_in (pk, ck, val) VALUES (3, 30, 'c')
+----
+
+exec
+INSERT INTO sel_in (pk, ck, val) VALUES (1, 20, 'd')
+----
+
+# IN on partition key.
+query rowsort
+SELECT pk, ck, val FROM sel_in WHERE pk IN (1, 2)
+----
+pk ck val
+1 10 a
+1 20 d
+2 20 b
 
 # IN on clustering column.
-error
-SELECT * FROM sel_in WHERE pk = 1 AND ck IN (10, 20)
+query rowsort
+SELECT pk, ck, val FROM sel_in WHERE pk = 1 AND ck IN (10, 20)
 ----
-at position 41: expected comparison operator, got "IN"
+pk ck val
+1 10 a
+1 20 d
 
-# IN on composite partition key.
-error
-SELECT * FROM sel_in WHERE pk IN (1, 2, 3) AND ck = 10
+# IN on partition key with three values.
+query rowsort
+SELECT pk, ck, val FROM sel_in WHERE pk IN (1, 2, 3) AND ck = 10
 ----
-at position 30: expected comparison operator, got "IN"
+pk ck val
+1 10 a

@@ -84,12 +84,15 @@ type InsertStatement struct {
 func (*InsertStatement) statementNode() {}
 
 // SelectStatement represents
-// SELECT <cols> FROM <table> [WHERE <conds>] [LIMIT <n>].
+// SELECT [DISTINCT] <cols> FROM <table> [WHERE <conds>]
+// [ORDER BY <col> [ASC|DESC], ...] [LIMIT <n>] [ALLOW FILTERING].
 type SelectStatement struct {
 	Table    string
 	Keyspace string // empty when unqualified
 	Columns  []Selector
+	Distinct bool
 	Where    []WhereClause
+	OrderBy  []OrderByClause
 	Limit    Expr // nil if no LIMIT
 }
 
@@ -101,11 +104,17 @@ type Selector struct {
 	Column string
 }
 
-// WhereClause is a single <col> <op> <val> condition. Only equality and simple
-// comparison operators are supported in phase 1.
+// OrderByClause specifies a single column ordering in ORDER BY.
+type OrderByClause struct {
+	Column string
+	Desc   bool
+}
+
+// WhereClause is a single <col> <op> <val> condition. For the IN operator,
+// Value is a *TupleLiteral containing the list of values.
 type WhereClause struct {
 	Column   string
-	Operator string // "=", "<", ">", "<=", ">=", "!="
+	Operator string // "=", "<", ">", "<=", ">=", "!=", "IN"
 	Value    Expr
 }
 
@@ -165,3 +174,11 @@ type NamedBindMarker struct {
 }
 
 func (*NamedBindMarker) exprNode() {}
+
+// TupleLiteral is a parenthesized list of values, used with the IN operator:
+// WHERE col IN (val1, val2, ...).
+type TupleLiteral struct {
+	Values []Expr
+}
+
+func (*TupleLiteral) exprNode() {}
