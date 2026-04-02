@@ -1,9 +1,8 @@
 # Lightweight transactions: DELETE IF conditions.
 #
 # CQL DELETE with IF clause performs a conditional delete: the row
-# is removed only if the condition evaluates to true. DELETE IF
-# EXISTS is supported. DELETE with IF conditions (IF col = val)
-# is not yet supported.
+# is removed only if the condition evaluates to true. IF conditions
+# are translated to additional WHERE predicates in the SQL DELETE.
 
 exec
 USE defaultdb
@@ -68,28 +67,88 @@ DELETE FROM lwt_del WHERE id = 999 IF EXISTS
 ----
 
 # ---------------------------------------------------------------
-# DELETE IF column = value is not yet supported.
+# DELETE IF column = value: condition matches → row is deleted.
 # ---------------------------------------------------------------
 
-error
-DELETE FROM lwt_del WHERE id = 1 IF name = 'alice'
+# Re-insert rows for conditional delete tests.
+exec
+INSERT INTO lwt_del (id, name, val) VALUES (10, 'dave', 400)
 ----
-DELETE with IF conditions is not yet supported
 
-# ---------------------------------------------------------------
-# DELETE IF column != value is not yet supported.
-# ---------------------------------------------------------------
-
-error
-DELETE FROM lwt_del WHERE id = 1 IF name != 'alice'
+exec
+INSERT INTO lwt_del (id, name, val) VALUES (11, 'eve', 500)
 ----
-DELETE with IF conditions is not yet supported
 
-# ---------------------------------------------------------------
-# DELETE with multiple IF conditions is not yet supported.
-# ---------------------------------------------------------------
-
-error
-DELETE FROM lwt_del WHERE id = 1 IF name = 'alice' AND val = 100
+exec
+DELETE FROM lwt_del WHERE id = 10 IF name = 'dave'
 ----
-DELETE with IF conditions is not yet supported
+
+# Verify row was deleted.
+query
+SELECT id, name FROM lwt_del WHERE id = 10
+----
+id name
+
+# ---------------------------------------------------------------
+# DELETE IF column = value: condition does NOT match → no-op.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM lwt_del WHERE id = 11 IF name = 'not_eve'
+----
+
+# Row is still present because the IF condition was false.
+query
+SELECT id, name, val FROM lwt_del WHERE id = 11
+----
+id name val
+11 eve 500
+
+# ---------------------------------------------------------------
+# DELETE IF column != value: condition matches → row is deleted.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM lwt_del WHERE id = 11 IF name != 'alice'
+----
+
+query
+SELECT id, name FROM lwt_del WHERE id = 11
+----
+id name
+
+# ---------------------------------------------------------------
+# DELETE with multiple IF conditions: all must match.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_del (id, name, val) VALUES (20, 'frank', 600)
+----
+
+exec
+DELETE FROM lwt_del WHERE id = 20 IF name = 'frank' AND val = 600
+----
+
+query
+SELECT id, name FROM lwt_del WHERE id = 20
+----
+id name
+
+# ---------------------------------------------------------------
+# DELETE with multiple IF conditions: one does not match → no-op.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_del (id, name, val) VALUES (21, 'grace', 700)
+----
+
+exec
+DELETE FROM lwt_del WHERE id = 21 IF name = 'grace' AND val = 999
+----
+
+# val is 700, not 999, so the delete is a no-op.
+query
+SELECT id, name, val FROM lwt_del WHERE id = 21
+----
+id name val
+21 grace 700

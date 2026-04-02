@@ -5,7 +5,8 @@
 # CQL layer translates it to a standard SQL UPDATE which only modifies
 # existing rows. UPDATE IF EXISTS is accepted (a no-op guard since SQL
 # UPDATE WHERE on a missing row is already a no-op). UPDATE with IF
-# conditions (lightweight transactions) is not yet supported.
+# conditions (lightweight transactions) translates IF predicates to
+# additional WHERE clauses so the update only applies when conditions match.
 
 exec
 USE defaultdb
@@ -113,26 +114,66 @@ SELECT pk, ck, name FROM dml_upd WHERE pk = 888
 pk ck name
 
 # ---------------------------------------------------------------
-# UPDATE with IF conditions (lightweight transactions) — unsupported.
+# UPDATE with IF conditions (lightweight transactions).
 #
 # CQL UPDATE with IF <col> = <val> performs a conditional update.
-# This is not yet supported by the translator.
+# IF conditions are translated to additional WHERE predicates.
 # ---------------------------------------------------------------
 
-error
+# IF condition matches → update applies.
+exec
 UPDATE dml_upd SET name = 'new' WHERE pk = 1 AND ck = 10 IF name = 'ALICE'
 ----
-UPDATE with IF conditions is not yet supported
 
-error
+query
+SELECT pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 new 999
+
+# IF condition does not match → no-op.
+exec
+UPDATE dml_upd SET name = 'nope' WHERE pk = 1 AND ck = 10 IF name = 'ALICE'
+----
+
+query
+SELECT pk, ck, name FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck name
+1 10 new
+
+# IF val != condition matches → update applies.
+exec
 UPDATE dml_upd SET val = 0 WHERE pk = 1 AND ck = 10 IF val != 100
 ----
-UPDATE with IF conditions is not yet supported
 
-error
-UPDATE dml_upd SET active = true WHERE pk = 1 AND ck = 10 IF active = false AND val = 999
+query
+SELECT pk, ck, val FROM dml_upd WHERE pk = 1 AND ck = 10
 ----
-UPDATE with IF conditions is not yet supported
+pk ck val
+1 10 0
+
+# Multiple IF conditions: all must match for update to apply.
+exec
+UPDATE dml_upd SET active = true WHERE pk = 1 AND ck = 10 IF name = 'new' AND val = 0
+----
+
+query
+SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck name val active
+1 10 new 0 true
+
+# Multiple IF conditions: one doesn't match → no-op.
+exec
+UPDATE dml_upd SET active = false WHERE pk = 1 AND ck = 10 IF active = true AND val = 999
+----
+
+query
+SELECT pk, ck, active FROM dml_upd WHERE pk = 1 AND ck = 10
+----
+pk ck active
+1 10 true
 
 # ---------------------------------------------------------------
 # UPDATE counter columns — unsupported.

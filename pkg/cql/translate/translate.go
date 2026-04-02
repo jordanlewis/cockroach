@@ -384,13 +384,10 @@ func writeWhereClauses(
 // translateUpdate maps CQL UPDATE to CRDB SQL UPDATE.
 //
 // CQL UPDATE with IF EXISTS or IF conditions uses conditional logic. IF EXISTS
-// is translated by wrapping the update in a CTE that checks existence. IF
-// conditions are not yet supported and produce an error.
+// is a no-op guard (SQL UPDATE WHERE is already a no-op for missing rows).
+// IF conditions are appended as additional WHERE predicates so the UPDATE
+// only executes when the conditions are satisfied.
 func translateUpdate(s *parser.UpdateStatement) (Result, error) {
-	if len(s.IfConds) > 0 {
-		return Result{}, errors.Newf("UPDATE with IF conditions is not yet supported")
-	}
-
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -420,6 +417,14 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 		return Result{}, err
 	}
 
+	// IF conditions are appended as additional WHERE predicates.
+	if len(s.IfConds) > 0 {
+		sb.WriteString(" AND ")
+		if err := writeWhereClauses(&sb, s.IfConds, &params, &paramIdx); err != nil {
+			return Result{}, err
+		}
+	}
+
 	return Result{SQL: sb.String(), Params: params}, nil
 }
 
@@ -427,12 +432,9 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 //
 // CQL DELETE with IF EXISTS or IF conditions is conditional. IF EXISTS is a
 // no-op guard (the SQL DELETE WHERE already handles missing rows). IF conditions
-// are not yet supported.
+// are appended as additional WHERE predicates so the DELETE only executes when
+// the conditions are satisfied.
 func translateDelete(s *parser.DeleteStatement) (Result, error) {
-	if len(s.IfConds) > 0 {
-		return Result{}, errors.Newf("DELETE with IF conditions is not yet supported")
-	}
-
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -443,6 +445,14 @@ func translateDelete(s *parser.DeleteStatement) (Result, error) {
 
 	if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
 		return Result{}, err
+	}
+
+	// IF conditions are appended as additional WHERE predicates.
+	if len(s.IfConds) > 0 {
+		sb.WriteString(" AND ")
+		if err := writeWhereClauses(&sb, s.IfConds, &params, &paramIdx); err != nil {
+			return Result{}, err
+		}
 	}
 
 	return Result{SQL: sb.String(), Params: params}, nil

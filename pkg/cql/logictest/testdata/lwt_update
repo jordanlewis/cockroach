@@ -2,9 +2,8 @@
 #
 # CQL UPDATE with IF clause performs a conditional update: the
 # mutation only applies if the condition evaluates to true against
-# the current row. UPDATE IF conditions (IF col = val) are not yet
-# supported by the translator and produce errors. Plain UPDATE and
-# UPDATE IF EXISTS work.
+# the current row. IF conditions are translated to additional WHERE
+# predicates in the SQL UPDATE.
 
 exec
 USE defaultdb
@@ -16,7 +15,7 @@ CREATE TABLE IF NOT EXISTS lwt_upd (id int, name text, val int, PRIMARY KEY (id)
 ----
 
 # ---------------------------------------------------------------
-# Plain UPDATE (without IF) is now supported.
+# Plain UPDATE (without IF) is supported.
 # ---------------------------------------------------------------
 
 exec
@@ -64,28 +63,87 @@ id name val
 1 carol 300
 
 # ---------------------------------------------------------------
-# UPDATE IF column = value (conditional) is not yet supported.
+# UPDATE IF column = value: condition matches → update applies.
 # ---------------------------------------------------------------
 
-error
-UPDATE lwt_upd SET name = 'bob' WHERE id = 1 IF name = 'alice'
+exec
+UPDATE lwt_upd SET name = 'dave' WHERE id = 1 IF name = 'carol'
 ----
-UPDATE with IF conditions is not yet supported
 
-# ---------------------------------------------------------------
-# UPDATE IF column != value is not yet supported.
-# ---------------------------------------------------------------
-
-error
-UPDATE lwt_upd SET val = 200 WHERE id = 1 IF val != 100
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
 ----
-UPDATE with IF conditions is not yet supported
+id name val
+1 dave 300
 
 # ---------------------------------------------------------------
-# UPDATE with multiple IF conditions is not yet supported.
+# UPDATE IF column = value: condition does NOT match → no-op.
 # ---------------------------------------------------------------
 
-error
-UPDATE lwt_upd SET name = 'both' WHERE id = 1 IF name = 'alice' AND val = 100
+exec
+UPDATE lwt_upd SET name = 'eve' WHERE id = 1 IF name = 'alice'
 ----
-UPDATE with IF conditions is not yet supported
+
+# Row is unchanged because the IF condition was false.
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 dave 300
+
+# ---------------------------------------------------------------
+# UPDATE IF column != value: condition matches → update applies.
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET val = 999 WHERE id = 1 IF val != 100
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 dave 999
+
+# ---------------------------------------------------------------
+# UPDATE IF column != value: condition does NOT match → no-op.
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET val = 0 WHERE id = 1 IF val != 999
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 dave 999
+
+# ---------------------------------------------------------------
+# UPDATE with multiple IF conditions: all must match.
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET name = 'frank', val = 500 WHERE id = 1 IF name = 'dave' AND val = 999
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 frank 500
+
+# ---------------------------------------------------------------
+# UPDATE with multiple IF conditions: one does not match → no-op.
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET name = 'ghost' WHERE id = 1 IF name = 'frank' AND val = 100
+----
+
+# val is 500, not 100, so the update is a no-op.
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 frank 500

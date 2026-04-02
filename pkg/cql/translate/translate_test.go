@@ -264,6 +264,21 @@ func TestTranslateUpdate(t *testing.T) {
 			cql:  "UPDATE users SET val = 1 WHERE id = 1 IF EXISTS",
 			want: `UPDATE "users" SET "val" = 1 WHERE "id" = 1`,
 		},
+		{
+			name: "if condition",
+			cql:  "UPDATE users SET name = 'bob' WHERE id = 1 IF name = 'alice'",
+			want: `UPDATE "users" SET "name" = 'bob' WHERE "id" = 1 AND "name" = 'alice'`,
+		},
+		{
+			name: "multiple if conditions",
+			cql:  "UPDATE users SET name = 'x' WHERE id = 1 IF name = 'alice' AND val = 100",
+			want: `UPDATE "users" SET "name" = 'x' WHERE "id" = 1 AND "name" = 'alice' AND "val" = 100`,
+		},
+		{
+			name: "if condition with not equal",
+			cql:  "UPDATE users SET val = 0 WHERE id = 1 IF val != 100",
+			want: `UPDATE "users" SET "val" = 0 WHERE "id" = 1 AND "val" != 100`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +316,21 @@ func TestTranslateDelete(t *testing.T) {
 			name: "multiple where clauses",
 			cql:  "DELETE FROM t WHERE pk = 1 AND ck = 2",
 			want: `DELETE FROM "t" WHERE "pk" = 1 AND "ck" = 2`,
+		},
+		{
+			name: "if condition",
+			cql:  "DELETE FROM t WHERE pk = 1 IF name = 'alice'",
+			want: `DELETE FROM "t" WHERE "pk" = 1 AND "name" = 'alice'`,
+		},
+		{
+			name: "multiple if conditions",
+			cql:  "DELETE FROM t WHERE pk = 1 IF name = 'alice' AND val = 100",
+			want: `DELETE FROM "t" WHERE "pk" = 1 AND "name" = 'alice' AND "val" = 100`,
+		},
+		{
+			name: "if condition with not equal",
+			cql:  "DELETE FROM t WHERE pk = 1 IF name != 'alice'",
+			want: `DELETE FROM "t" WHERE "pk" = 1 AND "name" != 'alice'`,
 		},
 	}
 	for _, tt := range tests {
