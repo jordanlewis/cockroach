@@ -67,6 +67,17 @@ func (c *ColumnDef) String() string {
 	return s
 }
 
+// CreateDatabaseStmt represents CREATE DATABASE <name>.
+type CreateDatabaseStmt struct {
+	Database string
+}
+
+func (*CreateDatabaseStmt) statementNode() {}
+
+func (s *CreateDatabaseStmt) String() string {
+	return fmt.Sprintf("CREATE DATABASE %s", formatIdent(s.Database))
+}
+
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).
 type CreateTableStmt struct {
 	Table   string
