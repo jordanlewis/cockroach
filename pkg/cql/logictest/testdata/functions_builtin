@@ -1,0 +1,97 @@
+# Built-in CQL functions: now(), uuid(), and unsupported CQL-specific
+# functions that produce errors.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_func (id int, name text, val_float double, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_func (id, name, val_float) VALUES (1, 'test', 3.14)
+----
+
+# now() translates to SQL now() and returns a timestamp.
+
+exec
+SELECT now() FROM lt_func
+----
+
+# uuid() translates to gen_random_uuid() and returns a UUID.
+
+exec
+SELECT uuid() FROM lt_func
+----
+
+# now() and uuid() can appear together.
+
+exec
+SELECT now(), uuid() FROM lt_func
+----
+
+# Unsupported CQL-specific functions produce errors from the SQL
+# layer because they have no SQL equivalents.
+
+# writetime() returns the write timestamp of a column (CQL-specific).
+
+error
+SELECT writetime(name) FROM lt_func
+----
+cql-query: unknown function: writetime()
+
+# ttl() returns the time-to-live of a column value (CQL-specific).
+
+error
+SELECT ttl(name) FROM lt_func
+----
+cql-query: unknown function: ttl()
+
+# token() returns the partition token (CQL-specific).
+
+error
+SELECT token(id) FROM lt_func
+----
+cql-query: unknown function: token()
+
+# CQL type conversion functions are not available in SQL.
+
+error
+SELECT toTimestamp(now()) FROM lt_func
+----
+cql-query: unknown function: totimestamp()
+
+error
+SELECT toDate(now()) FROM lt_func
+----
+cql-query: unknown function: todate()
+
+error
+SELECT toUnixTimestamp(now()) FROM lt_func
+----
+cql-query: unknown function: tounixtimestamp()
+
+# CQL timeuuid helper functions.
+
+error
+SELECT dateOf(now()) FROM lt_func
+----
+cql-query: unknown function: dateof()
+
+error
+SELECT unixTimestampOf(now()) FROM lt_func
+----
+cql-query: unknown function: unixtimestampof()
+
+# CQL blob conversion functions.
+
+error
+SELECT intAsBlob(id) FROM lt_func
+----
+cql-query: unknown function: intasblob()
+
+error
+SELECT blobAsInt(name) FROM lt_func
+----
+cql-query: unknown function: blobasint()

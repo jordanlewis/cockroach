@@ -190,6 +190,14 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 	return Result{SQL: sb.String(), Params: params}, nil
 }
 
+// cqlFuncToSQL maps CQL function names (lowercase) to their SQL
+// equivalents. Functions not in this map are passed through unchanged
+// (most aggregate functions like COUNT, SUM, AVG, MIN, MAX have
+// identical names in SQL).
+var cqlFuncToSQL = map[string]string{
+	"uuid": "gen_random_uuid",
+}
+
 // translateSelect maps CQL SELECT to CRDB SQL SELECT.
 func translateSelect(s *parser.SelectStatement) (Result, error) {
 	var sb strings.Builder
@@ -203,11 +211,7 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		if sel.Column == "*" {
-			sb.WriteByte('*')
-		} else {
-			sb.WriteString(quoteIdent(sel.Column))
-		}
+		selectorToSQL(&sb, sel)
 	}
 
 	sb.WriteString(" FROM ")
@@ -235,6 +239,17 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		}
 	}
 
+	// GROUP BY.
+	if len(s.GroupBy) > 0 {
+		sb.WriteString(" GROUP BY ")
+		for i, col := range s.GroupBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(col))
+		}
+	}
+
 	// LIMIT.
 	if s.Limit != nil {
 		sb.WriteString(" LIMIT ")
@@ -249,6 +264,31 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 	}
 
 	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// selectorToSQL writes a CQL Selector as SQL into the builder.
+func selectorToSQL(sb *strings.Builder, sel parser.Selector) {
+	if sel.FuncName != "" {
+		sqlName := strings.ToLower(sel.FuncName)
+		if mapped, ok := cqlFuncToSQL[sqlName]; ok {
+			sqlName = mapped
+		}
+		sb.WriteString(sqlName)
+		sb.WriteByte('(')
+		for i, arg := range sel.FuncArgs {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			selectorToSQL(sb, arg)
+		}
+		sb.WriteByte(')')
+		return
+	}
+	if sel.Column == "*" {
+		sb.WriteByte('*')
+	} else {
+		sb.WriteString(quoteIdent(sel.Column))
+	}
 }
 
 // ConsistencyToIsolation maps a CQL consistency level string to a CRDB

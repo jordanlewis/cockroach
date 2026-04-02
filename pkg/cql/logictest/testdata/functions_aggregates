@@ -1,0 +1,185 @@
+# Aggregate functions: COUNT, SUM, AVG, MIN, MAX with GROUP BY and
+# NULL handling.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS lt_agg (pk int, ck int, val_int int, val_float double, val_text text, PRIMARY KEY ((pk), ck))
+----
+
+# Insert test data across two partition keys.
+
+exec
+INSERT INTO lt_agg (pk, ck, val_int, val_float, val_text) VALUES (1, 1, 10, 1.5, 'alpha')
+----
+
+exec
+INSERT INTO lt_agg (pk, ck, val_int, val_float, val_text) VALUES (1, 2, 20, 2.5, 'bravo')
+----
+
+exec
+INSERT INTO lt_agg (pk, ck, val_int, val_float, val_text) VALUES (2, 1, 30, 3.5, 'charlie')
+----
+
+exec
+INSERT INTO lt_agg (pk, ck, val_int, val_float, val_text) VALUES (2, 2, 40, 4.5, 'delta')
+----
+
+# Row with NULLs for NULL handling tests.
+
+exec
+INSERT INTO lt_agg (pk, ck, val_int, val_float, val_text) VALUES (3, 1, null, null, null)
+----
+
+# COUNT(*) counts all rows including those with NULLs.
+
+query
+SELECT COUNT(*) FROM lt_agg
+----
+count
+5
+
+# COUNT(column) excludes NULL values.
+
+query
+SELECT COUNT(val_int) FROM lt_agg
+----
+count
+4
+
+# SUM on float column.
+
+query
+SELECT SUM(val_float) FROM lt_agg
+----
+sum
+12
+
+# AVG on float column.
+
+query
+SELECT AVG(val_float) FROM lt_agg
+----
+avg
+3
+
+# MIN on int column.
+
+query
+SELECT MIN(val_int) FROM lt_agg
+----
+min
+10
+
+# MAX on int column.
+
+query
+SELECT MAX(val_int) FROM lt_agg
+----
+max
+40
+
+# MIN on text column.
+
+query
+SELECT MIN(val_text) FROM lt_agg
+----
+min
+alpha
+
+# MAX on text column.
+
+query
+SELECT MAX(val_text) FROM lt_agg
+----
+max
+delta
+
+# GROUP BY partition key with COUNT.
+
+query rowsort
+SELECT pk, COUNT(*) FROM lt_agg GROUP BY pk
+----
+pk count
+1 2
+2 2
+3 1
+
+# GROUP BY with SUM on float column.
+
+query rowsort
+SELECT pk, SUM(val_float) FROM lt_agg GROUP BY pk
+----
+pk sum
+1 4
+2 8
+3 NULL
+
+# GROUP BY with MIN and MAX.
+
+query rowsort
+SELECT pk, MIN(val_int), MAX(val_int) FROM lt_agg GROUP BY pk
+----
+pk min max
+1 10 20
+2 30 40
+3 NULL NULL
+
+# GROUP BY clustering column.
+
+query rowsort
+SELECT ck, COUNT(*) FROM lt_agg GROUP BY ck
+----
+ck count
+1 3
+2 2
+
+# Multiple aggregates in one query.
+
+query
+SELECT COUNT(*), MIN(val_int), MAX(val_int) FROM lt_agg
+----
+count min max
+5 10 40
+
+# COUNT(*) vs COUNT on nullable columns.
+
+query
+SELECT COUNT(*), COUNT(val_int), COUNT(val_text) FROM lt_agg
+----
+count count count
+5 4 4
+
+# SUM of only-NULL group returns NULL.
+
+query
+SELECT SUM(val_float) FROM lt_agg WHERE pk = 3
+----
+sum
+NULL
+
+# AVG of only-NULL group returns NULL.
+
+query
+SELECT AVG(val_float) FROM lt_agg WHERE pk = 3
+----
+avg
+NULL
+
+# MIN of only-NULL group returns NULL.
+
+query
+SELECT MIN(val_int) FROM lt_agg WHERE pk = 3
+----
+min
+NULL
+
+# MAX of only-NULL group returns NULL.
+
+query
+SELECT MAX(val_int) FROM lt_agg WHERE pk = 3
+----
+max
+NULL

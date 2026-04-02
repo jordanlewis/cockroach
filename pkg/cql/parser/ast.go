@@ -84,21 +84,32 @@ type InsertStatement struct {
 func (*InsertStatement) statementNode() {}
 
 // SelectStatement represents
-// SELECT <cols> FROM <table> [WHERE <conds>] [LIMIT <n>].
+// SELECT <cols> FROM <table> [WHERE <conds>] [GROUP BY <cols>] [LIMIT <n>].
 type SelectStatement struct {
 	Table    string
 	Keyspace string // empty when unqualified
 	Columns  []Selector
 	Where    []WhereClause
-	Limit    Expr // nil if no LIMIT
+	GroupBy  []string // GROUP BY column names
+	Limit    Expr     // nil if no LIMIT
 }
 
 func (*SelectStatement) statementNode() {}
 
-// Selector is a single item in a SELECT list.
+// Selector is a single item in a SELECT list. It represents either a
+// plain column reference (Column is set), or a function call
+// (FuncName is set).
 type Selector struct {
 	// Column is the column name. "*" represents all columns.
+	// Empty when FuncName is set.
 	Column string
+	// FuncName is the function name when this selector is a function
+	// call (e.g. "count", "sum", "now"). Empty for plain column
+	// references.
+	FuncName string
+	// FuncArgs are the arguments to the function call. May be empty
+	// for zero-arg functions like now().
+	FuncArgs []Selector
 }
 
 // WhereClause is a single <col> <op> <val> condition. Only equality and simple

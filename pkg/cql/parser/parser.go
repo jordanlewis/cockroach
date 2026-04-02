@@ -292,6 +292,19 @@ func (p *parser) parseSelect() (*SelectStatement, error) {
 		stmt.Where = where
 	}
 
+	// Optional GROUP BY.
+	if isKeyword(p.lex.peek(), "GROUP") {
+		p.lex.next() // consume GROUP
+		if err := p.expectKeyword("BY"); err != nil {
+			return nil, err
+		}
+		groupBy, err := p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		stmt.GroupBy = groupBy
+	}
+
 	// Optional LIMIT.
 	if isKeyword(p.lex.peek(), "LIMIT") {
 		p.lex.next()
@@ -613,27 +626,64 @@ func (p *parser) parseExpr() (Expr, error) {
 }
 
 // parseSelectors parses the SELECT list: either * or a comma-separated list of
-// column names.
+// column names and/or function calls like COUNT(*), SUM(col), now().
 func (p *parser) parseSelectors() ([]Selector, error) {
 	if p.lex.peek().kind == tokStar {
 		p.lex.next()
 		return []Selector{{Column: "*"}}, nil
 	}
 	var selectors []Selector
-	name, err := p.expectIdent()
+	sel, err := p.parseOneSelector()
 	if err != nil {
 		return nil, err
 	}
-	selectors = append(selectors, Selector{Column: name})
+	selectors = append(selectors, sel)
 	for p.lex.peek().kind == tokComma {
 		p.lex.next()
-		name, err := p.expectIdent()
+		sel, err := p.parseOneSelector()
 		if err != nil {
 			return nil, err
 		}
-		selectors = append(selectors, Selector{Column: name})
+		selectors = append(selectors, sel)
 	}
 	return selectors, nil
+}
+
+// parseOneSelector parses a single selector: either a plain column
+// name or a function call like COUNT(*), SUM(col), now().
+func (p *parser) parseOneSelector() (Selector, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return Selector{}, err
+	}
+	// If followed by '(', this is a function call.
+	if p.lex.peek().kind == tokLParen {
+		p.lex.next() // consume '('
+		var args []Selector
+		if p.lex.peek().kind != tokRParen {
+			for {
+				if p.lex.peek().kind == tokStar {
+					p.lex.next()
+					args = append(args, Selector{Column: "*"})
+				} else {
+					arg, argErr := p.parseOneSelector()
+					if argErr != nil {
+						return Selector{}, argErr
+					}
+					args = append(args, arg)
+				}
+				if p.lex.peek().kind != tokComma {
+					break
+				}
+				p.lex.next() // consume ','
+			}
+		}
+		if err := p.expectToken(tokRParen); err != nil {
+			return Selector{}, err
+		}
+		return Selector{FuncName: name, FuncArgs: args}, nil
+	}
+	return Selector{Column: name}, nil
 }
 
 // parseWhereClauses parses <col> <op> <val> [AND ...].
