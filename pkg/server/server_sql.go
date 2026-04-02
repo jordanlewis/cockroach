@@ -229,6 +229,7 @@ type SQLServer struct {
 	// and translates them to internal SQL execution. It is nil when TNS
 	// is disabled.
 	tnsServer *tns.Server
+	tnsAddr   string
 
 	systemConfigWatcher *systemconfigwatcher.Cache
 
@@ -2378,6 +2379,12 @@ func (s *SQLServer) TNSServer() *tns.Server {
 	return s.tnsServer
 }
 
+// TNSAddr returns the address the TNS server is listening on, or the
+// empty string if TNS is not enabled.
+func (s *SQLServer) TNSAddr() string {
+	return s.tnsAddr
+}
+
 // maybeStartTNS starts the TNS server if the server.tns.enabled cluster
 // setting is true.
 func (s *SQLServer) maybeStartTNS(ctx context.Context, stopper *stop.Stopper) error {
@@ -2389,7 +2396,7 @@ func (s *SQLServer) maybeStartTNS(ctx context.Context, stopper *stop.Stopper) er
 	}
 	if tnsServer != nil {
 		s.tnsServer = tnsServer
-		_ = addr
+		s.tnsAddr = addr
 	}
 	return nil
 }
