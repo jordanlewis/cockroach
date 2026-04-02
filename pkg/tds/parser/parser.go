@@ -852,6 +852,9 @@ func (p *parser) parsePrimary() (Expr, error) {
 		}
 		return &ParenExpr{Expr: expr}, nil
 
+	case tokenCASE:
+		return p.parseCASE()
+
 	case tokenGETDATE:
 		p.lex.next()
 		if err := p.expect(tokenLParen); err != nil {
@@ -929,6 +932,59 @@ func (p *parser) parseCONVERT() (Expr, error) {
 		return nil, err
 	}
 	return conv, nil
+}
+
+// parseCASE parses:
+//
+//	CASE [<operand>] WHEN <cond> THEN <result> ... [ELSE <result>] END
+func (p *parser) parseCASE() (Expr, error) {
+	p.lex.next() // consume CASE
+	expr := &CaseExpr{}
+
+	// Optional simple operand (e.g. CASE x WHEN 1 THEN ...).
+	if p.lex.peek().typ != tokenWHEN {
+		operand, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		expr.Operand = operand
+	}
+
+	// At least one WHEN ... THEN ... clause.
+	for p.lex.peek().typ == tokenWHEN {
+		p.lex.next() // consume WHEN
+		cond, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenTHEN); err != nil {
+			return nil, err
+		}
+		result, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		expr.Whens = append(expr.Whens, WhenExpr{Cond: cond, Result: result})
+	}
+
+	if len(expr.Whens) == 0 {
+		return nil, p.error("expected at least one WHEN clause in CASE")
+	}
+
+	// Optional ELSE.
+	if p.lex.peek().typ == tokenELSE {
+		p.lex.next()
+		elseResult, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		expr.Else = elseResult
+	}
+
+	if err := p.expect(tokenEND); err != nil {
+		return nil, err
+	}
+	return expr, nil
 }
 
 // parseIdentOrFunc parses an identifier, a dotted identifier (a.b.c), or a
@@ -1017,6 +1073,7 @@ func isKeywordToken(typ tokenType) bool {
 		tokenAND, tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
 		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
 		tokenDROP, tokenDISTINCT, tokenGROUP, tokenHAVING,
+		tokenCASE, tokenWHEN, tokenTHEN, tokenELSE, tokenEND,
 		tokenISNULL, tokenCONVERT, tokenGETDATE:
 		return true
 	}

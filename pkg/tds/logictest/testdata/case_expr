@@ -1,0 +1,65 @@
+# CASE expression tests.
+
+# Simple CASE (searched).
+query
+SELECT CASE WHEN 1 = 1 THEN 'yes' ELSE 'no' END
+----
+yes
+
+query
+SELECT CASE WHEN 1 = 2 THEN 'yes' ELSE 'no' END
+----
+no
+
+# CASE without ELSE (returns NULL).
+query
+SELECT ISNULL(CASE WHEN 1 = 2 THEN 'yes' END, 'was null')
+----
+was null
+
+# CASE with multiple WHEN clauses.
+query
+SELECT CASE WHEN 1 = 2 THEN 'first' WHEN 1 = 1 THEN 'second' ELSE 'third' END
+----
+second
+
+# Simple CASE (with operand).
+query
+SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END
+----
+one
+
+query
+SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END
+----
+two
+
+query
+SELECT CASE 3 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END
+----
+other
+
+# CASE in a column list with alias.
+exec
+CREATE TABLE case_test (id INT, score INT)
+----
+
+exec
+INSERT INTO case_test (id, score) VALUES (1, 90)
+----
+
+exec
+INSERT INTO case_test (id, score) VALUES (2, 75)
+----
+
+exec
+INSERT INTO case_test (id, score) VALUES (3, 50)
+----
+
+query colnames
+SELECT id, score, CASE WHEN score >= 80 THEN 'pass' ELSE 'fail' END AS result FROM case_test ORDER BY id
+----
+id  score  result
+1  90  pass
+2  75  fail
+3  50  fail

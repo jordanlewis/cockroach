@@ -472,6 +472,38 @@ func (e *BetweenExpr) String() string {
 	return fmt.Sprintf("%s BETWEEN %s AND %s", e.Expr, e.Low, e.High)
 }
 
+// CaseExpr represents CASE [<operand>] WHEN <cond> THEN <result> ... [ELSE
+// <result>] END.
+type CaseExpr struct {
+	Operand Expr       // nil for searched CASE
+	Whens   []WhenExpr // at least one
+	Else    Expr       // nil if no ELSE
+}
+
+// WhenExpr represents a single WHEN ... THEN ... within a CASE expression.
+type WhenExpr struct {
+	Cond   Expr
+	Result Expr
+}
+
+func (*CaseExpr) exprNode() {}
+
+func (e *CaseExpr) String() string {
+	var b strings.Builder
+	b.WriteString("CASE")
+	if e.Operand != nil {
+		fmt.Fprintf(&b, " %s", e.Operand)
+	}
+	for _, w := range e.Whens {
+		fmt.Fprintf(&b, " WHEN %s THEN %s", w.Cond, w.Result)
+	}
+	if e.Else != nil {
+		fmt.Fprintf(&b, " ELSE %s", e.Else)
+	}
+	b.WriteString(" END")
+	return b.String()
+}
+
 // formatIdent returns an identifier, quoting it with brackets if it contains
 // special characters or is a reserved word. For simplicity, identifiers that
 // are plain alphanumeric (plus underscore) are returned unquoted.
