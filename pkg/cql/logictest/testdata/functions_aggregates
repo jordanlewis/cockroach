@@ -1,0 +1,104 @@
+# Aggregate functions: COUNT, SUM, AVG, MIN, MAX.
+#
+# CQL supports aggregate functions in SELECT lists. The parser does
+# not support function call syntax: it reads the function name as a
+# column identifier and then fails when it encounters the opening
+# parenthesis instead of FROM.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS agg_t (pk int, ck int, val int, name text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO agg_t (pk, ck, val, name) VALUES (1, 1, 10, 'alpha')
+----
+
+exec
+INSERT INTO agg_t (pk, ck, val, name) VALUES (1, 2, 20, 'bravo')
+----
+
+exec
+INSERT INTO agg_t (pk, ck, val, name) VALUES (2, 1, 30, 'charlie')
+----
+
+exec
+INSERT INTO agg_t (pk, ck, val, name) VALUES (2, 2, NULL, 'delta')
+----
+
+# COUNT(*) — count all rows.
+# "COUNT" is parsed as a column name; "(" at position 12 is unexpected.
+error
+SELECT COUNT(*) FROM agg_t
+----
+at position 12: expected FROM, got "("
+
+# COUNT(column) — count non-null values.
+error
+SELECT COUNT(val) FROM agg_t
+----
+at position 12: expected FROM, got "("
+
+# SUM(column).
+error
+SELECT SUM(val) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# AVG(column).
+error
+SELECT AVG(val) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# MIN(column).
+error
+SELECT MIN(val) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# MAX(column).
+error
+SELECT MAX(val) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# Multiple aggregates in one SELECT.
+error
+SELECT COUNT(*), SUM(val) FROM agg_t
+----
+at position 12: expected FROM, got "("
+
+# Aggregate with alias (AS).
+error
+SELECT COUNT(*) AS total FROM agg_t
+----
+at position 12: expected FROM, got "("
+
+# Aggregate with WHERE clause.
+error
+SELECT SUM(val) FROM agg_t WHERE pk = 1
+----
+at position 10: expected FROM, got "("
+
+# Aggregate on text column.
+error
+SELECT MIN(name) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# MAX on text column.
+error
+SELECT MAX(name) FROM agg_t
+----
+at position 10: expected FROM, got "("
+
+# COUNT with DISTINCT inside the function call. The parser reads
+# "COUNT" as a column, then fails on "(" regardless.
+error
+SELECT COUNT(DISTINCT val) FROM agg_t
+----
+at position 12: expected FROM, got "("

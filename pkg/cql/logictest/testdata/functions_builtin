@@ -1,0 +1,188 @@
+# Built-in scalar functions.
+#
+# CQL provides built-in functions for time, UUID, type conversion,
+# and metadata. The parser does not support function call syntax in
+# either SELECT lists or WHERE clauses. In SELECT lists, the function
+# name is read as a column identifier and the parser fails on the
+# opening parenthesis. In WHERE clauses, the function name is read
+# as a column identifier and the parser expects a comparison operator
+# but gets the opening parenthesis.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS fn_t (pk int, ts timestamp, uid uuid, val text, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO fn_t (pk, ts, uid, val) VALUES (1, '2024-01-15T10:30:00Z', 550e8400-e29b-41d4-a716-446655440000, 'hello')
+----
+
+# -- Time functions --
+
+# now() — returns current timestamp as timeuuid.
+# "now" (3 chars) starts at offset 7; "(" is at offset 10.
+error
+SELECT now() FROM fn_t
+----
+at position 10: expected FROM, got "("
+
+# toTimestamp(timeuuid) — converts timeuuid to timestamp.
+# "toTimestamp" (11 chars) starts at 7; "(" is at 18.
+error
+SELECT toTimestamp(uid) FROM fn_t
+----
+at position 18: expected FROM, got "("
+
+# toDate(timestamp) — converts timestamp to date.
+# "toDate" (6 chars) starts at 7; "(" is at 13.
+error
+SELECT toDate(ts) FROM fn_t
+----
+at position 13: expected FROM, got "("
+
+# toUnixTimestamp(timestamp) — converts to unix timestamp (bigint).
+# "toUnixTimestamp" (15 chars) starts at 7; "(" is at 22.
+error
+SELECT toUnixTimestamp(ts) FROM fn_t
+----
+at position 22: expected FROM, got "("
+
+# dateOf(timeuuid) — extracts timestamp from timeuuid (deprecated).
+# "dateOf" (6 chars) starts at 7; "(" is at 13.
+error
+SELECT dateOf(uid) FROM fn_t
+----
+at position 13: expected FROM, got "("
+
+# unixTimestampOf(timeuuid) — extracts unix timestamp (deprecated).
+# "unixTimestampOf" (15 chars) starts at 7; "(" is at 22.
+error
+SELECT unixTimestampOf(uid) FROM fn_t
+----
+at position 22: expected FROM, got "("
+
+# -- UUID functions --
+
+# uuid() — generates a random UUID.
+# "uuid" (4 chars) starts at 7; "(" is at 11.
+error
+SELECT uuid() FROM fn_t
+----
+at position 11: expected FROM, got "("
+
+# minTimeuuid(timestamp) — returns smallest timeuuid for a timestamp.
+# "minTimeuuid" (11 chars) starts at 7; "(" is at 18.
+error
+SELECT minTimeuuid(ts) FROM fn_t
+----
+at position 18: expected FROM, got "("
+
+# maxTimeuuid(timestamp) — returns largest timeuuid for a timestamp.
+# "maxTimeuuid" (11 chars) starts at 7; "(" is at 18.
+error
+SELECT maxTimeuuid(ts) FROM fn_t
+----
+at position 18: expected FROM, got "("
+
+# -- token() function --
+# (Also tested in select_token_function; included here for
+# completeness of the built-in function catalog.)
+
+# token() in SELECT list.
+# "token" (5 chars) starts at 7; "(" is at 12.
+error
+SELECT token(pk) FROM fn_t
+----
+at position 12: expected FROM, got "("
+
+# token() in WHERE clause: parser reads "token" as a column name,
+# then expects a comparison operator but finds "(". "token" starts
+# at offset 25, "(" is at offset 30.
+error
+SELECT * FROM fn_t WHERE token(pk) > 0
+----
+at position 30: expected comparison operator, got "("
+
+# -- Metadata functions --
+
+# writetime(column) — returns write timestamp of a column.
+# "writetime" (9 chars) starts at 7; "(" is at 16.
+error
+SELECT writetime(val) FROM fn_t
+----
+at position 16: expected FROM, got "("
+
+# ttl(column) — returns TTL of a column value.
+# "ttl" (3 chars) starts at 7; "(" is at 10.
+error
+SELECT ttl(val) FROM fn_t
+----
+at position 10: expected FROM, got "("
+
+# -- Type conversion functions --
+
+# blobAsInt — converts blob to int.
+# "blobAsInt" (9 chars) starts at 7; "(" is at 16.
+error
+SELECT blobAsInt(val) FROM fn_t
+----
+at position 16: expected FROM, got "("
+
+# intAsBlob — converts int to blob.
+# "intAsBlob" (9 chars) starts at 7; "(" is at 16.
+error
+SELECT intAsBlob(pk) FROM fn_t
+----
+at position 16: expected FROM, got "("
+
+# blobAsText — converts blob to text.
+# "blobAsText" (10 chars) starts at 7; "(" is at 17.
+error
+SELECT blobAsText(val) FROM fn_t
+----
+at position 17: expected FROM, got "("
+
+# textAsBlob — converts text to blob.
+# "textAsBlob" (10 chars) starts at 7; "(" is at 17.
+error
+SELECT textAsBlob(val) FROM fn_t
+----
+at position 17: expected FROM, got "("
+
+# -- CAST function --
+
+# CAST(column AS type). The parser reads "CAST" as a column name
+# (4 chars at offset 7); "(" is at 11.
+error
+SELECT CAST(pk AS bigint) FROM fn_t
+----
+at position 11: expected FROM, got "("
+
+# -- Function in WHERE clause (non-token) --
+
+# minTimeuuid() in WHERE clause for time range queries.
+# After "uid > ", parseExpr sees "minTimeuuid" (an identifier at
+# offset 31) which it cannot handle as an expression.
+error
+SELECT * FROM fn_t WHERE uid > minTimeuuid('2024-01-01')
+----
+at position 31: expected expression, got identifier "minTimeuuid"
+
+# now() in WHERE clause.
+# After "ts > ", parseExpr sees "now" (an identifier at offset 30).
+error
+SELECT * FROM fn_t WHERE ts > now()
+----
+at position 30: expected expression, got identifier "now"
+
+# -- Functions with no arguments in INSERT --
+
+# now() in INSERT VALUES. The parser reads "now" as an identifier
+# and cannot parse it as an expression. "now" is at offset 47.
+error
+INSERT INTO fn_t (pk, ts, uid, val) VALUES (2, now(), uuid(), 'test')
+----
+at position 47: expected expression, got identifier "now"
