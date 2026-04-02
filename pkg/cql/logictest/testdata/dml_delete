@@ -1,0 +1,214 @@
+# DML tests for CQL DELETE statements.
+#
+# CQL DELETE removes entire rows by primary key. Column-level DELETE
+# (DELETE col1, col2 FROM table WHERE ...) is a Cassandra feature that
+# sets individual columns to null (tombstones); this syntax is not yet
+# supported by the parser. DELETE IF EXISTS is accepted (SQL DELETE
+# WHERE is already a no-op for missing rows). DELETE with IF conditions
+# is not yet supported.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS dml_del (pk int, ck int, name text, val int, PRIMARY KEY (pk, ck))
+----
+
+# Seed data.
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 10, 'alice', 100)
+----
+
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 20, 'bob', 200)
+----
+
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 30, 'carol', 300)
+----
+
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (2, 10, 'dave', 400)
+----
+
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (2, 20, 'eve', 500)
+----
+
+# Verify seed data.
+query rowsort
+SELECT pk, ck, name, val FROM dml_del
+----
+pk ck name val
+1 10 alice 100
+1 20 bob 200
+1 30 carol 300
+2 10 dave 400
+2 20 eve 500
+
+# ---------------------------------------------------------------
+# DELETE entire row by full primary key.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM dml_del WHERE pk = 1 AND ck = 30
+----
+
+query rowsort
+SELECT pk, ck, name FROM dml_del WHERE pk = 1
+----
+pk ck name
+1 10 alice
+1 20 bob
+
+# ---------------------------------------------------------------
+# DELETE with only partition key (deletes all rows in partition).
+# ---------------------------------------------------------------
+
+# Re-seed pk=1, ck=30 for this test.
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 30, 'carol', 300)
+----
+
+exec
+DELETE FROM dml_del WHERE pk = 2
+----
+
+# Verify all pk=2 rows are gone.
+query
+SELECT pk, ck, name FROM dml_del WHERE pk = 2
+----
+pk ck name
+
+# Verify pk=1 rows are still present.
+query rowsort
+SELECT pk, ck, name FROM dml_del WHERE pk = 1
+----
+pk ck name
+1 10 alice
+1 20 bob
+1 30 carol
+
+# ---------------------------------------------------------------
+# DELETE non-existent row → no-op.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM dml_del WHERE pk = 999 AND ck = 1
+----
+
+# ---------------------------------------------------------------
+# DELETE IF EXISTS: row exists → row is deleted.
+#
+# IF EXISTS is accepted by the parser. SQL DELETE WHERE is already
+# a no-op for missing rows, so this is semantically equivalent.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM dml_del WHERE pk = 1 AND ck = 30 IF EXISTS
+----
+
+query rowsort
+SELECT pk, ck, name FROM dml_del WHERE pk = 1
+----
+pk ck name
+1 10 alice
+1 20 bob
+
+# DELETE IF EXISTS on missing row → no-op.
+exec
+DELETE FROM dml_del WHERE pk = 1 AND ck = 30 IF EXISTS
+----
+
+# ---------------------------------------------------------------
+# DELETE with IN clause — unsupported in translator.
+#
+# The parser accepts IN in the WHERE clause, but the DELETE
+# translator does not handle TupleLiteral values (only the
+# SELECT translator does). This produces a translation error.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM dml_del WHERE pk IN (10, 11)
+----
+translating WHERE value: unsupported expression type: *parser.TupleLiteral
+
+# ---------------------------------------------------------------
+# DELETE specific columns (tombstones) — unsupported.
+#
+# In Cassandra, DELETE col1, col2 FROM table WHERE ... sets those
+# columns to null (tombstones) rather than removing the entire row.
+# The parser expects FROM immediately after DELETE, so column names
+# are interpreted as the expected FROM keyword.
+# ---------------------------------------------------------------
+
+error
+DELETE name FROM dml_del WHERE pk = 1 AND ck = 10
+----
+at position 7: expected FROM, got "name"
+
+error
+DELETE name, val FROM dml_del WHERE pk = 1 AND ck = 10
+----
+at position 7: expected FROM, got "name"
+
+# ---------------------------------------------------------------
+# DELETE with IF conditions — unsupported.
+#
+# CQL DELETE with IF col = val performs a conditional delete. This
+# is not yet supported by the translator.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'alice'
+----
+DELETE with IF conditions is not yet supported
+
+error
+DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name != 'alice'
+----
+DELETE with IF conditions is not yet supported
+
+error
+DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'alice' AND val = 100
+----
+DELETE with IF conditions is not yet supported
+
+# ---------------------------------------------------------------
+# Tombstone behavior: INSERT after DELETE restores the row.
+#
+# In Cassandra, a DELETE creates a tombstone marker. A subsequent
+# INSERT for the same primary key overwrites the tombstone and
+# restores the row. CockroachDB achieves the same effect through
+# standard SQL DELETE + UPSERT semantics.
+# ---------------------------------------------------------------
+
+# Verify the row exists.
+query
+SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 alice 100
+
+# Delete it.
+exec
+DELETE FROM dml_del WHERE pk = 1 AND ck = 10
+----
+
+# Verify it's gone.
+query
+SELECT pk, ck, name FROM dml_del WHERE pk = 1 AND ck = 10
+----
+pk ck name
+
+# Re-insert with different values — the "tombstone" is overwritten.
+exec
+INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 10, 'revived', 777)
+----
+
+query
+SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 revived 777

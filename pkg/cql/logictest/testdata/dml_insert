@@ -1,0 +1,188 @@
+# DML tests for CQL INSERT statements.
+#
+# CQL INSERT is an upsert by default (last-write-wins): if a row with
+# the same primary key already exists, it is silently overwritten. The
+# translator maps this to UPSERT INTO. When IF NOT EXISTS is present,
+# the INSERT is conditional and maps to a SQL INSERT (which fails on
+# constraint violation rather than returning CQL's [applied] result set).
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS dml_ins (pk int, ck int, name text, val int, PRIMARY KEY (pk, ck))
+----
+
+# ---------------------------------------------------------------
+# INSERT with all columns specified.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (1, 10, 'alice', 100)
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 alice 100
+
+# ---------------------------------------------------------------
+# INSERT with partial columns (omitting nullable columns).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO dml_ins (pk, ck, name) VALUES (2, 20, 'bob')
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 2 AND ck = 20
+----
+pk ck name val
+2 20 bob NULL
+
+# INSERT specifying only primary key columns.
+exec
+INSERT INTO dml_ins (pk, ck) VALUES (3, 30)
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 3 AND ck = 30
+----
+pk ck name val
+3 30 NULL NULL
+
+# ---------------------------------------------------------------
+# Upsert semantics: INSERT overwrites existing row.
+#
+# In CQL, a plain INSERT (without IF NOT EXISTS) is an upsert:
+# it silently replaces any existing row with the same primary key.
+# ---------------------------------------------------------------
+
+# First insert.
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (10, 1, 'original', 1)
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 10 AND ck = 1
+----
+pk ck name val
+10 1 original 1
+
+# Overwrite with different values — same primary key.
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (10, 1, 'replaced', 999)
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 10 AND ck = 1
+----
+pk ck name val
+10 1 replaced 999
+
+# Partial overwrite: upsert with fewer columns preserves omitted cols.
+#
+# Note: In Cassandra, a plain INSERT replaces the entire row, so
+# omitted columns become null (tombstoned). CockroachDB UPSERT only
+# updates the specified columns — omitted columns retain their values.
+# This is a known semantic difference.
+exec
+INSERT INTO dml_ins (pk, ck, name) VALUES (10, 1, 'partial')
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 10 AND ck = 1
+----
+pk ck name val
+10 1 partial 999
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS: conditional insert.
+#
+# When IF NOT EXISTS is specified, the INSERT maps to a SQL INSERT
+# (not UPSERT). If the row already exists, a constraint violation
+# error is returned. In Cassandra, this returns [applied]=false
+# with the existing row; CockroachDB returns an error instead.
+# ---------------------------------------------------------------
+
+# Insert into a fresh primary key — succeeds.
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (20, 1, 'unique', 42) IF NOT EXISTS
+----
+
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 20 AND ck = 1
+----
+pk ck name val
+20 1 unique 42
+
+# Duplicate primary key — fails with constraint violation.
+error
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (20, 1, 'dupe', 99) IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "dml_ins_pkey"
+
+# Verify original row is unchanged after failed IF NOT EXISTS.
+query
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 20 AND ck = 1
+----
+pk ck name val
+20 1 unique 42
+
+# ---------------------------------------------------------------
+# INSERT with multiple rows via separate statements.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (100, 1, 'row1', 1)
+----
+
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (100, 2, 'row2', 2)
+----
+
+exec
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (100, 3, 'row3', 3)
+----
+
+query rowsort
+SELECT pk, ck, name, val FROM dml_ins WHERE pk = 100
+----
+pk ck name val
+100 1 row1 1
+100 2 row2 2
+100 3 row3 3
+
+# ---------------------------------------------------------------
+# INSERT with USING TTL (unsupported).
+#
+# CQL USING TTL sets a per-row time-to-live. The parser finishes
+# parsing the INSERT and then encounters the unexpected USING token.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (30, 1, 'ttl', 1) USING TTL 3600
+----
+at position 65: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# INSERT with USING TIMESTAMP (unsupported).
+#
+# CQL USING TIMESTAMP sets an explicit write timestamp (microseconds).
+# ---------------------------------------------------------------
+
+error
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (31, 1, 'ts', 1) USING TIMESTAMP 1234567890
+----
+at position 64: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# INSERT with both USING TTL and TIMESTAMP (unsupported).
+# ---------------------------------------------------------------
+
+error
+INSERT INTO dml_ins (pk, ck, name, val) VALUES (32, 1, 'both', 1) USING TTL 3600 AND TIMESTAMP 1234567890
+----
+at position 66: unexpected token "USING" after statement
