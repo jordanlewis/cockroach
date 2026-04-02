@@ -9,14 +9,25 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5"
 	"io"
 	"net"
+	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
+
+// preparedStmt holds a cached prepared statement. The CQL query is
+// stored along with the number of bind markers so that EXECUTE can
+// validate value counts. The prepared ID is an MD5 hash of the query
+// string, matching the convention used by Cassandra drivers.
+type preparedStmt struct {
+	query     string
+	bindCount int
+}
 
 // conn represents a single CQL client connection. It holds the
 // network connection, buffered I/O, and the frame channel that
@@ -46,15 +57,21 @@ type conn struct {
 	// keyspace is the current CQL keyspace (database) set via USE.
 	// Only accessed by the processor goroutine.
 	keyspace string
+
+	// preparedStmts caches prepared statements for this connection,
+	// keyed by the prepared ID (MD5 hash of the query string). Only
+	// accessed by the processor goroutine.
+	preparedStmts map[string]preparedStmt
 }
 
 func newConn(netConn net.Conn, cancel context.CancelFunc) *conn {
 	return &conn{
-		netConn:    netConn,
-		cancelConn: cancel,
-		rd:         *bufio.NewReader(netConn),
-		wr:         bufio.NewWriter(netConn),
-		frameCh:    make(chan cqlwire.Frame, frameChanSize),
+		netConn:       netConn,
+		cancelConn:    cancel,
+		rd:            *bufio.NewReader(netConn),
+		wr:            bufio.NewWriter(netConn),
+		frameCh:       make(chan cqlwire.Frame, frameChanSize),
+		preparedStmts: make(map[string]preparedStmt),
 	}
 }
 
@@ -143,15 +160,9 @@ func (c *conn) handleFrame(ctx context.Context, s *Server, frame cqlwire.Frame) 
 	case cqlwire.OpQuery:
 		return c.handleQuery(ctx, s, frame)
 	case cqlwire.OpPrepare:
-		return c.sendError(
-			streamID, errCodeServerError,
-			"CQL prepared statements not yet implemented",
-		)
+		return c.handlePrepare(ctx, s, frame)
 	case cqlwire.OpExecute:
-		return c.sendError(
-			streamID, errCodeServerError,
-			"CQL prepared statements not yet implemented",
-		)
+		return c.handleExecute(ctx, s, frame)
 	case cqlwire.OpBatch:
 		return c.sendError(
 			streamID, errCodeServerError,
@@ -224,6 +235,224 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 	}
 
 	return c.sendResult(streamID, result)
+}
+
+// handlePrepare processes a CQL PREPARE frame. It parses the query to
+// validate syntax and count bind markers, generates a prepared ID
+// (MD5 hash of the query), caches the statement, and returns a
+// RESULT Prepared response with bind variable metadata typed as
+// varchar. This allows clients (e.g. gocql) to encode bound values
+// as UTF-8 strings.
+func (c *conn) handlePrepare(ctx context.Context, s *Server, frame cqlwire.Frame) error {
+	streamID := frame.Header.StreamID
+
+	r := bytes.NewReader(frame.Body)
+	query, err := cqlwire.ReadLongString(r)
+	if err != nil {
+		return c.sendError(
+			streamID, errCodeProtocol,
+			"invalid PREPARE frame: "+err.Error(),
+		)
+	}
+
+	log.VEventf(ctx, 2, "CQL PREPARE: %s", query)
+
+	// Validate that the query parses. We don't need the AST for
+	// caching — just syntax validation.
+	if _, err := parser.Parse(query); err != nil {
+		return c.sendError(streamID, errCodeSyntax, err.Error())
+	}
+
+	bindCount := countBindMarkers(query)
+
+	// Generate prepared ID as MD5 hash of the query string.
+	h := md5.Sum([]byte(query))
+	preparedID := h[:]
+
+	c.preparedStmts[string(preparedID)] = preparedStmt{
+		query:     query,
+		bindCount: bindCount,
+	}
+
+	body := buildPreparedBody(preparedID, bindCount)
+	return c.writeFrame(
+		cqlwire.ProtoV4Response, 0, streamID,
+		cqlwire.OpResult, body,
+	)
+}
+
+// handleExecute processes a CQL EXECUTE frame. It looks up the
+// cached prepared statement by ID, decodes bound values (as varchar
+// strings), substitutes them into the original CQL query, and
+// executes the resulting concrete query through the normal query
+// path.
+func (c *conn) handleExecute(ctx context.Context, s *Server, frame cqlwire.Frame) error {
+	streamID := frame.Header.StreamID
+
+	r := bytes.NewReader(frame.Body)
+
+	// Read prepared statement ID: [short bytes].
+	preparedID, err := cqlwire.ReadShortBytes(r)
+	if err != nil {
+		return c.sendError(
+			streamID, errCodeProtocol,
+			"invalid EXECUTE frame: "+err.Error(),
+		)
+	}
+
+	stmt, ok := c.preparedStmts[string(preparedID)]
+	if !ok {
+		return c.sendUnprepared(streamID, preparedID)
+	}
+
+	// Read query parameters: [short] consistency, [byte] flags.
+	if _, err := cqlwire.ReadConsistency(r); err != nil {
+		return c.sendError(
+			streamID, errCodeProtocol,
+			"invalid EXECUTE frame: "+err.Error(),
+		)
+	}
+
+	flagsBuf := make([]byte, 1)
+	if _, err := io.ReadFull(r, flagsBuf); err != nil {
+		return c.sendError(
+			streamID, errCodeProtocol,
+			"invalid EXECUTE frame: "+err.Error(),
+		)
+	}
+	flags := flagsBuf[0]
+
+	// Decode bound values if present (flag bit 0x01 = VALUES).
+	var values [][]byte
+	if flags&0x01 != 0 {
+		valCount, err := cqlwire.ReadShort(r)
+		if err != nil {
+			return c.sendError(
+				streamID, errCodeProtocol,
+				"invalid EXECUTE frame: "+err.Error(),
+			)
+		}
+		values = make([][]byte, valCount)
+		for i := 0; i < int(valCount); i++ {
+			val, err := cqlwire.ReadBytes(r)
+			if err != nil {
+				return c.sendError(
+					streamID, errCodeProtocol,
+					"invalid EXECUTE frame value: "+err.Error(),
+				)
+			}
+			values[i] = val
+		}
+	}
+
+	// Substitute bind values into the query.
+	query := substituteBindValues(stmt.query, values)
+
+	log.VEventf(ctx, 2, "CQL EXECUTE: %s", query)
+
+	// Execute through the same path as QUERY.
+	if s.executor == nil {
+		if parsedStmt, parseErr := parser.Parse(query); parseErr == nil {
+			if sel, selOK := parsedStmt.(*parser.SelectStatement); selOK {
+				if result, handled := handleSystemSelect(
+					ctx, nil, sel.Keyspace, sel.Table, sel.Where,
+				); handled {
+					if result.NewKeyspace != "" {
+						c.keyspace = result.NewKeyspace
+					}
+					return c.sendResult(streamID, result)
+				}
+			}
+		}
+		return c.sendError(
+			streamID, errCodeServerError,
+			"CQL query processing not yet implemented",
+		)
+	}
+
+	result := s.executor.ExecuteQuery(ctx, query, c.keyspace)
+	if result.NewKeyspace != "" {
+		c.keyspace = result.NewKeyspace
+	}
+	return c.sendResult(streamID, result)
+}
+
+// countBindMarkers counts the number of `?` bind markers in a CQL
+// query, skipping `?` characters inside string literals.
+func countBindMarkers(query string) int {
+	count := 0
+	inString := false
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '\'' {
+			if inString && i+1 < len(query) && query[i+1] == '\'' {
+				i++ // skip escaped quote
+				continue
+			}
+			inString = !inString
+		} else if ch == '?' && !inString {
+			count++
+		}
+	}
+	return count
+}
+
+// substituteBindValues replaces `?` bind markers in a CQL query with
+// the provided values encoded as CQL string literals. Null values
+// (nil byte slices) are substituted as NULL. The function correctly
+// skips `?` characters inside string literals.
+func substituteBindValues(query string, values [][]byte) string {
+	if len(values) == 0 {
+		return query
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(query))
+	valueIdx := 0
+	inString := false
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '\'' {
+			if inString && i+1 < len(query) && query[i+1] == '\'' {
+				sb.WriteByte('\'')
+				sb.WriteByte('\'')
+				i++
+				continue
+			}
+			inString = !inString
+			sb.WriteByte(ch)
+		} else if ch == '?' && !inString && valueIdx < len(values) {
+			if values[valueIdx] == nil {
+				sb.WriteString("NULL")
+			} else {
+				sb.WriteByte('\'')
+				s := string(values[valueIdx])
+				sb.WriteString(strings.ReplaceAll(s, "'", "''"))
+				sb.WriteByte('\'')
+			}
+			valueIdx++
+		} else {
+			sb.WriteByte(ch)
+		}
+	}
+
+	return sb.String()
+}
+
+// sendUnprepared writes a CQL ERROR response with the Unprepared
+// error code (0x2500). Per the CQL spec, the error body includes the
+// unknown prepared statement ID so the client can re-prepare.
+func (c *conn) sendUnprepared(streamID int16, preparedID []byte) error {
+	c.fb.Reset()
+	body := c.fb.Body()
+	_ = cqlwire.WriteInt(body, errCodeUnprepared)
+	_ = cqlwire.WriteString(body, "prepared statement not found")
+	_ = cqlwire.WriteShortBytes(body, preparedID)
+	return c.writeFrame(
+		cqlwire.ProtoV4Response, 0, streamID,
+		cqlwire.OpError, body.Bytes(),
+	)
 }
 
 // sendResult writes a CQL RESULT or ERROR response frame based on

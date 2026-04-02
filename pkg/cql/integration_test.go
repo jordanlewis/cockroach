@@ -283,9 +283,87 @@ func TestIntegrationQueryErrorResponse(t *testing.T) {
 	}
 }
 
-// TestIntegrationPrepareErrorResponse tests that PREPARE frames get
-// proper error responses.
-func TestIntegrationPrepareErrorResponse(t *testing.T) {
+// sendPrepare writes a CQL PREPARE frame with the given query.
+func sendPrepare(t *testing.T, conn net.Conn, streamID int16, query string) {
+	t.Helper()
+	var body bytes.Buffer
+	require.NoError(t, cqlwire.WriteLongString(&body, query))
+	require.NoError(t, cqlwire.WriteFrame(
+		conn, cqlwire.FrameHeader{
+			Version:  cqlwire.ProtoV4Request,
+			StreamID: streamID,
+			Opcode:   cqlwire.OpPrepare,
+		}, body.Bytes(),
+	))
+}
+
+// readPreparedResult reads a CQL RESULT Prepared response and returns
+// the prepared ID and bind variable count.
+func readPreparedResult(t *testing.T, conn net.Conn) (preparedID []byte, bindCount int32) {
+	t.Helper()
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"expected RESULT frame for PREPARE")
+	require.Equal(t, cqlwire.ProtoV4Response, frame.Header.Version)
+
+	r := bytes.NewReader(frame.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindPrepared, kind,
+		"expected Prepared result kind")
+
+	preparedID, err = cqlwire.ReadShortBytes(r)
+	require.NoError(t, err)
+	require.NotEmpty(t, preparedID, "prepared ID should not be empty")
+
+	// Read bind variables metadata.
+	_, err = cqlwire.ReadInt(r) // flags
+	require.NoError(t, err)
+	bindCount, err = cqlwire.ReadInt(r)
+	require.NoError(t, err)
+
+	return preparedID, bindCount
+}
+
+// sendExecute writes a CQL EXECUTE frame with the given prepared ID
+// and bound string values.
+func sendExecute(
+	t *testing.T,
+	conn net.Conn,
+	streamID int16,
+	preparedID []byte,
+	consistency cqlwire.Consistency,
+	values [][]byte,
+) {
+	t.Helper()
+	var body bytes.Buffer
+	require.NoError(t, cqlwire.WriteShortBytes(&body, preparedID))
+	require.NoError(t, cqlwire.WriteConsistency(&body, consistency))
+
+	if len(values) > 0 {
+		body.WriteByte(0x01) // flags: VALUES
+		require.NoError(t, cqlwire.WriteShort(&body, uint16(len(values))))
+		for _, val := range values {
+			require.NoError(t, cqlwire.WriteBytes(&body, val))
+		}
+	} else {
+		body.WriteByte(0x00) // flags: none
+	}
+
+	require.NoError(t, cqlwire.WriteFrame(
+		conn, cqlwire.FrameHeader{
+			Version:  cqlwire.ProtoV4Request,
+			StreamID: streamID,
+			Opcode:   cqlwire.OpExecute,
+		}, body.Bytes(),
+	))
+}
+
+// TestIntegrationPrepareSuccess tests that a valid PREPARE frame
+// returns a RESULT Prepared response with the correct bind variable
+// count.
+func TestIntegrationPrepareSuccess(t *testing.T) {
 	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
 	defer cleanup()
 
@@ -294,20 +372,222 @@ func TestIntegrationPrepareErrorResponse(t *testing.T) {
 
 	cqlHandshake(t, conn)
 
-	// Send a PREPARE frame.
-	var body bytes.Buffer
-	require.NoError(t, cqlwire.WriteLongString(&body, "SELECT * FROM users WHERE id = ?"))
-	require.NoError(t, cqlwire.WriteFrame(
-		conn, cqlwire.FrameHeader{
-			Version:  cqlwire.ProtoV4Request,
-			StreamID: 1,
-			Opcode:   cqlwire.OpPrepare,
-		}, body.Bytes(),
-	))
+	tests := []struct {
+		name              string
+		query             string
+		expectedBindCount int32
+	}{
+		{
+			"no_bind_markers",
+			"SELECT * FROM system.local",
+			0,
+		},
+		{
+			"one_bind_marker",
+			"SELECT * FROM users WHERE id = ?",
+			1,
+		},
+		{
+			"two_bind_markers",
+			"INSERT INTO users (id, name) VALUES (?, ?)",
+			2,
+		},
+		{
+			"bind_marker_in_string_ignored",
+			"SELECT * FROM users WHERE name = '?literal'",
+			0,
+		},
+	}
 
-	code, msg := readError(t, conn)
-	require.Equal(t, errCodeServerError, code)
-	require.Contains(t, msg, "not yet implemented")
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sendPrepare(t, conn, int16(i+1), tt.query)
+			preparedID, bindCount := readPreparedResult(t, conn)
+			require.NotEmpty(t, preparedID)
+			require.Equal(t, tt.expectedBindCount, bindCount)
+		})
+	}
+}
+
+// TestIntegrationPrepareSyntaxError tests that PREPARE with an
+// invalid CQL query returns an ERROR response.
+func TestIntegrationPrepareSyntaxError(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendPrepare(t, conn, 1, "NOT VALID CQL SYNTAX")
+	code, _ := readError(t, conn)
+	require.Equal(t, errCodeSyntax, code)
+}
+
+// TestIntegrationPrepareStreamID tests that PREPARE echoes the
+// request's stream ID.
+func TestIntegrationPrepareStreamID(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendPrepare(t, conn, 42, "SELECT * FROM system.local")
+
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode)
+	require.Equal(t, int16(42), frame.Header.StreamID)
+}
+
+// TestIntegrationPrepareSameQuerySameID tests that preparing the
+// same query twice returns the same prepared ID (deterministic MD5).
+func TestIntegrationPrepareSameQuerySameID(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	query := "SELECT * FROM system.local WHERE key = ?"
+
+	sendPrepare(t, conn, 1, query)
+	id1, _ := readPreparedResult(t, conn)
+
+	sendPrepare(t, conn, 2, query)
+	id2, _ := readPreparedResult(t, conn)
+
+	require.Equal(t, id1, id2,
+		"same query should produce same prepared ID")
+}
+
+// TestIntegrationExecuteUnprepared tests that EXECUTE with an
+// unknown prepared ID returns an Unprepared error.
+func TestIntegrationExecuteUnprepared(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	fakeID := make([]byte, 16)
+	sendExecute(t, conn, 1, fakeID, cqlwire.ConsistencyOne, nil)
+
+	// Read the error frame manually to check the Unprepared code.
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpError, frame.Header.Opcode)
+
+	r := bytes.NewReader(frame.Body)
+	code, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, errCodeUnprepared, code,
+		"expected Unprepared error code 0x2500")
+}
+
+// TestIntegrationPrepareExecuteSystemLocal tests the full
+// PREPARE → EXECUTE cycle for a system.local query. This is the
+// most critical path for gocql driver compatibility.
+func TestIntegrationPrepareExecuteSystemLocal(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	// PREPARE: SELECT * FROM system.local
+	sendPrepare(t, conn, 1,
+		"SELECT * FROM system.local WHERE key='local'")
+	preparedID, bindCount := readPreparedResult(t, conn)
+	require.Equal(t, int32(0), bindCount,
+		"no bind markers in this query")
+
+	// EXECUTE: no bound values.
+	sendExecute(t, conn, 2, preparedID, cqlwire.ConsistencyOne, nil)
+
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"system.local via EXECUTE should return RESULT")
+	require.Equal(t, int16(2), frame.Header.StreamID)
+
+	// Verify it's a Rows result.
+	r := bytes.NewReader(frame.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind,
+		"system.local should return Rows")
+}
+
+// TestIntegrationPrepareExecuteWithBindValues tests PREPARE and
+// EXECUTE with bound string values substituted into the query.
+func TestIntegrationPrepareExecuteWithBindValues(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	// PREPARE: query with bind marker.
+	sendPrepare(t, conn, 1,
+		"SELECT * FROM system.local WHERE key = ?")
+	preparedID, bindCount := readPreparedResult(t, conn)
+	require.Equal(t, int32(1), bindCount)
+
+	// EXECUTE: bind value 'local'.
+	sendExecute(t, conn, 2, preparedID, cqlwire.ConsistencyOne,
+		[][]byte{[]byte("local")})
+
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+		"EXECUTE with bind values should return RESULT")
+
+	r := bytes.NewReader(frame.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind)
+}
+
+// TestIntegrationPrepareExecuteNullBindValue tests EXECUTE with a
+// NULL bind value (nil byte slice).
+func TestIntegrationPrepareExecuteNullBindValue(t *testing.T) {
+	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
+	defer cleanup()
+
+	conn := dialCQL(t, addr)
+	defer conn.Close()
+
+	cqlHandshake(t, conn)
+
+	sendPrepare(t, conn, 1,
+		"SELECT * FROM system.local WHERE key = ?")
+	preparedID, _ := readPreparedResult(t, conn)
+
+	// EXECUTE with NULL bind value.
+	sendExecute(t, conn, 2, preparedID, cqlwire.ConsistencyOne,
+		[][]byte{nil})
+
+	frame, err := cqlwire.ReadFrame(conn)
+	require.NoError(t, err)
+	// Should get a valid response (either RESULT or ERROR, but
+	// not a protocol error).
+	require.True(t,
+		frame.Header.Opcode == cqlwire.OpResult ||
+			frame.Header.Opcode == cqlwire.OpError,
+		"expected RESULT or ERROR, got %s", frame.Header.Opcode)
 }
 
 // TestIntegrationBatchErrorResponse tests that BATCH frames get proper

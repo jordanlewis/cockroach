@@ -46,6 +46,7 @@ const (
 	errCodeProtocol       int32 = 0x000A
 	errCodeBadCredentials int32 = 0x0100
 	errCodeOverloaded     int32 = 0x1001
+	errCodeUnprepared     int32 = 0x2500
 )
 
 // frameChanSize is the buffer depth of the per-connection frame

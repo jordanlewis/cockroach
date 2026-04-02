@@ -8,6 +8,7 @@ package cql
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
@@ -28,6 +29,7 @@ const (
 	resultKindVoid         int32 = 0x0001
 	resultKindRows         int32 = 0x0002
 	resultKindSetKeyspace  int32 = 0x0003
+	resultKindPrepared     int32 = 0x0004
 	resultKindSchemaChange int32 = 0x0005
 )
 
@@ -262,6 +264,44 @@ func (e *Executor) executeBatch(
 		return errorResult(errCodeServerError, err.Error())
 	}
 	return ExecuteResult{Body: buildVoidBody()}
+}
+
+// resultMetadataFlagNoMetadata indicates that the result metadata is
+// not present and will be supplied at execution time (in the ROWS
+// response). Used in PREPARED results so clients defer metadata
+// parsing until EXECUTE.
+const resultMetadataFlagNoMetadata int32 = 0x0004
+
+// buildPreparedBody builds a CQL RESULT frame body with Prepared kind
+// (section 4.2.5.4). The bind variable metadata describes each `?`
+// placeholder as varchar so that clients encode bound values as UTF-8
+// strings. Result metadata uses the No_metadata flag, deferring column
+// metadata to the ROWS response sent after EXECUTE.
+func buildPreparedBody(preparedID []byte, bindCount int) []byte {
+	var buf bytes.Buffer
+
+	// RESULT kind: Prepared.
+	_ = cqlwire.WriteInt(&buf, resultKindPrepared)
+
+	// Prepared statement ID: [short bytes].
+	_ = cqlwire.WriteShortBytes(&buf, preparedID)
+
+	// Bind variables metadata.
+	_ = cqlwire.WriteInt(&buf, 0)                // flags: no global table spec
+	_ = cqlwire.WriteInt(&buf, int32(bindCount)) // columns_count
+	_ = cqlwire.WriteInt(&buf, 0)                // pk_count (v4)
+	for i := 0; i < bindCount; i++ {
+		_ = cqlwire.WriteString(&buf, "")                           // keyspace
+		_ = cqlwire.WriteString(&buf, "")                           // table
+		_ = cqlwire.WriteString(&buf, fmt.Sprintf("column%d", i+1)) // name
+		_ = cqlwire.WriteShort(&buf, uint16(cqltypes.CQLVarchar))   // type
+	}
+
+	// Result metadata: No_metadata flag, 0 columns.
+	_ = cqlwire.WriteInt(&buf, resultMetadataFlagNoMetadata)
+	_ = cqlwire.WriteInt(&buf, 0) // columns_count
+
+	return buf.Bytes()
 }
 
 // buildVoidBody builds a CQL RESULT frame body with Void kind.
