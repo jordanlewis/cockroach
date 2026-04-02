@@ -1,0 +1,150 @@
+# Compound primary keys: partition key + clustering columns.
+#
+# In CQL, PRIMARY KEY (partition_key, clustering_key) defines a compound key.
+# The first column is the partition key, remaining columns are clustering keys.
+# Rows within a partition are ordered by clustering keys ascending (default).
+
+exec
+USE defaultdb
+----
+
+# Single partition key + single clustering key.
+exec
+CREATE TABLE IF NOT EXISTS lt_compound_pk (
+    sensor_id int,
+    ts bigint,
+    reading double,
+    PRIMARY KEY (sensor_id, ts)
+)
+----
+
+# Insert readings for sensor 1 in non-sequential order.
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 300, 23.5)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 100, 20.1)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 200, 21.8)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 500, 25.0)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 400, 24.2)
+----
+
+# Insert readings for sensor 2.
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (2, 150, 18.3)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (2, 250, 19.7)
+----
+
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (2, 50, 17.0)
+----
+
+# Query a single partition: rows should be ordered by clustering key (ts) ASC.
+query
+SELECT sensor_id, ts, reading FROM lt_compound_pk WHERE sensor_id = 1
+----
+sensor_id ts reading
+1 100 20.1
+1 200 21.8
+1 300 23.5
+1 400 24.2
+1 500 25
+
+query
+SELECT sensor_id, ts, reading FROM lt_compound_pk WHERE sensor_id = 2
+----
+sensor_id ts reading
+2 50 17
+2 150 18.3
+2 250 19.7
+
+# Point lookup with both partition and clustering key.
+query
+SELECT sensor_id, ts, reading FROM lt_compound_pk WHERE sensor_id = 1 AND ts = 300
+----
+sensor_id ts reading
+1 300 23.5
+
+# Upsert: same (partition, clustering) replaces the row.
+exec
+INSERT INTO lt_compound_pk (sensor_id, ts, reading) VALUES (1, 200, 99.9)
+----
+
+query
+SELECT sensor_id, ts, reading FROM lt_compound_pk WHERE sensor_id = 1 AND ts = 200
+----
+sensor_id ts reading
+1 200 99.9
+
+# Full table scan: ordered by (sensor_id, ts) since that is the primary key.
+query
+SELECT sensor_id, ts, reading FROM lt_compound_pk
+----
+sensor_id ts reading
+1 100 20.1
+1 200 99.9
+1 300 23.5
+1 400 24.2
+1 500 25
+2 50 17
+2 150 18.3
+2 250 19.7
+
+# Text partition key + int clustering key.
+exec
+CREATE TABLE IF NOT EXISTS lt_compound_text (
+    category text,
+    item_id int,
+    name text,
+    PRIMARY KEY (category, item_id)
+)
+----
+
+exec
+INSERT INTO lt_compound_text (category, item_id, name) VALUES ('electronics', 3, 'tablet')
+----
+
+exec
+INSERT INTO lt_compound_text (category, item_id, name) VALUES ('electronics', 1, 'phone')
+----
+
+exec
+INSERT INTO lt_compound_text (category, item_id, name) VALUES ('electronics', 2, 'laptop')
+----
+
+exec
+INSERT INTO lt_compound_text (category, item_id, name) VALUES ('books', 1, 'novel')
+----
+
+exec
+INSERT INTO lt_compound_text (category, item_id, name) VALUES ('books', 2, 'textbook')
+----
+
+# Within the 'electronics' partition, ordered by item_id ASC.
+query
+SELECT category, item_id, name FROM lt_compound_text WHERE category = 'electronics'
+----
+category item_id name
+electronics 1 phone
+electronics 2 laptop
+electronics 3 tablet
+
+query
+SELECT category, item_id, name FROM lt_compound_text WHERE category = 'books'
+----
+category item_id name
+books 1 novel
+books 2 textbook
