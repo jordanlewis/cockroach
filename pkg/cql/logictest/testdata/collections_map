@@ -1,0 +1,117 @@
+# Collection type: map.
+#
+# CQL maps are key-value collections (e.g., map<text, int>). They
+# support element insertion, update by key, and element removal.
+# Maps are currently unsupported: the parser rejects the "map" type
+# name. The brace/colon syntax used for map literals is partially
+# recognized by the lexer but not by the expression parser. These
+# tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with map column — unsupported type.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_map (id int PRIMARY KEY, attrs map<text, text>)
+----
+at position 46: unsupported CQL type "map"
+
+# Bare map type (without angle brackets).
+error
+CREATE TABLE lt_coll_map2 (id int, data map, PRIMARY KEY (id))
+----
+at position 39: unsupported CQL type "map"
+
+# Map with int values.
+error
+CREATE TABLE lt_coll_map3 (id int PRIMARY KEY, scores map<text, int>)
+----
+at position 48: unsupported CQL type "map"
+
+# Map with boolean values.
+error
+CREATE TABLE lt_coll_map4 (id int PRIMARY KEY, flags map<text, boolean>)
+----
+at position 47: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Frozen map column — unsupported frozen modifier.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_fmap (id int PRIMARY KEY, data frozen<map<text, text>>)
+----
+at position 47: unsupported CQL type "frozen"
+
+# ---------------------------------------------------------------
+# INSERT with map literal — parser expects expression, gets brace.
+#
+# CQL map literals use braces with colon-separated entries:
+# {'key1': 'val1', 'key2': 'val2'}. The lexer recognizes braces
+# and colons but the expression parser does not support map
+# literals in value position.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO lt_coll_map (id, attrs) VALUES (1, {'color': 'red', 'size': 'large'})
+----
+at position 46: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# UPDATE with map literal.
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_map SET attrs = {'key': 'val'} WHERE id = 1
+----
+at position 46: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Map element insertion (SET col[key] = val) — lexer rejects
+# square brackets.
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_map SET attrs['newkey'] = 'newval' WHERE id = 1
+----
+at position 46: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Map append (SET col = col + {...}).
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_map SET attrs = attrs + {'extra': 'val'} WHERE id = 1
+----
+at position 46: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Map key removal (SET col = col - {...}).
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_map SET attrs = attrs - {'unwanted'} WHERE id = 1
+----
+at position 46: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Nested map (map<text, map<text, int>>) — unsupported.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_nested_map (id int PRIMARY KEY, nested map<text, map<text, int>>)
+----
+at position 53: unsupported CQL type "map"
+
+# ---------------------------------------------------------------
+# Map used as clustering key — unsupported type.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_map_ck (pk int, ck map<text, int>, val text, PRIMARY KEY (pk, ck))
+----
+at position 34: unsupported CQL type "map"

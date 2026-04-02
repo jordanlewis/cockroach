@@ -1,0 +1,96 @@
+# Collection type: set.
+#
+# CQL sets are sorted collections of unique elements (e.g.,
+# set<text>). They support add and remove operations. Sets are
+# currently unsupported: the parser rejects the "set" type name,
+# and set literal syntax ({...}) is not distinguished from map
+# literals by the parser. These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with set column — unsupported type.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_set (id int PRIMARY KEY, emails set<text>)
+----
+at position 47: unsupported CQL type "set"
+
+# Bare set type (without angle brackets).
+error
+CREATE TABLE lt_coll_set2 (id int, data set, PRIMARY KEY (id))
+----
+at position 39: unsupported CQL type "set"
+
+# Set of integers.
+error
+CREATE TABLE lt_coll_set3 (id int PRIMARY KEY, nums set<int>)
+----
+at position 47: unsupported CQL type "set"
+
+# Set of UUIDs.
+error
+CREATE TABLE lt_coll_set4 (id int PRIMARY KEY, ids set<uuid>)
+----
+at position 46: unsupported CQL type "set"
+
+# ---------------------------------------------------------------
+# Frozen set column — unsupported frozen modifier.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_fset (id int PRIMARY KEY, tags frozen<set<text>>)
+----
+at position 47: unsupported CQL type "frozen"
+
+# ---------------------------------------------------------------
+# INSERT with set literal — parser expects expression, gets brace.
+#
+# CQL set literals use braces: {'a', 'b'}. The parser recognizes
+# braces but does not support set literals in value position.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO lt_coll_set (id, emails) VALUES (1, {'a@example.com', 'b@example.com'})
+----
+at position 47: unsupported CQL type "set"
+
+# ---------------------------------------------------------------
+# UPDATE with set literal.
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_set SET emails = {'x@test.com'} WHERE id = 1
+----
+at position 47: unsupported CQL type "set"
+
+# ---------------------------------------------------------------
+# Set add (SET col = col + {...}) — unsupported type prevents
+# table creation, so operations on the column are unreachable.
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_set SET emails = emails + {'new@test.com'} WHERE id = 1
+----
+at position 47: unsupported CQL type "set"
+
+# ---------------------------------------------------------------
+# Set removal (SET col = col - {...}).
+# ---------------------------------------------------------------
+
+error
+UPDATE lt_coll_set SET emails = emails - {'old@test.com'} WHERE id = 1
+----
+at position 47: unsupported CQL type "set"
+
+# ---------------------------------------------------------------
+# Nested set (set<set<int>>) — unsupported.
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE lt_coll_nested_set (id int PRIMARY KEY, groups set<set<int>>)
+----
+at position 53: unsupported CQL type "set"
