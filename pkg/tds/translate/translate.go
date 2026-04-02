@@ -274,6 +274,9 @@ func translateExpr(expr parser.Expr) string {
 	case *parser.ConvertExpr:
 		return translateConvert(e)
 
+	case *parser.CaseExpr:
+		return translateCase(e)
+
 	case *parser.InExpr:
 		return translateIn(e)
 
@@ -368,6 +371,24 @@ func translateConvert(e *parser.ConvertExpr) string {
 	expr := translateExpr(e.Expr)
 	crdbType := mapDataType(e.DataType)
 	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
+}
+
+// translateCase converts a CASE expression. The syntax is the same in CRDB.
+func translateCase(e *parser.CaseExpr) string {
+	var b strings.Builder
+	b.WriteString("CASE")
+	if e.Operand != nil {
+		fmt.Fprintf(&b, " %s", translateExpr(e.Operand))
+	}
+	for _, w := range e.Whens {
+		fmt.Fprintf(&b, " WHEN %s THEN %s",
+			translateExpr(w.Cond), translateExpr(w.Result))
+	}
+	if e.Else != nil {
+		fmt.Fprintf(&b, " ELSE %s", translateExpr(e.Else))
+	}
+	b.WriteString(" END")
+	return b.String()
 }
 
 // translateIn converts an IN expression. The syntax is the same in CRDB.

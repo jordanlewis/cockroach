@@ -77,6 +77,11 @@ const (
 	tokenDISTINCT
 	tokenGROUP
 	tokenHAVING
+	tokenCASE
+	tokenWHEN
+	tokenTHEN
+	tokenELSE
+	tokenEND
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
@@ -115,6 +120,11 @@ var keywords = map[string]tokenType{
 	"DISTINCT": tokenDISTINCT,
 	"GROUP":    tokenGROUP,
 	"HAVING":   tokenHAVING,
+	"CASE":     tokenCASE,
+	"WHEN":     tokenWHEN,
+	"THEN":     tokenTHEN,
+	"ELSE":     tokenELSE,
+	"END":      tokenEND,
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
 	"GETDATE":  tokenGETDATE,
