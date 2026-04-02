@@ -1,0 +1,65 @@
+# Lightweight transactions: DELETE IF conditions.
+#
+# CQL DELETE with IF clause performs a conditional delete: the row
+# is removed only if the condition evaluates to true. DELETE IF
+# EXISTS is the most common form (delete only if the row is
+# present). Conditions can also reference column values:
+# DELETE ... IF col = val. The result always includes an [applied]
+# boolean column.
+#
+# DELETE is not yet supported by the CQL parser. All forms produce
+# a parse error.
+
+exec
+USE defaultdb
+----
+
+# Create a table for context (DELETE tests reference it).
+exec
+CREATE TABLE IF NOT EXISTS lwt_del (id int, name text, val int, PRIMARY KEY (id))
+----
+
+# ---------------------------------------------------------------
+# DELETE IF EXISTS.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM lwt_del WHERE id = 1 IF EXISTS
+----
+at position 0: unsupported statement "DELETE"
+
+# ---------------------------------------------------------------
+# DELETE IF column = value.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM lwt_del WHERE id = 1 IF name = 'alice'
+----
+at position 0: unsupported statement "DELETE"
+
+# ---------------------------------------------------------------
+# DELETE IF column != value.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM lwt_del WHERE id = 1 IF name != 'alice'
+----
+at position 0: unsupported statement "DELETE"
+
+# ---------------------------------------------------------------
+# DELETE with multiple conditions.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM lwt_del WHERE id = 1 IF name = 'alice' AND val = 100
+----
+at position 0: unsupported statement "DELETE"
+
+# ---------------------------------------------------------------
+# Plain DELETE (without IF) is also unsupported.
+# ---------------------------------------------------------------
+
+error
+DELETE FROM lwt_del WHERE id = 1
+----
+at position 0: unsupported statement "DELETE"

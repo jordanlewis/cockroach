@@ -1,0 +1,103 @@
+# Lightweight transactions: INSERT IF NOT EXISTS.
+#
+# CQL lightweight transactions (LWT) use IF clauses for conditional
+# mutations. INSERT IF NOT EXISTS is the most common form: it inserts
+# a row only if no row with the same primary key exists. In Cassandra,
+# the result always includes an [applied] boolean column; on failure
+# the existing row values are also returned. CockroachDB's CQL
+# implementation currently translates IF NOT EXISTS to a plain SQL
+# INSERT (which fails on constraint violation) rather than returning
+# the Cassandra-style [applied] result set.
+
+exec
+USE defaultdb
+----
+
+# Set up a table for LWT insert tests.
+exec
+CREATE TABLE IF NOT EXISTS lwt_ins (id int, name text, val int, PRIMARY KEY (id))
+----
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS: row does not exist → succeeds (void).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_ins (id, name, val) VALUES (1, 'alice', 100) IF NOT EXISTS
+----
+
+# Verify the row was inserted.
+query
+SELECT id, name, val FROM lwt_ins WHERE id = 1
+----
+id name val
+1 alice 100
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS: row already exists → constraint violation.
+#
+# Cassandra returns: [applied]=false plus the existing row.
+# CockroachDB currently returns an error instead.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO lwt_ins (id, name, val) VALUES (1, 'bob', 200) IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_ins_pkey"
+
+# Verify the original row is unchanged.
+query
+SELECT id, name, val FROM lwt_ins WHERE id = 1
+----
+id name val
+1 alice 100
+
+# ---------------------------------------------------------------
+# Plain INSERT (no IF clause) is an upsert in CQL semantics.
+# It overwrites the existing row without error.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_ins (id, name, val) VALUES (1, 'bob', 200)
+----
+
+# Verify the upsert replaced the row.
+query
+SELECT id, name, val FROM lwt_ins WHERE id = 1
+----
+id name val
+1 bob 200
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS with multiple rows: each conditional.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_ins (id, name, val) VALUES (2, 'carol', 300) IF NOT EXISTS
+----
+
+exec
+INSERT INTO lwt_ins (id, name, val) VALUES (3, 'dave', 400) IF NOT EXISTS
+----
+
+# Second insert of id=2 fails.
+error
+INSERT INTO lwt_ins (id, name, val) VALUES (2, 'eve', 500) IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_ins_pkey"
+
+# Verify only the first insert took effect for id=2.
+query
+SELECT id, name, val FROM lwt_ins WHERE id = 2
+----
+id name val
+2 carol 300
+
+# Verify all three rows.
+query rowsort
+SELECT id, name, val FROM lwt_ins
+----
+id name val
+1 bob 200
+2 carol 300
+3 dave 400

@@ -1,0 +1,141 @@
+# Lightweight transactions: various primary key structures.
+#
+# Cassandra LWT operates at the partition level. Testing INSERT IF
+# NOT EXISTS against tables with different primary key layouts
+# (single partition key, composite partition key, partition +
+# clustering keys) verifies that the conditional insert correctly
+# targets the full primary key.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Single partition key (simplest case).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS lwt_pk_single (pk int PRIMARY KEY, data text)
+----
+
+exec
+INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'first') IF NOT EXISTS
+----
+
+error
+INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'duplicate') IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_pk_single_pkey"
+
+query
+SELECT pk, data FROM lwt_pk_single WHERE pk = 1
+----
+pk data
+1 first
+
+# ---------------------------------------------------------------
+# Partition key + clustering key.
+# Same partition key with different clustering key → distinct rows.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS lwt_pk_cluster (pk int, ck int, data text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 1, 'row-1-1') IF NOT EXISTS
+----
+
+exec
+INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 2, 'row-1-2') IF NOT EXISTS
+----
+
+# Same (pk=1, ck=1) → conflict.
+error
+INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 1, 'conflict') IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_pk_cluster_pkey"
+
+# Different pk entirely → succeeds.
+exec
+INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (2, 1, 'row-2-1') IF NOT EXISTS
+----
+
+query rowsort
+SELECT pk, ck, data FROM lwt_pk_cluster
+----
+pk ck data
+1 1 row-1-1
+1 2 row-1-2
+2 1 row-2-1
+
+# ---------------------------------------------------------------
+# Composite partition key: ((pk1, pk2), ck).
+# Both partition key columns must match for a conflict.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS lwt_pk_composite (pk1 int, pk2 int, ck int, data text, PRIMARY KEY ((pk1, pk2), ck))
+----
+
+exec
+INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 1, 'a') IF NOT EXISTS
+----
+
+# Same pk1 but different pk2 → different partition → succeeds.
+exec
+INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 2, 1, 'b') IF NOT EXISTS
+----
+
+# Same (pk1, pk2, ck) → conflict.
+error
+INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_pk_composite_pkey"
+
+# Same partition, different clustering key → succeeds.
+exec
+INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 2, 'c') IF NOT EXISTS
+----
+
+query rowsort
+SELECT pk1, pk2, ck, data FROM lwt_pk_composite
+----
+pk1 pk2 ck data
+1 1 1 a
+1 1 2 c
+1 2 1 b
+
+# ---------------------------------------------------------------
+# Multiple clustering keys: PRIMARY KEY (pk, ck1, ck2).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS lwt_pk_multi_ck (pk int, ck1 int, ck2 int, data text, PRIMARY KEY (pk, ck1, ck2))
+----
+
+exec
+INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 1, 'x') IF NOT EXISTS
+----
+
+exec
+INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 2, 'y') IF NOT EXISTS
+----
+
+exec
+INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 2, 1, 'z') IF NOT EXISTS
+----
+
+# Full PK match → conflict.
+error
+INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "lwt_pk_multi_ck_pkey"
+
+query rowsort
+SELECT pk, ck1, ck2, data FROM lwt_pk_multi_ck
+----
+pk ck1 ck2 data
+1 1 1 x
+1 1 2 y
+1 2 1 z
