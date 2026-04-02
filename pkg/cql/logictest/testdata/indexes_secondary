@@ -1,0 +1,130 @@
+# Secondary indexes: CREATE INDEX, DROP INDEX, and non-primary-key queries.
+#
+# CQL secondary indexes allow efficient queries on non-primary-key
+# columns. CREATE INDEX and DROP INDEX are not yet supported by the
+# parser. These tests document the expected errors and verify that
+# queries on non-primary-key columns work via full table scans.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS idx_test (id int, name text, age int, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO idx_test (id, name, age) VALUES (1, 'alice', 30)
+----
+
+exec
+INSERT INTO idx_test (id, name, age) VALUES (2, 'bob', 25)
+----
+
+exec
+INSERT INTO idx_test (id, name, age) VALUES (3, 'carol', 30)
+----
+
+# --- CREATE INDEX on regular columns ---
+
+# Named index on a single column.
+error
+CREATE INDEX idx_name ON idx_test (name)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Named index on multiple columns (composite index).
+error
+CREATE INDEX idx_name_age ON idx_test (name, age)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# CREATE INDEX IF NOT EXISTS.
+error
+CREATE INDEX IF NOT EXISTS idx_name ON idx_test (name)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# Unnamed index (auto-generated name).
+error
+CREATE INDEX ON idx_test (age)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# --- CREATE INDEX on collection columns ---
+
+# KEYS modifier: index map keys.
+error
+CREATE INDEX ON idx_test (KEYS(name))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# VALUES modifier: index map or list values.
+error
+CREATE INDEX ON idx_test (VALUES(name))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# ENTRIES modifier: index map entries (key-value pairs).
+error
+CREATE INDEX ON idx_test (ENTRIES(name))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# FULL modifier: index frozen collection as a whole.
+error
+CREATE INDEX ON idx_test (FULL(name))
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# --- Index on partition key (error in Cassandra) ---
+
+# Cassandra rejects indexing the partition key. The parser rejects
+# CREATE INDEX before reaching that semantic check.
+error
+CREATE INDEX idx_pk ON idx_test (id)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "INDEX"
+
+# --- DROP INDEX ---
+
+# DROP is not a recognized statement keyword.
+error
+DROP INDEX idx_name
+----
+at position 0: unsupported statement "DROP"
+
+# DROP INDEX IF EXISTS.
+error
+DROP INDEX IF EXISTS idx_name
+----
+at position 0: unsupported statement "DROP"
+
+# --- Queries on non-primary-key columns ---
+
+# Without a secondary index, CRDB performs a full table scan. The
+# query still succeeds because the CQL-to-SQL translation produces a
+# standard SELECT ... WHERE that CRDB handles directly.
+
+# Filter on a text column.
+query
+SELECT id, name FROM idx_test WHERE name = 'alice'
+----
+id name
+1 alice
+
+# Filter on an integer column returns multiple rows.
+query rowsort
+SELECT id, name, age FROM idx_test WHERE age = 30
+----
+id name age
+1 alice 30
+3 carol 30
+
+# Range filter on an integer column.
+query rowsort
+SELECT id, name, age FROM idx_test WHERE age > 25
+----
+id name age
+1 alice 30
+3 carol 30

@@ -1,0 +1,72 @@
+# Materialized views: CREATE MATERIALIZED VIEW and DROP MATERIALIZED VIEW.
+#
+# CQL materialized views provide automatic denormalization maintained
+# by the database. A view selects a subset of columns from a base
+# table and re-partitions them under a new primary key, with the
+# constraint that every non-key column must have a WHERE ... IS NOT NULL
+# filter. Neither CREATE MATERIALIZED VIEW nor DROP MATERIALIZED VIEW
+# is supported by the parser. These tests document the expected errors.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS mv_base (id int, name text, age int, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO mv_base (id, name, age) VALUES (1, 'alice', 30)
+----
+
+exec
+INSERT INTO mv_base (id, name, age) VALUES (2, 'bob', 25)
+----
+
+# --- CREATE MATERIALIZED VIEW ---
+
+# Standard materialized view with WHERE IS NOT NULL filter (required
+# by Cassandra for each non-key column in the view's primary key).
+error
+CREATE MATERIALIZED VIEW mv_by_age AS SELECT id, name, age FROM mv_base WHERE age IS NOT NULL PRIMARY KEY (age, id)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "MATERIALIZED"
+
+# CREATE MATERIALIZED VIEW IF NOT EXISTS.
+error
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_by_age AS SELECT id, name, age FROM mv_base WHERE age IS NOT NULL PRIMARY KEY (age, id)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "MATERIALIZED"
+
+# --- Error case: view without IS NOT NULL filter ---
+
+# Cassandra requires a WHERE ... IS NOT NULL filter for each
+# non-key primary-key column in the view. Without it, Cassandra
+# rejects the view. The parser rejects it earlier at the CREATE
+# keyword level.
+error
+CREATE MATERIALIZED VIEW mv_no_filter AS SELECT id, name, age FROM mv_base PRIMARY KEY (age, id)
+----
+at position 7: expected KEYSPACE or TABLE after CREATE, got "MATERIALIZED"
+
+# --- Querying and updating materialized views ---
+
+# Cassandra materialized views are queried like regular tables and
+# are updated automatically when the base table changes. Since the
+# parser cannot create views, these operations cannot be tested
+# end-to-end. A SELECT against a non-existent view would fail at
+# the SQL level rather than the CQL parser, so we do not test that
+# here.
+
+# --- DROP MATERIALIZED VIEW ---
+
+error
+DROP MATERIALIZED VIEW mv_by_age
+----
+at position 0: unsupported statement "DROP"
+
+# DROP MATERIALIZED VIEW IF EXISTS.
+error
+DROP MATERIALIZED VIEW IF EXISTS mv_by_age
+----
+at position 0: unsupported statement "DROP"
