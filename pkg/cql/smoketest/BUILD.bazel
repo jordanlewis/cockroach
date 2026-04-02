@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "smoketest_test",
     srcs = [
+        "cqlsh_test.go",
         "main_test.go",
         "smoke_test.go",
     ],
