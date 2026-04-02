@@ -11,6 +11,8 @@ go_test(
         "//pkg/security/securityassets",
         "//pkg/security/securitytest",
         "//pkg/server",
+        "//pkg/settings",
+        "//pkg/settings/cluster",
         "//pkg/sql/isql",
         "//pkg/tds",
         "//pkg/tds/tdswire",
