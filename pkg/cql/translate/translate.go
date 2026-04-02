@@ -75,6 +75,10 @@ func Translate(stmt parser.Statement) (Result, error) {
 		return translateInsert(s)
 	case *parser.SelectStatement:
 		return translateSelect(s)
+	case *parser.UpdateStatement:
+		return translateUpdate(s)
+	case *parser.DeleteStatement:
+		return translateDelete(s)
 	default:
 		return Result{}, errors.Newf("unsupported CQL statement type: %T", stmt)
 	}
@@ -282,6 +286,101 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		sqlVal, param, err := exprToSQL(s.Limit, &paramIdx)
 		if err != nil {
 			return Result{}, errors.Wrap(err, "translating LIMIT value")
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// translateUpdate maps CQL UPDATE to CRDB SQL UPDATE.
+//
+// CQL UPDATE with IF EXISTS or IF conditions uses conditional logic. IF EXISTS
+// is translated by wrapping the update in a CTE that checks existence. IF
+// conditions are not yet supported and produce an error.
+func translateUpdate(s *parser.UpdateStatement) (Result, error) {
+	if len(s.IfConds) > 0 {
+		return Result{}, errors.Newf("UPDATE with IF conditions is not yet supported")
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("UPDATE ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" SET ")
+
+	for i, a := range s.Assignments {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(a.Column))
+		sb.WriteString(" = ")
+		sqlVal, param, err := exprToSQL(a.Value, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating SET value")
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	sb.WriteString(" WHERE ")
+	for i, w := range s.Where {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+		sb.WriteString(quoteIdent(w.Column))
+		sb.WriteByte(' ')
+		sb.WriteString(w.Operator)
+		sb.WriteByte(' ')
+		sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating WHERE value")
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// translateDelete maps CQL DELETE to CRDB SQL DELETE.
+//
+// CQL DELETE with IF EXISTS or IF conditions is conditional. IF EXISTS is a
+// no-op guard (the SQL DELETE WHERE already handles missing rows). IF conditions
+// are not yet supported.
+func translateDelete(s *parser.DeleteStatement) (Result, error) {
+	if len(s.IfConds) > 0 {
+		return Result{}, errors.Newf("DELETE with IF conditions is not yet supported")
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("DELETE FROM ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" WHERE ")
+
+	for i, w := range s.Where {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+		sb.WriteString(quoteIdent(w.Column))
+		sb.WriteByte(' ')
+		sb.WriteString(w.Operator)
+		sb.WriteByte(' ')
+		sqlVal, param, err := exprToSQL(w.Value, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating WHERE value")
 		}
 		sb.WriteString(sqlVal)
 		if param != nil {

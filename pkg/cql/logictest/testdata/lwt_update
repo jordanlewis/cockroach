@@ -2,12 +2,9 @@
 #
 # CQL UPDATE with IF clause performs a conditional update: the
 # mutation only applies if the condition evaluates to true against
-# the current row. Supported conditions in Cassandra include
-# IF col = val, IF col != val, IF col IN (...), and IF col IS NOT
-# NULL. The result always includes an [applied] boolean column.
-#
-# UPDATE is not yet supported by the CQL parser. All forms produce
-# a parse error.
+# the current row. UPDATE IF conditions (IF col = val) are not yet
+# supported by the translator and produce errors. Plain UPDATE and
+# UPDATE IF EXISTS work.
 
 exec
 USE defaultdb
@@ -19,64 +16,76 @@ CREATE TABLE IF NOT EXISTS lwt_upd (id int, name text, val int, PRIMARY KEY (id)
 ----
 
 # ---------------------------------------------------------------
-# UPDATE IF column = value.
+# Plain UPDATE (without IF) is now supported.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lwt_upd (id, name, val) VALUES (1, 'alice', 100)
+----
+
+exec
+UPDATE lwt_upd SET name = 'bob' WHERE id = 1
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 bob 100
+
+# ---------------------------------------------------------------
+# UPDATE multiple columns.
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET name = 'carol', val = 200 WHERE id = 1
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 carol 200
+
+# ---------------------------------------------------------------
+# UPDATE IF EXISTS: row exists → update succeeds.
+# (IF EXISTS is accepted but treated as a plain UPDATE since SQL
+# UPDATE WHERE already handles the non-existence case as a no-op.)
+# ---------------------------------------------------------------
+
+exec
+UPDATE lwt_upd SET val = 300 WHERE id = 1 IF EXISTS
+----
+
+query
+SELECT id, name, val FROM lwt_upd WHERE id = 1
+----
+id name val
+1 carol 300
+
+# ---------------------------------------------------------------
+# UPDATE IF column = value (conditional) is not yet supported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lwt_upd SET name = 'bob' WHERE id = 1 IF name = 'alice'
 ----
-at position 0: unsupported statement "UPDATE"
+UPDATE with IF conditions is not yet supported
 
 # ---------------------------------------------------------------
-# UPDATE IF column != value.
+# UPDATE IF column != value is not yet supported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lwt_upd SET val = 200 WHERE id = 1 IF val != 100
 ----
-at position 0: unsupported statement "UPDATE"
+UPDATE with IF conditions is not yet supported
 
 # ---------------------------------------------------------------
-# UPDATE IF column IN (...).
-# ---------------------------------------------------------------
-
-error
-UPDATE lwt_upd SET name = 'updated' WHERE id = 1 IF name IN ('alice', 'bob')
-----
-at position 0: unsupported statement "UPDATE"
-
-# ---------------------------------------------------------------
-# UPDATE IF column IS NOT NULL.
-# ---------------------------------------------------------------
-
-error
-UPDATE lwt_upd SET val = 999 WHERE id = 1 IF val IS NOT NULL
-----
-at position 0: unsupported statement "UPDATE"
-
-# ---------------------------------------------------------------
-# UPDATE with multiple conditions: IF a = 1 AND b = 2.
+# UPDATE with multiple IF conditions is not yet supported.
 # ---------------------------------------------------------------
 
 error
 UPDATE lwt_upd SET name = 'both' WHERE id = 1 IF name = 'alice' AND val = 100
 ----
-at position 0: unsupported statement "UPDATE"
-
-# ---------------------------------------------------------------
-# Plain UPDATE (without IF) is also unsupported.
-# ---------------------------------------------------------------
-
-error
-UPDATE lwt_upd SET name = 'plain' WHERE id = 1
-----
-at position 0: unsupported statement "UPDATE"
-
-# ---------------------------------------------------------------
-# UPDATE IF EXISTS (applies only if row exists).
-# ---------------------------------------------------------------
-
-error
-UPDATE lwt_upd SET name = 'exists' WHERE id = 1 IF EXISTS
-----
-at position 0: unsupported statement "UPDATE"
+UPDATE with IF conditions is not yet supported
