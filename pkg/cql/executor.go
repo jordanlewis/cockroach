@@ -117,6 +117,10 @@ func (e *Executor) ExecuteQuery(
 		return e.executeDDL(ctx, result, override, "CREATED", "TABLE", ks, s.Table)
 	case *parser.InsertStatement:
 		return e.executeDML(ctx, result, override)
+	case *parser.UpdateStatement:
+		return e.executeDML(ctx, result, override)
+	case *parser.DeleteStatement:
+		return e.executeDML(ctx, result, override)
 	case *parser.SelectStatement:
 		return e.executeSelect(ctx, result, override)
 	default:

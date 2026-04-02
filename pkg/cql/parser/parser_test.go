@@ -564,6 +564,87 @@ func TestParseSelectAllowFiltering(t *testing.T) {
 	}
 }
 
+func TestParseUpdate(t *testing.T) {
+	input := `UPDATE users SET name = 'bob' WHERE id = 1`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd, ok := stmt.(*UpdateStatement)
+	if !ok {
+		t.Fatalf("expected *UpdateStatement, got %T", stmt)
+	}
+	if upd.Table != "users" {
+		t.Errorf("table = %q, want %q", upd.Table, "users")
+	}
+	if len(upd.Assignments) != 1 {
+		t.Fatalf("assignments count = %d, want 1", len(upd.Assignments))
+	}
+	if upd.Assignments[0].Column != "name" {
+		t.Errorf("assignment column = %q, want %q", upd.Assignments[0].Column, "name")
+	}
+	if len(upd.Where) != 1 || upd.Where[0].Column != "id" {
+		t.Errorf("where = %+v, want id = 1", upd.Where)
+	}
+}
+
+func TestParseUpdateIfExists(t *testing.T) {
+	input := `UPDATE t SET val = 42 WHERE pk = 1 IF EXISTS`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd := stmt.(*UpdateStatement)
+	if !upd.IfExists {
+		t.Error("IfExists should be true")
+	}
+}
+
+func TestParseUpdateMultipleAssignments(t *testing.T) {
+	input := `UPDATE t SET name = 'alice', val = 100 WHERE id = 1`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd := stmt.(*UpdateStatement)
+	if len(upd.Assignments) != 2 {
+		t.Fatalf("assignments count = %d, want 2", len(upd.Assignments))
+	}
+	if upd.Assignments[0].Column != "name" || upd.Assignments[1].Column != "val" {
+		t.Errorf("assignments = %v", upd.Assignments)
+	}
+}
+
+func TestParseDelete(t *testing.T) {
+	input := `DELETE FROM users WHERE id = 1`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del, ok := stmt.(*DeleteStatement)
+	if !ok {
+		t.Fatalf("expected *DeleteStatement, got %T", stmt)
+	}
+	if del.Table != "users" {
+		t.Errorf("table = %q, want %q", del.Table, "users")
+	}
+	if len(del.Where) != 1 || del.Where[0].Column != "id" {
+		t.Errorf("where = %+v, want id = 1", del.Where)
+	}
+}
+
+func TestParseDeleteIfExists(t *testing.T) {
+	input := `DELETE FROM t WHERE pk = 1 IF EXISTS`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := stmt.(*DeleteStatement)
+	if !del.IfExists {
+		t.Error("IfExists should be true")
+	}
+}
+
 func TestParseSelectFullSyntax(t *testing.T) {
 	// SELECT with all optional clauses combined.
 	input := `SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk DESC LIMIT 10 ALLOW FILTERING`

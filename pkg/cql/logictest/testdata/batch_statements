@@ -2,7 +2,8 @@
 #
 # CQL BATCH groups multiple DML statements into an atomic unit.
 # BEGIN BATCH, UNLOGGED BATCH, and COUNTER BATCH are all
-# unsupported by the parser.
+# unsupported by the parser. Individual DELETE and UPDATE
+# statements are now supported (tested in lwt_delete/lwt_update).
 
 exec
 USE defaultdb
@@ -33,14 +34,34 @@ BEGIN BATCH USING TIMESTAMP 1234567890 INSERT INTO t (a) VALUES (1) APPLY BATCH
 ----
 at position 0: unsupported statement "BEGIN"
 
-# DELETE is not supported (needed for BATCH).
-error
-DELETE FROM t WHERE a = 1
+# DELETE is now supported as a standalone statement.
+exec
+CREATE TABLE IF NOT EXISTS batch_del_test (a int PRIMARY KEY, b text)
 ----
-at position 0: unsupported statement "DELETE"
 
-# UPDATE is not supported (needed for BATCH).
-error
-UPDATE t SET b = 'x' WHERE a = 1
+exec
+INSERT INTO batch_del_test (a, b) VALUES (1, 'hello')
 ----
-at position 0: unsupported statement "UPDATE"
+
+exec
+DELETE FROM batch_del_test WHERE a = 1
+----
+
+# UPDATE is now supported as a standalone statement.
+exec
+CREATE TABLE IF NOT EXISTS batch_upd_test (a int PRIMARY KEY, b text)
+----
+
+exec
+INSERT INTO batch_upd_test (a, b) VALUES (1, 'old')
+----
+
+exec
+UPDATE batch_upd_test SET b = 'new' WHERE a = 1
+----
+
+query
+SELECT a, b FROM batch_upd_test WHERE a = 1
+----
+a b
+1 new
