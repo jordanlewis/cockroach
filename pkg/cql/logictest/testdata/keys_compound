@@ -1,0 +1,289 @@
+# Primary key tests: compound primary keys (partition + clustering columns).
+#
+# In CQL, the first column(s) of the PRIMARY KEY form the partition key and
+# any additional columns are clustering columns. Rows within a partition
+# are ordered by clustering columns. This file tests the fundamental data
+# model: partition isolation, intra-partition ordering, and row uniqueness
+# determined by the full primary key.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Single partition key + single clustering column
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_cpk_basic (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (1, 10, 'a')
+----
+
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (1, 30, 'c')
+----
+
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (1, 20, 'b')
+----
+
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (2, 10, 'x')
+----
+
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (2, 20, 'y')
+----
+
+# Within a partition, rows are ordered by the clustering column (ASC by default).
+query
+SELECT pk, ck, val FROM keys_cpk_basic WHERE pk = 1
+----
+pk ck val
+1 10 a
+1 20 b
+1 30 c
+
+# Different partition, same clustering column values.
+query
+SELECT pk, ck, val FROM keys_cpk_basic WHERE pk = 2
+----
+pk ck val
+2 10 x
+2 20 y
+
+# Full primary key lookup: exactly one row.
+query
+SELECT pk, ck, val FROM keys_cpk_basic WHERE pk = 1 AND ck = 20
+----
+pk ck val
+1 20 b
+
+# Duplicate full primary key is an upsert.
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (1, 20, 'b-updated')
+----
+
+query
+SELECT pk, ck, val FROM keys_cpk_basic WHERE pk = 1 AND ck = 20
+----
+pk ck val
+1 20 b-updated
+
+# Same partition key with new clustering key: adds a new row.
+exec
+INSERT INTO keys_cpk_basic (pk, ck, val) VALUES (1, 25, 'b-half')
+----
+
+query
+SELECT pk, ck, val FROM keys_cpk_basic WHERE pk = 1
+----
+pk ck val
+1 10 a
+1 20 b-updated
+1 25 b-half
+1 30 c
+
+# ---------------------------------------------------------------
+# Partition key + multiple clustering columns
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_cpk_multi_ck (pk int, ck1 int, ck2 text, val text, PRIMARY KEY (pk, ck1, ck2))
+----
+
+exec
+INSERT INTO keys_cpk_multi_ck (pk, ck1, ck2, val) VALUES (1, 10, 'a', 'row1')
+----
+
+exec
+INSERT INTO keys_cpk_multi_ck (pk, ck1, ck2, val) VALUES (1, 10, 'b', 'row2')
+----
+
+exec
+INSERT INTO keys_cpk_multi_ck (pk, ck1, ck2, val) VALUES (1, 20, 'a', 'row3')
+----
+
+exec
+INSERT INTO keys_cpk_multi_ck (pk, ck1, ck2, val) VALUES (1, 20, 'b', 'row4')
+----
+
+exec
+INSERT INTO keys_cpk_multi_ck (pk, ck1, ck2, val) VALUES (2, 10, 'a', 'row5')
+----
+
+# Partition-only query: ordered by (ck1, ck2).
+query
+SELECT pk, ck1, ck2, val FROM keys_cpk_multi_ck WHERE pk = 1
+----
+pk ck1 ck2 val
+1 10 a row1
+1 10 b row2
+1 20 a row3
+1 20 b row4
+
+# First clustering column equality: narrows within partition.
+query
+SELECT pk, ck1, ck2, val FROM keys_cpk_multi_ck WHERE pk = 1 AND ck1 = 10
+----
+pk ck1 ck2 val
+1 10 a row1
+1 10 b row2
+
+# Full primary key: exactly one row.
+query
+SELECT pk, ck1, ck2, val FROM keys_cpk_multi_ck WHERE pk = 1 AND ck1 = 20 AND ck2 = 'b'
+----
+pk ck1 ck2 val
+1 20 b row4
+
+# ---------------------------------------------------------------
+# Composite partition key + clustering column
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_cpk_composite (pk1 text, pk2 int, ck int, val text, PRIMARY KEY ((pk1, pk2), ck))
+----
+
+exec
+INSERT INTO keys_cpk_composite (pk1, pk2, ck, val) VALUES ('us', 1, 100, 'alpha')
+----
+
+exec
+INSERT INTO keys_cpk_composite (pk1, pk2, ck, val) VALUES ('us', 1, 300, 'gamma')
+----
+
+exec
+INSERT INTO keys_cpk_composite (pk1, pk2, ck, val) VALUES ('us', 1, 200, 'beta')
+----
+
+exec
+INSERT INTO keys_cpk_composite (pk1, pk2, ck, val) VALUES ('us', 2, 100, 'delta')
+----
+
+exec
+INSERT INTO keys_cpk_composite (pk1, pk2, ck, val) VALUES ('eu', 1, 100, 'epsilon')
+----
+
+# Composite partition key: rows ordered by clustering column.
+query
+SELECT pk1, pk2, ck, val FROM keys_cpk_composite WHERE pk1 = 'us' AND pk2 = 1
+----
+pk1 pk2 ck val
+us 1 100 alpha
+us 1 200 beta
+us 1 300 gamma
+
+# Different composite partition.
+query
+SELECT pk1, pk2, ck, val FROM keys_cpk_composite WHERE pk1 = 'us' AND pk2 = 2
+----
+pk1 pk2 ck val
+us 2 100 delta
+
+# Full key lookup.
+query
+SELECT pk1, pk2, ck, val FROM keys_cpk_composite WHERE pk1 = 'us' AND pk2 = 1 AND ck = 200
+----
+pk1 pk2 ck val
+us 1 200 beta
+
+# ---------------------------------------------------------------
+# Composite partition key + multiple clustering columns
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_cpk_full (pk1 text, pk2 int, ck1 int, ck2 text, val text, PRIMARY KEY ((pk1, pk2), ck1, ck2))
+----
+
+exec
+INSERT INTO keys_cpk_full (pk1, pk2, ck1, ck2, val) VALUES ('a', 1, 10, 'x', 'v1')
+----
+
+exec
+INSERT INTO keys_cpk_full (pk1, pk2, ck1, ck2, val) VALUES ('a', 1, 10, 'y', 'v2')
+----
+
+exec
+INSERT INTO keys_cpk_full (pk1, pk2, ck1, ck2, val) VALUES ('a', 1, 20, 'x', 'v3')
+----
+
+exec
+INSERT INTO keys_cpk_full (pk1, pk2, ck1, ck2, val) VALUES ('a', 2, 10, 'x', 'v4')
+----
+
+# Composite partition: rows ordered by (ck1, ck2).
+query
+SELECT pk1, pk2, ck1, ck2, val FROM keys_cpk_full WHERE pk1 = 'a' AND pk2 = 1
+----
+pk1 pk2 ck1 ck2 val
+a 1 10 x v1
+a 1 10 y v2
+a 1 20 x v3
+
+# First clustering key equality.
+query
+SELECT pk1, pk2, ck1, ck2, val FROM keys_cpk_full WHERE pk1 = 'a' AND pk2 = 1 AND ck1 = 10
+----
+pk1 pk2 ck1 ck2 val
+a 1 10 x v1
+a 1 10 y v2
+
+# Full primary key.
+query
+SELECT pk1, pk2, ck1, ck2, val FROM keys_cpk_full WHERE pk1 = 'a' AND pk2 = 1 AND ck1 = 10 AND ck2 = 'y'
+----
+pk1 pk2 ck1 ck2 val
+a 1 10 y v2
+
+# ---------------------------------------------------------------
+# Partition isolation: same clustering key values in different partitions
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_cpk_isolation (pk text, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_cpk_isolation (pk, ck, val) VALUES ('part-a', 1, 'a1')
+----
+
+exec
+INSERT INTO keys_cpk_isolation (pk, ck, val) VALUES ('part-a', 2, 'a2')
+----
+
+exec
+INSERT INTO keys_cpk_isolation (pk, ck, val) VALUES ('part-b', 1, 'b1')
+----
+
+exec
+INSERT INTO keys_cpk_isolation (pk, ck, val) VALUES ('part-b', 2, 'b2')
+----
+
+# Each partition has independent rows.
+query
+SELECT pk, ck, val FROM keys_cpk_isolation WHERE pk = 'part-a'
+----
+pk ck val
+part-a 1 a1
+part-a 2 a2
+
+query
+SELECT pk, ck, val FROM keys_cpk_isolation WHERE pk = 'part-b'
+----
+pk ck val
+part-b 1 b1
+part-b 2 b2
+
+# Full scan shows all partitions.
+query rowsort
+SELECT pk, ck, val FROM keys_cpk_isolation
+----
+pk ck val
+part-a 1 a1
+part-a 2 a2
+part-b 1 b1
+part-b 2 b2

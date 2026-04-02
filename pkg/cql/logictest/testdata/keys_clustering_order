@@ -1,0 +1,277 @@
+# Primary key tests: clustering order.
+#
+# In Cassandra, WITH CLUSTERING ORDER BY controls the default sort order
+# of rows within a partition. This is not yet supported in the CQL parser
+# (table-level WITH clauses are not parsed). This file tests:
+#   1. Error cases for WITH CLUSTERING ORDER BY
+#   2. Default clustering order (ASC) behavior
+#   3. Explicit ORDER BY to reverse clustering order
+#   4. Multi-column clustering order verification
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# WITH CLUSTERING ORDER BY: unsupported (error cases)
+# ---------------------------------------------------------------
+
+# Single clustering column, DESC.
+error
+CREATE TABLE keys_co_desc (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)
+----
+at position 75: unexpected token "WITH" after statement
+
+# Single clustering column, ASC (explicit, same as default).
+error
+CREATE TABLE keys_co_asc (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck ASC)
+----
+at position 74: unexpected token "WITH" after statement
+
+# Multiple clustering columns with mixed order.
+error
+CREATE TABLE keys_co_mixed (pk int, ck1 int, ck2 text, val text, PRIMARY KEY (pk, ck1, ck2)) WITH CLUSTERING ORDER BY (ck1 ASC, ck2 DESC)
+----
+at position 93: unexpected token "WITH" after statement
+
+# WITH CLUSTERING ORDER BY combined with other table options.
+error
+CREATE TABLE keys_co_opts (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC) AND gc_grace_seconds = 86400
+----
+at position 75: unexpected token "WITH" after statement
+
+# ---------------------------------------------------------------
+# Default clustering order: ASC on integers
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_co_int (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_co_int (pk, ck, val) VALUES (1, 50, 'fifty')
+----
+
+exec
+INSERT INTO keys_co_int (pk, ck, val) VALUES (1, 10, 'ten')
+----
+
+exec
+INSERT INTO keys_co_int (pk, ck, val) VALUES (1, 30, 'thirty')
+----
+
+exec
+INSERT INTO keys_co_int (pk, ck, val) VALUES (1, 40, 'forty')
+----
+
+exec
+INSERT INTO keys_co_int (pk, ck, val) VALUES (1, 20, 'twenty')
+----
+
+# Default order is ASC regardless of insertion order.
+query
+SELECT pk, ck, val FROM keys_co_int WHERE pk = 1
+----
+pk ck val
+1 10 ten
+1 20 twenty
+1 30 thirty
+1 40 forty
+1 50 fifty
+
+# Explicit ORDER BY ASC matches default.
+query
+SELECT pk, ck, val FROM keys_co_int WHERE pk = 1 ORDER BY ck ASC
+----
+pk ck val
+1 10 ten
+1 20 twenty
+1 30 thirty
+1 40 forty
+1 50 fifty
+
+# ORDER BY DESC reverses clustering order.
+query
+SELECT pk, ck, val FROM keys_co_int WHERE pk = 1 ORDER BY ck DESC
+----
+pk ck val
+1 50 fifty
+1 40 forty
+1 30 thirty
+1 20 twenty
+1 10 ten
+
+# ---------------------------------------------------------------
+# Default clustering order: ASC on text
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_co_text (pk int, ck text, val int, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_co_text (pk, ck, val) VALUES (1, 'delta', 4)
+----
+
+exec
+INSERT INTO keys_co_text (pk, ck, val) VALUES (1, 'alpha', 1)
+----
+
+exec
+INSERT INTO keys_co_text (pk, ck, val) VALUES (1, 'charlie', 3)
+----
+
+exec
+INSERT INTO keys_co_text (pk, ck, val) VALUES (1, 'bravo', 2)
+----
+
+# Text clustering columns sort lexicographically ascending.
+query
+SELECT pk, ck, val FROM keys_co_text WHERE pk = 1
+----
+pk ck val
+1 alpha 1
+1 bravo 2
+1 charlie 3
+1 delta 4
+
+# DESC on text.
+query
+SELECT pk, ck, val FROM keys_co_text WHERE pk = 1 ORDER BY ck DESC
+----
+pk ck val
+1 delta 4
+1 charlie 3
+1 bravo 2
+1 alpha 1
+
+# ---------------------------------------------------------------
+# Default clustering order: ASC on bigint
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_co_bigint (pk int, ck bigint, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_co_bigint (pk, ck, val) VALUES (1, 1000000000, 'billion')
+----
+
+exec
+INSERT INTO keys_co_bigint (pk, ck, val) VALUES (1, 100, 'hundred')
+----
+
+exec
+INSERT INTO keys_co_bigint (pk, ck, val) VALUES (1, 1000000, 'million')
+----
+
+query
+SELECT pk, ck, val FROM keys_co_bigint WHERE pk = 1
+----
+pk ck val
+1 100 hundred
+1 1000000 million
+1 1000000000 billion
+
+# ---------------------------------------------------------------
+# Multi-column clustering order
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_co_multi (pk int, ck1 int, ck2 int, val text, PRIMARY KEY (pk, ck1, ck2))
+----
+
+exec
+INSERT INTO keys_co_multi (pk, ck1, ck2, val) VALUES (1, 2, 1, 'c')
+----
+
+exec
+INSERT INTO keys_co_multi (pk, ck1, ck2, val) VALUES (1, 1, 2, 'b')
+----
+
+exec
+INSERT INTO keys_co_multi (pk, ck1, ck2, val) VALUES (1, 1, 1, 'a')
+----
+
+exec
+INSERT INTO keys_co_multi (pk, ck1, ck2, val) VALUES (1, 2, 2, 'd')
+----
+
+exec
+INSERT INTO keys_co_multi (pk, ck1, ck2, val) VALUES (1, 3, 1, 'e')
+----
+
+# Multi-column clustering: sorted by (ck1 ASC, ck2 ASC).
+query
+SELECT pk, ck1, ck2, val FROM keys_co_multi WHERE pk = 1
+----
+pk ck1 ck2 val
+1 1 1 a
+1 1 2 b
+1 2 1 c
+1 2 2 d
+1 3 1 e
+
+# ORDER BY first clustering column DESC.
+query
+SELECT pk, ck1, ck2, val FROM keys_co_multi WHERE pk = 1 ORDER BY ck1 DESC
+----
+pk ck1 ck2 val
+1 3 1 e
+1 2 2 d
+1 2 1 c
+1 1 2 b
+1 1 1 a
+
+# ---------------------------------------------------------------
+# Clustering order across partitions
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_co_cross (pk text, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO keys_co_cross (pk, ck, val) VALUES ('p1', 3, 'p1-three')
+----
+
+exec
+INSERT INTO keys_co_cross (pk, ck, val) VALUES ('p1', 1, 'p1-one')
+----
+
+exec
+INSERT INTO keys_co_cross (pk, ck, val) VALUES ('p1', 2, 'p1-two')
+----
+
+exec
+INSERT INTO keys_co_cross (pk, ck, val) VALUES ('p2', 2, 'p2-two')
+----
+
+exec
+INSERT INTO keys_co_cross (pk, ck, val) VALUES ('p2', 1, 'p2-one')
+----
+
+# Each partition maintains its own clustering order.
+query
+SELECT pk, ck, val FROM keys_co_cross WHERE pk = 'p1'
+----
+pk ck val
+p1 1 p1-one
+p1 2 p1-two
+p1 3 p1-three
+
+query
+SELECT pk, ck, val FROM keys_co_cross WHERE pk = 'p2'
+----
+pk ck val
+p2 1 p2-one
+p2 2 p2-two
+
+# DESC within a single partition.
+query
+SELECT pk, ck, val FROM keys_co_cross WHERE pk = 'p1' ORDER BY ck DESC
+----
+pk ck val
+p1 3 p1-three
+p1 2 p1-two
+p1 1 p1-one

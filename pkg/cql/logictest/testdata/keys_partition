@@ -1,0 +1,238 @@
+# Primary key tests: partition keys.
+#
+# Covers simple single-column partition keys and composite partition
+# keys ((a, b)). Verifies that partition key columns correctly identify
+# rows, including edge cases like empty results and multiple partitions.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Simple partition key (single column)
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_simple (pk int, val text, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO keys_pk_simple (pk, val) VALUES (1, 'one')
+----
+
+exec
+INSERT INTO keys_pk_simple (pk, val) VALUES (2, 'two')
+----
+
+exec
+INSERT INTO keys_pk_simple (pk, val) VALUES (3, 'three')
+----
+
+# Exact partition key lookup.
+query
+SELECT pk, val FROM keys_pk_simple WHERE pk = 2
+----
+pk val
+2 two
+
+# Lookup for non-existent partition key returns no rows.
+query
+SELECT pk, val FROM keys_pk_simple WHERE pk = 999
+----
+pk val
+
+# Full table scan (no WHERE clause) returns all rows.
+query rowsort
+SELECT pk, val FROM keys_pk_simple
+----
+pk val
+1 one
+2 two
+3 three
+
+# Duplicate partition key is an upsert (CQL INSERT = upsert).
+exec
+INSERT INTO keys_pk_simple (pk, val) VALUES (2, 'updated')
+----
+
+query
+SELECT pk, val FROM keys_pk_simple WHERE pk = 2
+----
+pk val
+2 updated
+
+# ---------------------------------------------------------------
+# Inline PRIMARY KEY syntax
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_inline (id int PRIMARY KEY, data text)
+----
+
+exec
+INSERT INTO keys_pk_inline (id, data) VALUES (10, 'inline-pk')
+----
+
+query
+SELECT id, data FROM keys_pk_inline WHERE id = 10
+----
+id data
+10 inline-pk
+
+# ---------------------------------------------------------------
+# Composite partition key ((a, b))
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_composite (region text, user_id int, data text, PRIMARY KEY ((region, user_id)))
+----
+
+exec
+INSERT INTO keys_pk_composite (region, user_id, data) VALUES ('us-east', 1, 'alice')
+----
+
+exec
+INSERT INTO keys_pk_composite (region, user_id, data) VALUES ('us-east', 2, 'bob')
+----
+
+exec
+INSERT INTO keys_pk_composite (region, user_id, data) VALUES ('eu-west', 1, 'charlie')
+----
+
+exec
+INSERT INTO keys_pk_composite (region, user_id, data) VALUES ('eu-west', 2, 'diana')
+----
+
+# Both partition key columns specified: single partition.
+query
+SELECT region, user_id, data FROM keys_pk_composite WHERE region = 'us-east' AND user_id = 1
+----
+region user_id data
+us-east 1 alice
+
+# Only first partition key column: scans across partitions.
+query rowsort
+SELECT region, user_id, data FROM keys_pk_composite WHERE region = 'eu-west'
+----
+region user_id data
+eu-west 1 charlie
+eu-west 2 diana
+
+# Only second partition key column.
+query rowsort
+SELECT region, user_id, data FROM keys_pk_composite WHERE user_id = 1
+----
+region user_id data
+eu-west 1 charlie
+us-east 1 alice
+
+# Duplicate composite partition key is an upsert.
+exec
+INSERT INTO keys_pk_composite (region, user_id, data) VALUES ('us-east', 1, 'alice-updated')
+----
+
+query
+SELECT region, user_id, data FROM keys_pk_composite WHERE region = 'us-east' AND user_id = 1
+----
+region user_id data
+us-east 1 alice-updated
+
+# Same first key, different second key: distinct partitions.
+query rowsort
+SELECT region, user_id, data FROM keys_pk_composite WHERE region = 'us-east'
+----
+region user_id data
+us-east 1 alice-updated
+us-east 2 bob
+
+# ---------------------------------------------------------------
+# Composite partition key with clustering column ((a, b), c)
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_composite_ck (tenant text, shard int, ts bigint, msg text, PRIMARY KEY ((tenant, shard), ts))
+----
+
+exec
+INSERT INTO keys_pk_composite_ck (tenant, shard, ts, msg) VALUES ('acme', 1, 100, 'first')
+----
+
+exec
+INSERT INTO keys_pk_composite_ck (tenant, shard, ts, msg) VALUES ('acme', 1, 200, 'second')
+----
+
+exec
+INSERT INTO keys_pk_composite_ck (tenant, shard, ts, msg) VALUES ('acme', 2, 100, 'shard2')
+----
+
+exec
+INSERT INTO keys_pk_composite_ck (tenant, shard, ts, msg) VALUES ('beta', 1, 100, 'other-tenant')
+----
+
+# Full composite partition + clustering key.
+query
+SELECT tenant, shard, ts, msg FROM keys_pk_composite_ck WHERE tenant = 'acme' AND shard = 1 AND ts = 100
+----
+tenant shard ts msg
+acme 1 100 first
+
+# Composite partition only: returns all rows in that partition ordered by clustering key.
+query
+SELECT tenant, shard, ts, msg FROM keys_pk_composite_ck WHERE tenant = 'acme' AND shard = 1
+----
+tenant shard ts msg
+acme 1 100 first
+acme 1 200 second
+
+# Different shard (different partition).
+query
+SELECT tenant, shard, ts, msg FROM keys_pk_composite_ck WHERE tenant = 'acme' AND shard = 2
+----
+tenant shard ts msg
+acme 2 100 shard2
+
+# Full table scan.
+query rowsort
+SELECT tenant, shard, ts, msg FROM keys_pk_composite_ck
+----
+tenant shard ts msg
+acme 1 100 first
+acme 1 200 second
+acme 2 100 shard2
+beta 1 100 other-tenant
+
+# ---------------------------------------------------------------
+# Partition key with different data types
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_text (pk text, val int, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO keys_pk_text (pk, val) VALUES ('hello', 1)
+----
+
+exec
+INSERT INTO keys_pk_text (pk, val) VALUES ('world', 2)
+----
+
+query
+SELECT pk, val FROM keys_pk_text WHERE pk = 'hello'
+----
+pk val
+hello 1
+
+exec
+CREATE TABLE IF NOT EXISTS keys_pk_bigint (pk bigint, val text, PRIMARY KEY (pk))
+----
+
+exec
+INSERT INTO keys_pk_bigint (pk, val) VALUES (9999999999, 'big')
+----
+
+query
+SELECT pk, val FROM keys_pk_bigint WHERE pk = 9999999999
+----
+pk val
+9999999999 big
