@@ -1,0 +1,62 @@
+# SELECT statement tests.
+
+# Basic literal queries.
+query
+SELECT 1
+----
+1
+
+query
+SELECT 100 + 200
+----
+300
+
+query colnames
+SELECT 1 AS a, 2 AS b, 3 AS c
+----
+a  b  c
+1  2  3
+
+# String literals.
+query
+SELECT 'hello'
+----
+hello
+
+query
+SELECT 'hello' + ' ' + 'world'
+----
+hello world
+
+# Multiple rows via UNION-style (using VALUES if supported).
+query
+SELECT 42 AS answer
+----
+42
+
+# NULL literal.
+query
+SELECT NULL
+----
+NULL
+
+# Comparison operators in WHERE.
+query
+SELECT 1 WHERE 1 = 1
+----
+1
+
+query
+SELECT 1 WHERE 1 <> 2
+----
+1
+
+query
+SELECT 1 WHERE 2 > 1
+----
+1
+
+query
+SELECT 1 WHERE 1 < 2
+----
+1

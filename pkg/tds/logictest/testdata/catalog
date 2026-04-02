@@ -1,0 +1,24 @@
+# Catalog and system query tests.
+
+# @@VERSION returns a Sybase-compatible version string.
+query
+SELECT @@VERSION
+----
+Adaptive Server Enterprise/16.0/CockroachDB 24.3.0/SP0/Enterprise Linux/x86_64
+
+# SET commands should be silently acknowledged (no error).
+exec
+SET QUOTED_IDENTIFIER ON
+----
+
+exec
+SET ANSI_NULLS ON
+----
+
+exec
+SET TEXTSIZE 2147483647
+----
+
+exec
+SET ARITHABORT ON
+----
