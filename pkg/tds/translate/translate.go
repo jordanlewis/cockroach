@@ -225,6 +225,12 @@ func translateExpr(expr parser.Expr) string {
 	case *parser.ConvertExpr:
 		return translateConvert(e)
 
+	case *parser.InExpr:
+		return translateIn(e)
+
+	case *parser.BetweenExpr:
+		return translateBetween(e)
+
 	default:
 		// Fallback: use the AST node's own String() method.
 		return expr.String()
@@ -313,6 +319,30 @@ func translateConvert(e *parser.ConvertExpr) string {
 	expr := translateExpr(e.Expr)
 	crdbType := mapDataType(e.DataType)
 	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
+}
+
+// translateIn converts an IN expression. The syntax is the same in CRDB.
+func translateIn(e *parser.InExpr) string {
+	expr := translateExpr(e.Expr)
+	vals := translateArgs(e.Values)
+	op := "IN"
+	if e.Not {
+		op = "NOT IN"
+	}
+	return fmt.Sprintf("%s %s (%s)", expr, op, strings.Join(vals, ", "))
+}
+
+// translateBetween converts a BETWEEN expression. The syntax is the same in
+// CRDB.
+func translateBetween(e *parser.BetweenExpr) string {
+	expr := translateExpr(e.Expr)
+	low := translateExpr(e.Low)
+	high := translateExpr(e.High)
+	op := "BETWEEN"
+	if e.Not {
+		op = "NOT BETWEEN"
+	}
+	return fmt.Sprintf("%s %s %s AND %s", expr, op, low, high)
 }
 
 // translateArgs translates a slice of expressions.
