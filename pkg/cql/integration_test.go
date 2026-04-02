@@ -523,10 +523,10 @@ func TestIntegrationBytesInMetric(t *testing.T) {
 }
 
 // TestIntegrationGocqlConnection tests that the gocql driver can
-// establish a TCP connection to the CQL server. Since query execution
-// is not yet implemented, the gocql session creation will fail (gocql
-// queries system tables during init), but we verify the server handles
-// the driver's protocol correctly up to that point.
+// establish a TCP connection to the CQL server and create a session.
+// The server returns synthetic results for system table queries
+// (system.local, system.peers, system_schema.*) which allows gocql
+// to complete its initialization handshake.
 func TestIntegrationGocqlConnection(t *testing.T) {
 	addr, cleanup := startTestServer(t, ServerConfig{Insecure: true})
 	defer cleanup()
@@ -544,16 +544,14 @@ func TestIntegrationGocqlConnection(t *testing.T) {
 	// Disable authentication for insecure server.
 	cluster.Authenticator = nil
 
-	// gocql will attempt system queries during CreateSession, which the
-	// server does not yet support. The session creation should fail with
-	// an error, but the connection handshake should have succeeded.
-	_, err = cluster.CreateSession()
-	require.Error(t, err,
-		"gocql CreateSession should fail because query execution is not implemented")
+	session, err := cluster.CreateSession()
+	require.NoError(t, err, "gocql CreateSession should succeed")
+	session.Close()
 }
 
 // TestIntegrationGocqlConnectionWithAuth tests that the gocql driver
-// can perform password authentication against the CQL server.
+// can perform password authentication and create a session against
+// the CQL server.
 func TestIntegrationGocqlConnectionWithAuth(t *testing.T) {
 	addr, cleanup := startTestServer(t, ServerConfig{
 		Authenticator: AllowAllAuthenticator{},
@@ -575,14 +573,9 @@ func TestIntegrationGocqlConnectionWithAuth(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	// Session creation will fail on system queries, but authentication
-	// should have succeeded (no authentication error).
-	_, err = cluster.CreateSession()
-	require.Error(t, err,
-		"gocql CreateSession should fail because query execution is not implemented")
-	// Verify the error is not an authentication error.
-	require.NotContains(t, err.Error(), "authentication",
-		"error should not be about authentication")
+	session, err := cluster.CreateSession()
+	require.NoError(t, err, "gocql CreateSession should succeed with auth")
+	session.Close()
 }
 
 // TestIntegrationCreateKeyspaceViaWire tests sending a CREATE KEYSPACE

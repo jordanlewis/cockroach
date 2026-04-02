@@ -200,14 +200,23 @@ func TestServerDrainRejectsNewConns(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	err := s.ServeConn(ctx, server)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "draining")
+	// Run ServeConn in a goroutine because net.Pipe is synchronous:
+	// the error frame write blocks until the client reads it.
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.ServeConn(ctx, server) }()
 
 	// Client should receive an ERROR frame.
 	frame, err := cqlwire.ReadFrame(client)
 	require.NoError(t, err)
 	require.Equal(t, cqlwire.OpError, frame.Header.Opcode)
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "draining")
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not exit")
+	}
 }
 
 func TestServerQueryNotImplemented(t *testing.T) {
@@ -231,9 +240,9 @@ func TestServerQueryNotImplemented(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, cqlwire.OpReady, frame.Header.Opcode)
 
-	// Send a QUERY frame.
+	// Send a QUERY frame for a non-system table (requires executor).
 	var qbody bytes.Buffer
-	_ = cqlwire.WriteLongString(&qbody, "SELECT * FROM system.local")
+	_ = cqlwire.WriteLongString(&qbody, "SELECT * FROM my_keyspace.users")
 	_ = cqlwire.WriteShort(&qbody, uint16(cqlwire.ConsistencyOne))
 	_ = cqlwire.WriteBytes(&qbody, nil) // query flags
 	require.NoError(t, cqlwire.WriteFrame(
@@ -244,7 +253,7 @@ func TestServerQueryNotImplemented(t *testing.T) {
 		}, qbody.Bytes(),
 	))
 
-	// Expect ERROR response (not implemented).
+	// Expect ERROR response (not implemented without executor).
 	frame, err = cqlwire.ReadFrame(client)
 	require.NoError(t, err)
 	require.Equal(t, cqlwire.OpError, frame.Header.Opcode)

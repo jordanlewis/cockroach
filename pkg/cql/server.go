@@ -171,8 +171,18 @@ func (s *Server) Metrics() Metrics {
 
 // Serve accepts CQL connections from ln and serves each in a new
 // goroutine. It blocks until ln is closed or the stopper begins
-// quiescing.
+// quiescing. When the stopper starts quiescing, the listener is
+// closed to unblock Accept and all active connections are cancelled.
 func (s *Server) Serve(ctx context.Context, stopper *stop.Stopper, ln net.Listener) error {
+	// When the stopper begins quiescing, close the listener to
+	// unblock Accept and cancel all active connections so their
+	// goroutines can exit.
+	go func() {
+		<-stopper.ShouldQuiesce()
+		_ = ln.Close()
+		s.cancelActiveConns()
+	}()
+
 	for {
 		netConn, err := ln.Accept()
 		if err != nil {
@@ -297,6 +307,17 @@ func (s *Server) removeConn(done chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.mu.connCancelMap, done)
+}
+
+// cancelActiveConns cancels all active connections. This is used
+// during stopper quiesce to ensure connection goroutines exit
+// promptly.
+func (s *Server) cancelActiveConns() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cancel := range s.mu.connCancelMap {
+		cancel()
+	}
 }
 
 // startDrain atomically transitions the server to draining and

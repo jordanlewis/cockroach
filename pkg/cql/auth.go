@@ -120,11 +120,16 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 		)
 	}
 
+	// Use the AUTH_RESPONSE stream ID for the reply, not the
+	// STARTUP stream ID. CQL drivers may use different stream IDs
+	// for each frame in the handshake.
+	authStreamID := frame.Header.StreamID
+
 	// Parse SASL PLAIN credentials.
 	username, password, err := parseAuthResponse(frame.Body)
 	if err != nil {
 		_ = c.sendError(
-			streamID, errCodeBadCredentials,
+			authStreamID, errCodeBadCredentials,
 			"invalid auth response: "+err.Error(),
 		)
 		return errors.Wrap(err, "parsing AUTH_RESPONSE")
@@ -135,13 +140,13 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 		ctx, username, password,
 	); err != nil {
 		_ = c.sendError(
-			streamID, errCodeBadCredentials,
+			authStreamID, errCodeBadCredentials,
 			"authentication failed",
 		)
 		return errors.Wrap(err, "authentication failed")
 	}
 
-	return c.sendAuthSuccess(streamID)
+	return c.sendAuthSuccess(authStreamID)
 }
 
 // parseStartupOptions decodes the STARTUP frame body, which is a CQL

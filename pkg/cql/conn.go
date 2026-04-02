@@ -13,6 +13,7 @@ import (
 	"net"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
@@ -191,7 +192,24 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 
 	log.VEventf(ctx, 2, "CQL QUERY: %s", query)
 
+	// When there is no executor, try to handle system table queries
+	// (system.local, system.peers, system_schema.*) with synthetic
+	// results. These don't require the SQL executor. When an
+	// executor is available, let it handle system tables so it can
+	// include real CRDB database metadata.
 	if s.executor == nil {
+		if stmt, parseErr := parser.Parse(query); parseErr == nil {
+			if sel, ok := stmt.(*parser.SelectStatement); ok {
+				if result, handled := handleSystemSelect(
+					ctx, nil, sel.Keyspace, sel.Table, sel.Where,
+				); handled {
+					if result.NewKeyspace != "" {
+						c.keyspace = result.NewKeyspace
+					}
+					return c.sendResult(streamID, result)
+				}
+			}
+		}
 		return c.sendError(
 			streamID, errCodeServerError,
 			"CQL query processing not yet implemented",
