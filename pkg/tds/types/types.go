@@ -417,31 +417,12 @@ func DecodeValue(data []byte, ti TypeInfo) (interface{}, int, error) {
 	return decodeVariable(data, ti)
 }
 
-// encodeNull writes the NULL representation for a nullable TDS type.
+// encodeNull returns nil to signal NULL. The per-row NULL sentinel is
+// written by writeRowValue in the tdswire package when it sees a nil
+// value slice.
 func encodeNull(dst []byte, ti TypeInfo) []byte {
-	if IsFixedLength(ti.TDSType) {
-		// Fixed-length types don't have a length prefix; in practice they
-		// should not be used for nullable columns. Return zero-value bytes.
-		return append(dst, make([]byte, FixedSize(ti.TDSType))...)
-	}
-	switch ti.TDSType {
-	case IntNType, FloatNType, BitNType, DateTimeNType, MoneyNType, GUIDType:
-		// Nullable token types use a length byte of 0 to signal NULL.
-		return append(dst, 0)
-	case BigVarCharType, BigCharType, BigVarBinType, BigBinaryType:
-		// 2-byte length prefix, 0xFFFF = NULL.
-		return append(dst, 0xFF, 0xFF)
-	case NVarCharType, NCharType:
-		return append(dst, 0xFF, 0xFF)
-	case NumericNType, DecimalNType:
-		return append(dst, 0)
-	case DateNType:
-		return append(dst, 0)
-	case TimeNType:
-		return append(dst, 0)
-	default:
-		return append(dst, 0)
-	}
+	_ = ti
+	return nil
 }
 
 func encodeBool(dst []byte, val interface{}, nullable bool) ([]byte, error) {
@@ -449,9 +430,8 @@ func encodeBool(dst []byte, val interface{}, nullable bool) ([]byte, error) {
 	if !ok {
 		return nil, errors.Newf("expected bool, got %T", val)
 	}
-	if nullable {
-		dst = append(dst, 1) // length byte
-	}
+	// Note: the per-row length prefix for nullable types is written by
+	// writeRowValue in the tdswire package; we only produce raw value bytes.
 	if v {
 		return append(dst, 1), nil
 	}
@@ -471,7 +451,6 @@ func encodeNullableInt(dst []byte, val interface{}, maxLen int) ([]byte, error) 
 	if !ok {
 		return nil, errors.Newf("expected int64, got %T", val)
 	}
-	dst = append(dst, byte(maxLen)) // length byte
 	return appendIntLE(dst, v, maxLen), nil
 }
 
@@ -488,7 +467,6 @@ func encodeNullableFloat(dst []byte, val interface{}, maxLen int) ([]byte, error
 	if !ok {
 		return nil, errors.Newf("expected float64, got %T", val)
 	}
-	dst = append(dst, byte(maxLen))
 	return appendFloatLE(dst, v, maxLen), nil
 }
 
@@ -497,9 +475,10 @@ func encodeVarChar(dst []byte, val interface{}) ([]byte, error) {
 	if !ok {
 		return nil, errors.Newf("expected string, got %T", val)
 	}
-	b := []byte(s)
-	dst = appendUint16LE(dst, uint16(len(b)))
-	return append(dst, b...), nil
+	// Note: the per-row 2-byte length prefix for variable-length types
+	// is written by writeRowValue in the tdswire package; we only
+	// produce raw value bytes.
+	return append(dst, []byte(s)...), nil
 }
 
 func encodeNVarChar(dst []byte, val interface{}) ([]byte, error) {
@@ -509,8 +488,9 @@ func encodeNVarChar(dst []byte, val interface{}) ([]byte, error) {
 	}
 	// TDS NVARCHAR uses UCS-2/UTF-16LE on the wire. For the BMP (which covers
 	// all practical SQL identifiers and data), each rune is 2 bytes LE.
+	// Note: the per-row 2-byte length prefix is written by writeRowValue
+	// in the tdswire package; we only produce raw value bytes.
 	encoded := encodeUTF16LE(s)
-	dst = appendUint16LE(dst, uint16(len(encoded)))
 	return append(dst, encoded...), nil
 }
 
@@ -519,7 +499,8 @@ func encodeVarBin(dst []byte, val interface{}) ([]byte, error) {
 	if !ok {
 		return nil, errors.Newf("expected []byte, got %T", val)
 	}
-	dst = appendUint16LE(dst, uint16(len(b)))
+	// Note: the per-row 2-byte length prefix is written by writeRowValue
+	// in the tdswire package; we only produce raw value bytes.
 	return append(dst, b...), nil
 }
 
@@ -557,10 +538,8 @@ func encodeNullableDateTime(dst []byte, val interface{}, maxLen int) ([]byte, er
 		return nil, errors.Newf("expected time.Time, got %T", val)
 	}
 	if maxLen == 4 {
-		dst = append(dst, 4)
 		return encodeSmallDateTime(dst, t)
 	}
-	dst = append(dst, 8)
 	return encodeDateTime(dst, t)
 }
 
@@ -572,7 +551,6 @@ func encodeDate(dst []byte, val interface{}) ([]byte, error) {
 	t = t.UTC()
 	// TDS DATE: 3-byte unsigned int, days since 0001-01-01.
 	days := julianDay(t) - tdsDateEpochJulian
-	dst = append(dst, 3) // length byte
 	dst = append(dst, byte(days), byte(days>>8), byte(days>>16))
 	return dst, nil
 }
@@ -587,7 +565,6 @@ func encodeTime(dst []byte, val interface{}) ([]byte, error) {
 		t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location(),
 	)
 	ticks := t.Sub(midnight).Nanoseconds() / 100
-	dst = append(dst, 5) // length byte
 	dst = append(dst,
 		byte(ticks), byte(ticks>>8), byte(ticks>>16),
 		byte(ticks>>24), byte(ticks>>32))
@@ -612,7 +589,6 @@ func encodeMoney(dst []byte, val interface{}, size int) ([]byte, error) {
 }
 
 func encodeNullableMoney(dst []byte, val interface{}, maxLen int) ([]byte, error) {
-	dst = append(dst, byte(maxLen))
 	return encodeMoney(dst, val, maxLen)
 }
 
@@ -622,7 +598,6 @@ func encodeDecimal(dst []byte, val interface{}, precision, scale byte) ([]byte, 
 		return nil, errors.Newf("expected *apd.Decimal, got %T", val)
 	}
 	totalLen := decimalLength(precision)
-	dst = append(dst, byte(totalLen))
 
 	// Sign byte: 1 = positive, 0 = negative.
 	if d.Negative {
@@ -650,7 +625,6 @@ func encodeGUID(dst []byte, val interface{}) ([]byte, error) {
 	if !ok {
 		return nil, errors.Newf("expected uuid.UUID, got %T", val)
 	}
-	dst = append(dst, 16) // length byte
 	// TDS GUIDs use mixed-endian encoding: the first three groups are
 	// little-endian, the last two are big-endian. CockroachDB UUIDs store
 	// the raw RFC 4122 bytes, so we re-order for TDS.

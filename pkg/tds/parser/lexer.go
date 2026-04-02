@@ -69,39 +69,41 @@ const (
 	tokenIN
 	tokenBETWEEN
 	tokenLIKE
+	tokenDATABASE
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
 )
 
 var keywords = map[string]tokenType{
-	"USE":     tokenUSE,
-	"CREATE":  tokenCREATE,
-	"TABLE":   tokenTABLE,
-	"INSERT":  tokenINSERT,
-	"INTO":    tokenINTO,
-	"VALUES":  tokenVALUES,
-	"SELECT":  tokenSELECT,
-	"FROM":    tokenFROM,
-	"WHERE":   tokenWHERE,
-	"ORDER":   tokenORDER,
-	"BY":      tokenBY,
-	"TOP":     tokenTOP,
-	"AS":      tokenAS,
-	"NOT":     tokenNOT,
-	"NULL":    tokenNULL,
-	"AND":     tokenAND,
-	"OR":      tokenOR,
-	"ASC":     tokenASC,
-	"DESC":    tokenDESC,
-	"GO":      tokenGO,
-	"IS":      tokenIS,
-	"IN":      tokenIN,
-	"BETWEEN": tokenBETWEEN,
-	"LIKE":    tokenLIKE,
-	"ISNULL":  tokenISNULL,
-	"CONVERT": tokenCONVERT,
-	"GETDATE": tokenGETDATE,
+	"USE":      tokenUSE,
+	"CREATE":   tokenCREATE,
+	"TABLE":    tokenTABLE,
+	"INSERT":   tokenINSERT,
+	"INTO":     tokenINTO,
+	"DATABASE": tokenDATABASE,
+	"VALUES":   tokenVALUES,
+	"SELECT":   tokenSELECT,
+	"FROM":     tokenFROM,
+	"WHERE":    tokenWHERE,
+	"ORDER":    tokenORDER,
+	"BY":       tokenBY,
+	"TOP":      tokenTOP,
+	"AS":       tokenAS,
+	"NOT":      tokenNOT,
+	"NULL":     tokenNULL,
+	"AND":      tokenAND,
+	"OR":       tokenOR,
+	"ASC":      tokenASC,
+	"DESC":     tokenDESC,
+	"GO":       tokenGO,
+	"IS":       tokenIS,
+	"IN":       tokenIN,
+	"BETWEEN":  tokenBETWEEN,
+	"LIKE":     tokenLIKE,
+	"ISNULL":   tokenISNULL,
+	"CONVERT":  tokenCONVERT,
+	"GETDATE":  tokenGETDATE,
 }
 
 // token represents a single lexical token from T-SQL input.
