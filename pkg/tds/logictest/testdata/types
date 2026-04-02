@@ -1,0 +1,57 @@
+# Type handling tests.
+# Uses CONVERT (T-SQL syntax) rather than CAST since the T-SQL
+# parser handles CONVERT but not CAST directly.
+
+# Integer types.
+query colnames
+SELECT CONVERT(INT, 1) AS int_val
+----
+int_val
+1
+
+query colnames
+SELECT CONVERT(INT, 32767) AS big_int
+----
+big_int
+32767
+
+query colnames
+SELECT CONVERT(INT, -1) AS neg_int
+----
+neg_int
+-1
+
+# Float/real types.
+query colnames
+SELECT CONVERT(FLOAT, 3.14) AS float_val
+----
+float_val
+3.14
+
+query colnames
+SELECT CONVERT(FLOAT, 0.0) AS zero_float
+----
+zero_float
+0
+
+# String types.
+query
+SELECT CONVERT(VARCHAR, 'hello world')
+----
+hello world
+
+# Integer arithmetic preserves type.
+query
+SELECT 10 + 20
+----
+30
+
+query
+SELECT 100 * 3
+----
+300
+
+query
+SELECT 10 - 20
+----
+-10

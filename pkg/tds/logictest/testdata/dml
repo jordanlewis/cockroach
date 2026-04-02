@@ -1,0 +1,51 @@
+# DML tests: CREATE TABLE, INSERT, SELECT from tables.
+
+# Create a test table.
+exec
+CREATE TABLE test_dml (id INT, name VARCHAR(100), score INT)
+----
+
+# Insert rows.
+exec
+INSERT INTO test_dml (id, name, score) VALUES (1, 'alice', 90)
+----
+
+exec
+INSERT INTO test_dml (id, name, score) VALUES (2, 'bob', 85)
+----
+
+exec
+INSERT INTO test_dml (id, name, score) VALUES (3, 'carol', 95)
+----
+
+# Query all rows.
+query colnames
+SELECT id, name, score FROM test_dml ORDER BY id
+----
+id  name  score
+1  alice  90
+2  bob  85
+3  carol  95
+
+# Query with WHERE.
+query colnames
+SELECT name, score FROM test_dml WHERE score > 85 ORDER BY score
+----
+name  score
+alice  90
+carol  95
+
+# Query with TOP.
+query colnames
+SELECT TOP 2 id, name FROM test_dml ORDER BY id
+----
+id  name
+1  alice
+2  bob
+
+# SELECT with expression.
+query colnames
+SELECT name, score + 10 AS boosted FROM test_dml WHERE id = 1
+----
+name  boosted
+alice  100

@@ -1,0 +1,27 @@
+# NULL handling tests.
+
+query
+SELECT NULL
+----
+NULL
+
+query colnames
+SELECT NULL AS nullable_col
+----
+nullable_col
+NULL
+
+query
+SELECT ISNULL(NULL, 'fallback')
+----
+fallback
+
+query
+SELECT ISNULL('value', 'fallback')
+----
+value
+
+query
+SELECT ISNULL(NULL, 42)
+----
+42
