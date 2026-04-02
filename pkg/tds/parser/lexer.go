@@ -74,6 +74,9 @@ const (
 	tokenUPDATE
 	tokenSET
 	tokenDROP
+	tokenDISTINCT
+	tokenGROUP
+	tokenHAVING
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
@@ -109,6 +112,9 @@ var keywords = map[string]tokenType{
 	"UPDATE":   tokenUPDATE,
 	"SET":      tokenSET,
 	"DROP":     tokenDROP,
+	"DISTINCT": tokenDISTINCT,
+	"GROUP":    tokenGROUP,
+	"HAVING":   tokenHAVING,
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
 	"GETDATE":  tokenGETDATE,

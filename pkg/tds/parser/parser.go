@@ -367,6 +367,12 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 	p.lex.next() // consume SELECT
 	stmt := &SelectStmt{}
 
+	// Optional DISTINCT.
+	if p.lex.peek().typ == tokenDISTINCT {
+		p.lex.next()
+		stmt.Distinct = true
+	}
+
 	// Optional TOP n.
 	if p.lex.peek().typ == tokenTOP {
 		p.lex.next()
@@ -418,6 +424,35 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 			return nil, err
 		}
 		stmt.Where = expr
+	}
+
+	// Optional GROUP BY.
+	if p.lex.peek().typ == tokenGROUP {
+		p.lex.next()
+		if err := p.expect(tokenBY); err != nil {
+			return nil, err
+		}
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			stmt.GroupBy = append(stmt.GroupBy, expr)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next()
+		}
+	}
+
+	// Optional HAVING.
+	if p.lex.peek().typ == tokenHAVING {
+		p.lex.next()
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Having = expr
 	}
 
 	// Optional ORDER BY.
@@ -981,7 +1016,8 @@ func isKeywordToken(typ tokenType) bool {
 		tokenORDER, tokenBY, tokenTOP, tokenAS, tokenNOT, tokenNULL,
 		tokenAND, tokenOR, tokenASC, tokenDESC, tokenGO, tokenIS, tokenIN,
 		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
-		tokenDROP, tokenISNULL, tokenCONVERT, tokenGETDATE:
+		tokenDROP, tokenDISTINCT, tokenGROUP, tokenHAVING,
+		tokenISNULL, tokenCONVERT, tokenGETDATE:
 		return true
 	}
 	return false

@@ -1,0 +1,102 @@
+# Aggregate functions, GROUP BY, HAVING, and DISTINCT tests.
+
+# Set up test data.
+exec
+CREATE TABLE sales (id INT, region VARCHAR(20), product VARCHAR(20), amount INT)
+----
+
+exec
+INSERT INTO sales (id, region, product, amount) VALUES (1, 'east', 'widget', 100)
+----
+
+exec
+INSERT INTO sales (id, region, product, amount) VALUES (2, 'east', 'gadget', 200)
+----
+
+exec
+INSERT INTO sales (id, region, product, amount) VALUES (3, 'west', 'widget', 150)
+----
+
+exec
+INSERT INTO sales (id, region, product, amount) VALUES (4, 'west', 'gadget', 300)
+----
+
+exec
+INSERT INTO sales (id, region, product, amount) VALUES (5, 'east', 'widget', 120)
+----
+
+# COUNT(*).
+query
+SELECT COUNT(*) FROM sales
+----
+5
+
+# COUNT with WHERE.
+query
+SELECT COUNT(*) FROM sales WHERE region = 'east'
+----
+3
+
+# SUM.
+query
+SELECT SUM(amount) FROM sales
+----
+870
+
+# MIN and MAX.
+query colnames
+SELECT MIN(amount) AS min_amt, MAX(amount) AS max_amt FROM sales
+----
+min_amt  max_amt
+100  300
+
+# GROUP BY.
+query colnames
+SELECT region, COUNT(*) AS cnt FROM sales GROUP BY region ORDER BY region
+----
+region  cnt
+east  3
+west  2
+
+# GROUP BY with SUM.
+query colnames
+SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY region
+----
+region  total
+east  420
+west  450
+
+# GROUP BY with multiple columns.
+query colnames
+SELECT region, product, SUM(amount) AS total FROM sales GROUP BY region, product ORDER BY region, product
+----
+region  product  total
+east  gadget  200
+east  widget  220
+west  gadget  300
+west  widget  150
+
+# HAVING.
+query colnames
+SELECT region, SUM(amount) AS total FROM sales GROUP BY region HAVING SUM(amount) > 430 ORDER BY region
+----
+region  total
+west  450
+
+# DISTINCT.
+query colnames
+SELECT DISTINCT region FROM sales ORDER BY region
+----
+region
+east
+west
+
+# DISTINCT with multiple columns.
+query colnames
+SELECT DISTINCT region, product FROM sales ORDER BY region, product
+----
+region  product
+east  gadget
+east  widget
+west  gadget
+west  widget
