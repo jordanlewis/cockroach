@@ -22,7 +22,9 @@
 package translate
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
@@ -41,6 +43,44 @@ var cqlFunctionToSQL = map[string]string{
 	"max":   "max",
 	// toJson maps to CRDB's to_jsonb which converts any value to JSONB.
 	"tojson": "to_jsonb",
+}
+
+// blobConversions maps CQL blobAs<Type> and <Type>AsBlob function names
+// (lowercased) to the CRDB SQL target type for CAST. These Cassandra functions
+// perform binary-level type conversions; the CRDB CAST approximation works for
+// compatible types (e.g. text↔blob) but may produce runtime errors for types
+// that CRDB cannot directly cast (e.g. int↔bytes).
+var blobConversions = map[string]string{
+	"blobasint":       "INT4",
+	"intasblob":       "BYTES",
+	"blobastext":      "STRING",
+	"textasblob":      "BYTES",
+	"blobasvarchar":   "STRING",
+	"varcharasblob":   "BYTES",
+	"blobasbigint":    "INT8",
+	"bigintasblob":    "BYTES",
+	"blobasfloat":     "FLOAT4",
+	"floatasblob":     "BYTES",
+	"blobasdouble":    "FLOAT8",
+	"doubleasblob":    "BYTES",
+	"blobasboolean":   "BOOL",
+	"booleanasblob":   "BYTES",
+	"blobastimestamp": "TIMESTAMPTZ",
+	"timestampasblob": "BYTES",
+	"blobasuuid":      "UUID",
+	"uuidasblob":      "BYTES",
+	"blobastimeuuid":  "UUID",
+	"timeuuidasblob":  "BYTES",
+	"blobasinet":      "INET",
+	"inetasblob":      "BYTES",
+	"blobasascii":     "STRING",
+	"asciiasblob":     "BYTES",
+	"blobasdecimal":   "DECIMAL",
+	"decimalasblob":   "BYTES",
+	"blobasvarint":    "INT8",
+	"varintasblob":    "BYTES",
+	"blobascounter":   "INT8",
+	"counterasblob":   "BYTES",
 }
 
 // cqlTypeToCRDBSQL maps CQL type names (as produced by the parser's DataType.Name)
@@ -178,7 +218,7 @@ func translateCreateTable(s *parser.CreateTableStatement) (Result, error) {
 // conditional insert.
 func translateInsert(s *parser.InsertStatement) (Result, error) {
 	if s.JSON {
-		return Result{}, errors.Newf("INSERT JSON is not yet supported")
+		return translateInsertJSON(s)
 	}
 
 	var sb strings.Builder
@@ -225,7 +265,7 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 // translateSelect maps CQL SELECT to CRDB SQL SELECT.
 func translateSelect(s *parser.SelectStatement) (Result, error) {
 	if s.JSON {
-		return Result{}, errors.Newf("SELECT JSON is not yet supported")
+		return translateSelectJSON(s)
 	}
 	if s.PerPartitionLimit != nil {
 		return Result{}, errors.Newf("PER PARTITION LIMIT is not supported")
@@ -267,18 +307,32 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		}
 	}
 
+	if err := writeFromAndClauses(&sb, s, &params, &paramIdx); err != nil {
+		return Result{}, err
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// writeFromAndClauses appends FROM, WHERE, GROUP BY, ORDER BY, and LIMIT
+// clauses to sb for a SELECT statement. Shared by normal and JSON SELECT
+// translation.
+func writeFromAndClauses(
+	sb *strings.Builder,
+	s *parser.SelectStatement,
+	params *[]interface{},
+	paramIdx *int,
+) error {
 	sb.WriteString(" FROM ")
 	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
 
-	// WHERE clauses.
 	if len(s.Where) > 0 {
 		sb.WriteString(" WHERE ")
-		if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
-			return Result{}, err
+		if err := writeWhereClauses(sb, s.Where, params, paramIdx); err != nil {
+			return err
 		}
 	}
 
-	// GROUP BY.
 	if len(s.GroupBy) > 0 {
 		sb.WriteString(" GROUP BY ")
 		for i, col := range s.GroupBy {
@@ -289,7 +343,6 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		}
 	}
 
-	// ORDER BY.
 	if len(s.OrderBy) > 0 {
 		sb.WriteString(" ORDER BY ")
 		for i, ob := range s.OrderBy {
@@ -303,20 +356,19 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 		}
 	}
 
-	// LIMIT.
 	if s.Limit != nil {
 		sb.WriteString(" LIMIT ")
-		sqlVal, param, err := exprToSQL(s.Limit, &paramIdx)
+		sqlVal, param, err := exprToSQL(s.Limit, paramIdx)
 		if err != nil {
-			return Result{}, errors.Wrap(err, "translating LIMIT value")
+			return errors.Wrap(err, "translating LIMIT value")
 		}
 		sb.WriteString(sqlVal)
 		if param != nil {
-			params = append(params, param)
+			*params = append(*params, param)
 		}
 	}
 
-	return Result{SQL: sb.String(), Params: params}, nil
+	return nil
 }
 
 // writeWhereClauses writes WHERE conditions to sb, handling both plain column
@@ -529,6 +581,41 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 // functionCallToSQL translates a CQL function call to CRDB SQL.
 func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
 	lower := strings.ToLower(fc.Name)
+
+	// Handle special functions that translate to casts or expressions,
+	// not simple function-name substitutions.
+	switch lower {
+	case "totimestamp", "dateof":
+		return singleArgCast(fc, paramIdx, "TIMESTAMPTZ")
+	case "todate":
+		return singleArgCast(fc, paramIdx, "DATE")
+	case "tounixtimestamp", "unixtimestampof":
+		return extractEpochToSQL(fc, paramIdx)
+	case "mintimeuuid", "maxtimeuuid":
+		// Cassandra functions that generate UUID boundaries for a timestamp.
+		// CRDB does not have timeuuids; return gen_random_uuid() for syntax
+		// compatibility.
+		return "gen_random_uuid()", nil, nil
+	case "token":
+		return tokenToSQL(fc, paramIdx)
+	case "writetime":
+		// Cassandra per-cell write timestamp metadata. CRDB does not track
+		// per-cell timestamps; return 0 for compatibility.
+		return "0::INT8", nil, nil
+	case "ttl":
+		// Cassandra per-cell TTL metadata. CRDB does not support per-cell
+		// TTL; return NULL (same as Cassandra for rows without TTL).
+		return "NULL::INT4", nil, nil
+	case "fromjson":
+		return singleArgCast(fc, paramIdx, "JSONB")
+	}
+
+	// Handle typeAsBlob / blobAsType conversion functions.
+	if sqlType, ok := blobConversions[lower]; ok {
+		return singleArgCast(fc, paramIdx, sqlType)
+	}
+
+	// Generic function name mapping.
 	sqlName, ok := cqlFunctionToSQL[lower]
 	if !ok {
 		return "", nil, errors.Newf("unsupported CQL function %q", fc.Name)
@@ -537,7 +624,9 @@ func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 	// Only COUNT accepts a * argument.
 	for _, arg := range fc.Args {
 		if _, isStar := arg.(*parser.StarExpr); isStar && lower != "count" {
-			return "", nil, errors.Newf("unsupported CQL function %q", fc.Name)
+			return "", nil, errors.Newf(
+				"%s() does not accept * as an argument", fc.Name,
+			)
 		}
 	}
 
@@ -562,6 +651,201 @@ func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 
 	sb.WriteByte(')')
 	return sb.String(), nil, nil
+}
+
+// singleArgCast translates a single-argument CQL function to a SQL CAST.
+func singleArgCast(
+	fc *parser.FunctionCall, paramIdx *int, sqlType string,
+) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	argSQL, param, err := exprToSQL(fc.Args[0], paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf("CAST(%s AS %s)", argSQL, sqlType), param, nil
+}
+
+// extractEpochToSQL translates toUnixTimestamp/unixTimestampOf to
+// CAST(extract(epoch FROM arg) AS INT8).
+func extractEpochToSQL(
+	fc *parser.FunctionCall, paramIdx *int,
+) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	argSQL, param, err := exprToSQL(fc.Args[0], paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf(
+		"CAST(extract(epoch FROM %s) AS INT8)", argSQL,
+	), param, nil
+}
+
+// tokenToSQL translates the CQL token() function to a CRDB hash function.
+// CQL token() returns the partitioner hash of partition key values; this
+// approximation uses fnv32a for syntax compatibility.
+func tokenToSQL(
+	fc *parser.FunctionCall, paramIdx *int,
+) (string, interface{}, error) {
+	if len(fc.Args) == 0 {
+		return "", nil, errors.Newf("token() requires at least one argument")
+	}
+	var parts []string
+	for _, arg := range fc.Args {
+		argSQL, _, err := exprToSQL(arg, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		parts = append(parts, fmt.Sprintf("CAST(%s AS STRING)", argSQL))
+	}
+	var inner string
+	if len(parts) == 1 {
+		inner = parts[0]
+	} else {
+		inner = strings.Join(parts, " || ',' || ")
+	}
+	return fmt.Sprintf("fnv32a(CAST(%s AS BYTES))", inner), nil, nil
+}
+
+// translateInsertJSON maps CQL INSERT INTO <table> JSON '<json>' to a CRDB
+// UPSERT (or INSERT if IF NOT EXISTS) by parsing the JSON value and
+// extracting column names and values.
+func translateInsertJSON(s *parser.InsertStatement) (Result, error) {
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal([]byte(s.JSONValue), &jsonData); err != nil {
+		return Result{}, errors.Wrap(err, "parsing INSERT JSON value")
+	}
+	if len(jsonData) == 0 {
+		return Result{}, errors.New("INSERT JSON: empty JSON object")
+	}
+
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(jsonData))
+	for k := range jsonData {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	if s.IfNotExists {
+		sb.WriteString("INSERT INTO ")
+	} else {
+		sb.WriteString("UPSERT INTO ")
+	}
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+
+	sb.WriteString(" (")
+	for i, key := range keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(key))
+	}
+	sb.WriteString(") VALUES (")
+	for i, key := range keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(jsonValueToSQL(jsonData[key]))
+	}
+	sb.WriteByte(')')
+
+	return Result{SQL: sb.String()}, nil
+}
+
+// jsonValueToSQL converts a JSON value (from encoding/json's Unmarshal) to a
+// SQL literal string.
+func jsonValueToSQL(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return quoteLiteral(val)
+	case float64:
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		return fmt.Sprintf("%g", val)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return "NULL"
+	default:
+		return "NULL"
+	}
+}
+
+// translateSelectJSON maps CQL SELECT JSON to CRDB SQL that returns results
+// as a JSON string column. For SELECT JSON *, wraps the query in a subquery
+// and applies row_to_json. For specific columns, uses jsonb_build_object.
+func translateSelectJSON(s *parser.SelectStatement) (Result, error) {
+	isSelectStar := len(s.Columns) == 1 &&
+		s.Columns[0].Column == "*" &&
+		s.Columns[0].Expr == nil
+
+	if isSelectStar {
+		// Build the inner SELECT without JSON.
+		inner := *s
+		inner.JSON = false
+		innerResult, err := translateSelect(&inner)
+		if err != nil {
+			return Result{}, err
+		}
+		sql := fmt.Sprintf(
+			"SELECT row_to_json(sub)::STRING AS \"[json]\" FROM (%s) AS sub",
+			innerResult.SQL,
+		)
+		return Result{SQL: sql, Params: innerResult.Params}, nil
+	}
+
+	// SELECT JSON with specific columns: use jsonb_build_object.
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	if s.Distinct {
+		sb.WriteString("SELECT DISTINCT ")
+	} else {
+		sb.WriteString("SELECT ")
+	}
+	sb.WriteString("jsonb_build_object(")
+	for i, sel := range s.Columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		if sel.Expr != nil {
+			sqlExpr, _, err := exprToSQL(sel.Expr, &paramIdx)
+			if err != nil {
+				return Result{}, errors.Wrap(err, "translating JSON selector")
+			}
+			key := sel.Alias
+			if key == "" {
+				key = sqlExpr
+			}
+			sb.WriteString(quoteLiteral(key))
+			sb.WriteString(", ")
+			sb.WriteString(sqlExpr)
+		} else {
+			sb.WriteString(quoteLiteral(sel.Column))
+			sb.WriteString(", ")
+			sb.WriteString(quoteIdent(sel.Column))
+		}
+	}
+	sb.WriteString(")::STRING AS \"[json]\"")
+
+	if err := writeFromAndClauses(&sb, s, &params, &paramIdx); err != nil {
+		return Result{}, err
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
 }
 
 // castExprToSQL translates CAST(expr AS type) to CRDB SQL.

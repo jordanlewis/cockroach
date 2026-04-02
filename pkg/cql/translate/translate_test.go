@@ -381,6 +381,170 @@ func TestQuoteLiteral(t *testing.T) {
 	require.Equal(t, "'it''s'", quoteLiteral("it's"))
 }
 
+func TestTranslateBuiltinFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "toTimestamp",
+			cql:  "SELECT toTimestamp(uid) FROM t",
+			want: `SELECT CAST("uid" AS TIMESTAMPTZ) FROM "t"`,
+		},
+		{
+			name: "toDate",
+			cql:  "SELECT toDate(ts) FROM t",
+			want: `SELECT CAST("ts" AS DATE) FROM "t"`,
+		},
+		{
+			name: "toUnixTimestamp",
+			cql:  "SELECT toUnixTimestamp(ts) FROM t",
+			want: `SELECT CAST(extract(epoch FROM "ts") AS INT8) FROM "t"`,
+		},
+		{
+			name: "dateOf",
+			cql:  "SELECT dateOf(uid) FROM t",
+			want: `SELECT CAST("uid" AS TIMESTAMPTZ) FROM "t"`,
+		},
+		{
+			name: "unixTimestampOf",
+			cql:  "SELECT unixTimestampOf(uid) FROM t",
+			want: `SELECT CAST(extract(epoch FROM "uid") AS INT8) FROM "t"`,
+		},
+		{
+			name: "minTimeuuid",
+			cql:  "SELECT * FROM t WHERE uid > minTimeuuid('2024-01-01')",
+			want: `SELECT * FROM "t" WHERE "uid" > gen_random_uuid()`,
+		},
+		{
+			name: "maxTimeuuid",
+			cql:  "SELECT * FROM t WHERE uid < maxTimeuuid('2024-12-31')",
+			want: `SELECT * FROM "t" WHERE "uid" < gen_random_uuid()`,
+		},
+		{
+			name: "token single key",
+			cql:  "SELECT token(pk) FROM t",
+			want: `SELECT fnv32a(CAST(CAST("pk" AS STRING) AS BYTES)) FROM "t"`,
+		},
+		{
+			name: "token in where",
+			cql:  "SELECT * FROM t WHERE token(pk) > 0",
+			want: `SELECT * FROM "t" WHERE fnv32a(CAST(CAST("pk" AS STRING) AS BYTES)) > 0`,
+		},
+		{
+			name: "writetime",
+			cql:  "SELECT writetime(val) FROM t",
+			want: `SELECT 0::INT8 FROM "t"`,
+		},
+		{
+			name: "ttl",
+			cql:  "SELECT ttl(val) FROM t",
+			want: `SELECT NULL::INT4 FROM "t"`,
+		},
+		{
+			name: "textAsBlob",
+			cql:  "SELECT textAsBlob(val) FROM t",
+			want: `SELECT CAST("val" AS BYTES) FROM "t"`,
+		},
+		{
+			name: "blobAsText",
+			cql:  "SELECT blobAsText(val) FROM t",
+			want: `SELECT CAST("val" AS STRING) FROM "t"`,
+		},
+		{
+			name: "intAsBlob",
+			cql:  "SELECT intAsBlob(pk) FROM t",
+			want: `SELECT CAST("pk" AS BYTES) FROM "t"`,
+		},
+		{
+			name: "blobAsInt",
+			cql:  "SELECT blobAsInt(val) FROM t",
+			want: `SELECT CAST("val" AS INT4) FROM "t"`,
+		},
+		{
+			name: "fromJson",
+			cql:  "SELECT fromJson(val) FROM t",
+			want: `SELECT CAST("val" AS JSONB) FROM "t"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestTranslateInsertJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "basic insert json",
+			cql:  `INSERT INTO t JSON '{"id": 1, "name": "alice"}'`,
+			want: `UPSERT INTO "t" ("id", "name") VALUES (1, 'alice')`,
+		},
+		{
+			name: "insert json if not exists",
+			cql:  `INSERT INTO t JSON '{"id": 2, "name": "bob"}' IF NOT EXISTS`,
+			want: `INSERT INTO "t" ("id", "name") VALUES (2, 'bob')`,
+		},
+		{
+			name: "insert json with boolean and null",
+			cql:  `INSERT INTO t JSON '{"active": true, "id": 1, "name": null}'`,
+			want: `UPSERT INTO "t" ("active", "id", "name") VALUES (true, 1, NULL)`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestTranslateSelectJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "select json star",
+			cql:  "SELECT JSON * FROM t",
+			want: `SELECT row_to_json(sub)::STRING AS "[json]" FROM (SELECT * FROM "t") AS sub`,
+		},
+		{
+			name: "select json columns",
+			cql:  "SELECT JSON id, name FROM t",
+			want: `SELECT jsonb_build_object('id', "id", 'name', "name")::STRING AS "[json]" FROM "t"`,
+		},
+		{
+			name: "select json star with where",
+			cql:  "SELECT JSON * FROM t WHERE id = 1",
+			want: `SELECT row_to_json(sub)::STRING AS "[json]" FROM (SELECT * FROM "t" WHERE "id" = 1) AS sub`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
 func TestTranslateRoundTrip(t *testing.T) {
 	// Verify that parsing a CQL statement and translating it produces valid SQL.
 	cqlStatements := []string{
