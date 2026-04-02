@@ -1,0 +1,168 @@
+# JSON operations, CAST, and type conversion syntax.
+#
+# CQL provides JSON-oriented features: INSERT JSON inserts a row from
+# a JSON string, SELECT JSON returns results as JSON, and toJson() /
+# fromJson() convert between CQL values and JSON text. CAST(col AS
+# type) performs explicit type conversions.
+#
+# None of these are supported by the parser. INSERT JSON fails because
+# the parser expects INTO after INSERT. SELECT JSON fails because JSON
+# is parsed as a column name and then the next token is not FROM.
+# toJson()/fromJson() fail because function call syntax (parentheses)
+# is not supported. CAST fails for the same reason.
+
+exec
+USE defaultdb
+----
+
+exec
+CREATE TABLE IF NOT EXISTS json_t (id int, name text, age int, active boolean, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO json_t (id, name, age, active) VALUES (1, 'alice', 30, true)
+----
+
+exec
+INSERT INTO json_t (id, name, age, active) VALUES (2, 'bob', 25, false)
+----
+
+# ---------------------------------------------------------------
+# INSERT JSON (unsupported)
+#
+# INSERT JSON replaces the INSERT INTO ... VALUES syntax with a
+# JSON string. After consuming INSERT, the parser expects INTO.
+# ---------------------------------------------------------------
+
+# INSERT JSON with a JSON string body.
+error
+INSERT JSON '{"id": 10, "name": "charlie", "age": 35, "active": true}'
+----
+at position 7: expected INTO, got "JSON"
+
+# INSERT JSON with DEFAULT UNSET (handles missing fields).
+error
+INSERT JSON '{"id": 11, "name": "dave"}' DEFAULT UNSET
+----
+at position 7: expected INTO, got "JSON"
+
+# INSERT JSON with DEFAULT NULL (nulls for missing fields).
+error
+INSERT JSON '{"id": 12}' DEFAULT NULL
+----
+at position 7: expected INTO, got "JSON"
+
+# INSERT JSON into a specific table.
+error
+INSERT INTO json_t JSON '{"id": 13, "name": "eve"}'
+----
+at position 19: expected '(', got "JSON"
+
+# ---------------------------------------------------------------
+# SELECT JSON (unsupported)
+#
+# SELECT JSON returns each row as a single JSON-encoded column.
+# The parser reads JSON as a column name, then the next token
+# fails the FROM expectation.
+# ---------------------------------------------------------------
+
+# SELECT JSON * — parser reads "JSON" as a column, then finds "*".
+error
+SELECT JSON * FROM json_t
+----
+at position 12: expected FROM, got "*"
+
+# SELECT JSON with specific columns.
+error
+SELECT JSON id, name FROM json_t
+----
+at position 12: expected FROM, got "id"
+
+# SELECT JSON with WHERE clause.
+error
+SELECT JSON * FROM json_t WHERE id = 1
+----
+at position 12: expected FROM, got "*"
+
+# ---------------------------------------------------------------
+# toJson() function (unsupported)
+#
+# toJson() converts a CQL value to its JSON text representation.
+# The parser reads "toJson" as a column identifier and fails on
+# the opening parenthesis.
+# ---------------------------------------------------------------
+
+# toJson on a column.
+error
+SELECT toJson(name) FROM json_t WHERE id = 1
+----
+at position 13: expected FROM, got "("
+
+# toJson on the entire row via *.
+error
+SELECT toJson(*) FROM json_t
+----
+at position 13: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# fromJson() function (unsupported)
+#
+# fromJson() converts a JSON text value to a CQL type. Typically
+# used in INSERT or UPDATE to parse JSON strings into CQL values.
+# ---------------------------------------------------------------
+
+# fromJson in INSERT VALUES.
+error
+INSERT INTO json_t (id, name) VALUES (20, fromJson('"frank"'))
+----
+at position 42: expected expression, got identifier "fromJson"
+
+# fromJson in SELECT.
+error
+SELECT fromJson(name) FROM json_t WHERE id = 1
+----
+at position 15: expected FROM, got "("
+
+# ---------------------------------------------------------------
+# CAST operations (unsupported)
+#
+# CAST(column AS type) performs explicit type conversion. The
+# parser reads "CAST" as a column name and fails on the opening
+# parenthesis.
+# ---------------------------------------------------------------
+
+# CAST in SELECT list.
+error
+SELECT CAST(id AS bigint) FROM json_t
+----
+at position 11: expected FROM, got "("
+
+# CAST with text type.
+error
+SELECT CAST(age AS text) FROM json_t
+----
+at position 11: expected FROM, got "("
+
+# Multiple CASTs.
+error
+SELECT CAST(id AS bigint), CAST(age AS text) FROM json_t
+----
+at position 11: expected FROM, got "("
+
+# CAST in WHERE clause — parser reads CAST as column name,
+# then expects comparison operator but gets parenthesis.
+error
+SELECT * FROM json_t WHERE CAST(id AS bigint) > 0
+----
+at position 31: expected comparison operator, got "("
+
+# ---------------------------------------------------------------
+# Verify normal operations still work.
+# ---------------------------------------------------------------
+
+query rowsort
+SELECT id, name, age, active FROM json_t
+----
+id name age active
+1 alice 30 true
+2 bob 25 false
