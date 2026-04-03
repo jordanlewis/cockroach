@@ -2,8 +2,8 @@
 #
 # CQL UPDATE with IF clause performs a conditional update: the
 # mutation only applies if the condition evaluates to true against
-# the current row. IF conditions are translated to additional WHERE
-# predicates in the SQL UPDATE.
+# the current row. The result is a rows result set with an [applied]
+# column, matching Cassandra's LWT semantics.
 
 exec
 USE defaultdb
@@ -47,14 +47,14 @@ id name val
 1 carol 200
 
 # ---------------------------------------------------------------
-# UPDATE IF EXISTS: row exists → update succeeds.
-# (IF EXISTS is accepted but treated as a plain UPDATE since SQL
-# UPDATE WHERE already handles the non-existence case as a no-op.)
+# UPDATE IF EXISTS: row exists → [applied]=true.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET val = 300 WHERE id = 1 IF EXISTS
 ----
+[applied]
+true
 
 query
 SELECT id, name, val FROM lwt_upd WHERE id = 1
@@ -63,12 +63,24 @@ id name val
 1 carol 300
 
 # ---------------------------------------------------------------
-# UPDATE IF column = value: condition matches → update applies.
+# UPDATE IF EXISTS on missing row → [applied]=false.
 # ---------------------------------------------------------------
 
-exec
+query
+UPDATE lwt_upd SET val = 999 WHERE id = 999 IF EXISTS
+----
+[applied]
+false
+
+# ---------------------------------------------------------------
+# UPDATE IF column = value: condition matches → [applied]=true.
+# ---------------------------------------------------------------
+
+query
 UPDATE lwt_upd SET name = 'dave' WHERE id = 1 IF name = 'carol'
 ----
+[applied]
+true
 
 query
 SELECT id, name, val FROM lwt_upd WHERE id = 1
@@ -77,12 +89,15 @@ id name val
 1 dave 300
 
 # ---------------------------------------------------------------
-# UPDATE IF column = value: condition does NOT match → no-op.
+# UPDATE IF column = value: condition does NOT match →
+# [applied]=false with existing row.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET name = 'eve' WHERE id = 1 IF name = 'alice'
 ----
+[applied] id name val
+false 1 dave 300
 
 # Row is unchanged because the IF condition was false.
 query
@@ -92,12 +107,14 @@ id name val
 1 dave 300
 
 # ---------------------------------------------------------------
-# UPDATE IF column != value: condition matches → update applies.
+# UPDATE IF column != value: condition matches → [applied]=true.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET val = 999 WHERE id = 1 IF val != 100
 ----
+[applied]
+true
 
 query
 SELECT id, name, val FROM lwt_upd WHERE id = 1
@@ -106,12 +123,15 @@ id name val
 1 dave 999
 
 # ---------------------------------------------------------------
-# UPDATE IF column != value: condition does NOT match → no-op.
+# UPDATE IF column != value: condition does NOT match →
+# [applied]=false with existing row.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET val = 0 WHERE id = 1 IF val != 999
 ----
+[applied] id name val
+false 1 dave 999
 
 query
 SELECT id, name, val FROM lwt_upd WHERE id = 1
@@ -123,9 +143,11 @@ id name val
 # UPDATE with multiple IF conditions: all must match.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET name = 'frank', val = 500 WHERE id = 1 IF name = 'dave' AND val = 999
 ----
+[applied]
+true
 
 query
 SELECT id, name, val FROM lwt_upd WHERE id = 1
@@ -134,12 +156,15 @@ id name val
 1 frank 500
 
 # ---------------------------------------------------------------
-# UPDATE with multiple IF conditions: one does not match → no-op.
+# UPDATE with multiple IF conditions: one does not match →
+# [applied]=false with existing row.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE lwt_upd SET name = 'ghost' WHERE id = 1 IF name = 'frank' AND val = 100
 ----
+[applied] id name val
+false 1 frank 500
 
 # val is 500, not 100, so the update is a no-op.
 query

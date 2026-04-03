@@ -139,9 +139,11 @@ cql-dml: unsupported binary operator: <jsonb> - <jsonb> (returning <jsonb>)
 # UPDATE IF EXISTS (lightweight transaction).
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE jd_upd SET v = 99 WHERE k = 1 IF EXISTS
 ----
+[applied]
+true
 
 query
 SELECT k, v FROM jd_upd WHERE k = 1
@@ -149,18 +151,22 @@ SELECT k, v FROM jd_upd WHERE k = 1
 k v
 1 99
 
-# UPDATE IF EXISTS on non-existent row (no-op).
-exec
+# UPDATE IF EXISTS on non-existent row → [applied]=false.
+query
 UPDATE jd_upd SET v = 999 WHERE k = 9999 IF EXISTS
 ----
+[applied]
+false
 
 # ---------------------------------------------------------------
 # UPDATE IF condition (lightweight transaction).
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE jd_upd SET v = 50 WHERE k = 1 IF v = 99
 ----
+[applied]
+true
 
 query
 SELECT k, v FROM jd_upd WHERE k = 1
@@ -168,9 +174,11 @@ SELECT k, v FROM jd_upd WHERE k = 1
 k v
 1 50
 
-exec
+query
 UPDATE jd_upd SET v = 60 WHERE k = 1 IF v1 = 111 AND v2 = 222
 ----
+[applied]
+true
 
 query
 SELECT k, v FROM jd_upd WHERE k = 1

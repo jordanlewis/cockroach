@@ -3,10 +3,9 @@
 # CQL DELETE removes entire rows by primary key. Column-level DELETE
 # (DELETE col1, col2 FROM table WHERE ...) is a Cassandra feature that
 # sets individual columns to null (tombstones); this is translated to
-# UPDATE ... SET col = NULL. DELETE IF EXISTS is accepted (SQL DELETE
-# WHERE is already a no-op for missing rows). DELETE with IF conditions
-# translates IF predicates to additional WHERE clauses so the delete
-# only applies when conditions match.
+# UPDATE ... SET col = NULL. DELETE IF EXISTS and DELETE IF <conds>
+# return a rows result set with an [applied] column, matching
+# Cassandra's lightweight transaction semantics.
 
 exec
 USE defaultdb
@@ -100,15 +99,14 @@ DELETE FROM dml_del WHERE pk = 999 AND ck = 1
 ----
 
 # ---------------------------------------------------------------
-# DELETE IF EXISTS: row exists → row is deleted.
-#
-# IF EXISTS is accepted by the parser. SQL DELETE WHERE is already
-# a no-op for missing rows, so this is semantically equivalent.
+# DELETE IF EXISTS: row exists → [applied]=true, row is deleted.
 # ---------------------------------------------------------------
 
-exec
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 30 IF EXISTS
 ----
+[applied]
+true
 
 query rowsort
 SELECT pk, ck, name FROM dml_del WHERE pk = 1
@@ -117,10 +115,12 @@ pk ck name
 1 10 alice
 1 20 bob
 
-# DELETE IF EXISTS on missing row → no-op.
-exec
+# DELETE IF EXISTS on missing row → [applied]=false.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 30 IF EXISTS
 ----
+[applied]
+false
 
 # ---------------------------------------------------------------
 # DELETE with IN clause.
@@ -173,14 +173,17 @@ UPDATE dml_del SET name = 'alice', val = 100 WHERE pk = 1 AND ck = 10
 # ---------------------------------------------------------------
 # DELETE with IF conditions (lightweight transactions).
 #
-# CQL DELETE with IF col = val performs a conditional delete. IF
-# conditions are translated to additional WHERE predicates.
+# CQL DELETE with IF col = val performs a conditional delete. The
+# result is a rows result set with [applied] and (on failure) the
+# existing row values.
 # ---------------------------------------------------------------
 
-# IF condition does not match → no-op. (pk=1,ck=10 has alice/100)
-exec
+# IF condition does not match → [applied]=false with existing row.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'wrong'
 ----
+[applied] pk ck name val
+false 1 10 alice 100
 
 # Row is still present.
 query
@@ -189,10 +192,12 @@ SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10
 pk ck name val
 1 10 alice 100
 
-# IF condition matches → row is deleted.
-exec
+# IF condition matches → [applied]=true, row is deleted.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'alice'
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name FROM dml_del WHERE pk = 1 AND ck = 10
@@ -204,10 +209,12 @@ exec
 INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 10, 'alice', 100)
 ----
 
-# IF != condition matches → row is deleted.
-exec
+# IF != condition matches → [applied]=true.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name != 'bob'
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name FROM dml_del WHERE pk = 1 AND ck = 10
@@ -219,10 +226,12 @@ exec
 INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 10, 'alice', 100)
 ----
 
-# Multiple IF conditions: all match → row is deleted.
-exec
+# Multiple IF conditions: all match → [applied]=true.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'alice' AND val = 100
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name FROM dml_del WHERE pk = 1 AND ck = 10
@@ -234,10 +243,13 @@ exec
 INSERT INTO dml_del (pk, ck, name, val) VALUES (1, 10, 'alice', 100)
 ----
 
-# Multiple IF conditions: one doesn't match → no-op.
-exec
+# Multiple IF conditions: one doesn't match → [applied]=false with
+# existing row.
+query
 DELETE FROM dml_del WHERE pk = 1 AND ck = 10 IF name = 'alice' AND val = 999
 ----
+[applied] pk ck name val
+false 1 10 alice 100
 
 query
 SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10

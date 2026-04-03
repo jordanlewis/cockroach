@@ -3,10 +3,9 @@
 # CQL UPDATE modifies existing rows in place. Unlike SQL UPDATE, CQL
 # UPDATE is also an upsert in some interpretations, but CockroachDB's
 # CQL layer translates it to a standard SQL UPDATE which only modifies
-# existing rows. UPDATE IF EXISTS is accepted (a no-op guard since SQL
-# UPDATE WHERE on a missing row is already a no-op). UPDATE with IF
-# conditions (lightweight transactions) translates IF predicates to
-# additional WHERE clauses so the update only applies when conditions match.
+# existing rows. UPDATE IF EXISTS and UPDATE IF <conds> return a rows
+# result set with an [applied] column, matching Cassandra's lightweight
+# transaction semantics.
 
 exec
 USE defaultdb
@@ -86,16 +85,14 @@ SELECT pk, ck, name FROM dml_upd WHERE pk = 999
 pk ck name
 
 # ---------------------------------------------------------------
-# UPDATE IF EXISTS: row exists → update succeeds.
-#
-# IF EXISTS is accepted by the parser. SQL UPDATE WHERE already
-# handles non-existence as a no-op, so this is semantically
-# equivalent to a plain UPDATE.
+# UPDATE IF EXISTS: row exists → [applied]=true.
 # ---------------------------------------------------------------
 
-exec
+query
 UPDATE dml_upd SET val = 999 WHERE pk = 1 AND ck = 10 IF EXISTS
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
@@ -103,10 +100,12 @@ SELECT pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
 pk ck name val
 1 10 ALICE 999
 
-# UPDATE IF EXISTS on a non-existent row → no-op.
-exec
+# UPDATE IF EXISTS on a non-existent row → [applied]=false.
+query
 UPDATE dml_upd SET val = 1 WHERE pk = 888 AND ck = 1 IF EXISTS
 ----
+[applied]
+false
 
 query
 SELECT pk, ck, name FROM dml_upd WHERE pk = 888
@@ -117,24 +116,28 @@ pk ck name
 # UPDATE with IF conditions (lightweight transactions).
 #
 # CQL UPDATE with IF <col> = <val> performs a conditional update.
-# IF conditions are translated to additional WHERE predicates.
+# The result includes [applied] and (on failure) the existing row.
 # ---------------------------------------------------------------
 
-# IF condition matches → update applies.
-exec
+# IF condition matches → [applied]=true.
+query
 UPDATE dml_upd SET name = 'new' WHERE pk = 1 AND ck = 10 IF name = 'ALICE'
 ----
+[applied]
+true
 
 query
-SELECT pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
+Select pk, ck, name, val FROM dml_upd WHERE pk = 1 AND ck = 10
 ----
 pk ck name val
 1 10 new 999
 
-# IF condition does not match → no-op.
-exec
+# IF condition does not match → [applied]=false with existing row.
+query
 UPDATE dml_upd SET name = 'nope' WHERE pk = 1 AND ck = 10 IF name = 'ALICE'
 ----
+[applied] pk ck name val active
+false 1 10 new 999 true
 
 query
 SELECT pk, ck, name FROM dml_upd WHERE pk = 1 AND ck = 10
@@ -142,10 +145,12 @@ SELECT pk, ck, name FROM dml_upd WHERE pk = 1 AND ck = 10
 pk ck name
 1 10 new
 
-# IF val != condition matches → update applies.
-exec
+# IF val != condition matches → [applied]=true.
+query
 UPDATE dml_upd SET val = 0 WHERE pk = 1 AND ck = 10 IF val != 100
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, val FROM dml_upd WHERE pk = 1 AND ck = 10
@@ -153,10 +158,12 @@ SELECT pk, ck, val FROM dml_upd WHERE pk = 1 AND ck = 10
 pk ck val
 1 10 0
 
-# Multiple IF conditions: all must match for update to apply.
-exec
+# Multiple IF conditions: all must match → [applied]=true.
+query
 UPDATE dml_upd SET active = true WHERE pk = 1 AND ck = 10 IF name = 'new' AND val = 0
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 1 AND ck = 10
@@ -164,10 +171,13 @@ SELECT pk, ck, name, val, active FROM dml_upd WHERE pk = 1 AND ck = 10
 pk ck name val active
 1 10 new 0 true
 
-# Multiple IF conditions: one doesn't match → no-op.
-exec
+# Multiple IF conditions: one doesn't match → [applied]=false
+# with existing row.
+query
 UPDATE dml_upd SET active = false WHERE pk = 1 AND ck = 10 IF active = true AND val = 999
 ----
+[applied] pk ck name val active
+false 1 10 new 0 true
 
 query
 SELECT pk, ck, active FROM dml_upd WHERE pk = 1 AND ck = 10

@@ -1945,6 +1945,35 @@ func BuildLWTExistingRowQuery(
 	return sb.String(), params
 }
 
+// BuildLWTExistingRowQueryFromWhere generates a SELECT query that
+// returns false AS "[applied]" plus all columns of the existing row,
+// filtered by the WHERE clause of a conditional DELETE or UPDATE. Used
+// by the executor when a conditional DML (IF <conds>) does not apply
+// and the client needs to see the current row state.
+func BuildLWTExistingRowQueryFromWhere(
+	table string, keyspace string, where []parser.WhereClause, meta TableMeta,
+) (string, []interface{}) {
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString(`SELECT false AS "[applied]"`)
+	for _, col := range meta.Columns {
+		sb.WriteString(", ")
+		sb.WriteString(quoteIdent(col))
+	}
+
+	sb.WriteString(" FROM ")
+	sb.WriteString(qualifiedTable(keyspace, table))
+	sb.WriteString(" WHERE ")
+
+	if err := writeWhereClauses(&sb, where, &params, &paramIdx); err != nil {
+		return `SELECT false AS "[applied]"`, nil
+	}
+
+	return sb.String(), params
+}
+
 // buildLWTExistingRowQueryJSON generates the existing-row SELECT for
 // INSERT JSON IF NOT EXISTS by extracting PK values from parsed JSON.
 func buildLWTExistingRowQueryJSON(

@@ -169,8 +169,28 @@ func (e *Executor) ExecuteQuery(
 		}
 		return e.executeDML(ctx, result, override)
 	case *parser.UpdateStatement:
+		if s.IfExists || len(s.IfConds) > 0 {
+			ks := s.Keyspace
+			if ks == "" {
+				ks = keyspace
+			}
+			return e.executeConditionalDML(
+				ctx, result, override, ks, s.Table, s.Where,
+				s.IfExists, len(s.IfConds) > 0,
+			)
+		}
 		return e.executeDML(ctx, result, override)
 	case *parser.DeleteStatement:
+		if s.IfExists || len(s.IfConds) > 0 {
+			ks := s.Keyspace
+			if ks == "" {
+				ks = keyspace
+			}
+			return e.executeConditionalDML(
+				ctx, result, override, ks, s.Table, s.Where,
+				s.IfExists, len(s.IfConds) > 0,
+			)
+		}
 		return e.executeDML(ctx, result, override)
 	case *parser.SelectStatement:
 		return e.executeSelect(ctx, result, override)
@@ -335,6 +355,107 @@ func (e *Executor) executeDML(
 	return ExecuteResult{
 		Body: buildVoidBody(),
 	}
+}
+
+// executeConditionalDML handles DELETE IF / UPDATE IF with Cassandra's
+// lightweight transaction (LWT) semantics. The translated SQL includes
+// IF conditions as additional WHERE predicates, so rowsAffected tells
+// us whether the operation applied. The result is a rows result set
+// containing an [applied] boolean column:
+//   - [applied]=true when the mutation applied
+//   - [applied]=false when the row was missing (IF EXISTS) or
+//     conditions did not match (IF <conds>). For IF <conds>, the
+//     existing row values are included when the row exists.
+func (e *Executor) executeConditionalDML(
+	ctx context.Context,
+	result translate.Result,
+	override sessiondata.InternalExecutorOverride,
+	keyspace, table string,
+	where []parser.WhereClause,
+	ifExists, ifConds bool,
+) ExecuteResult {
+	executor := e.db.Executor()
+	rowsAffected, err := executor.ExecEx(
+		ctx,
+		redact.Sprint("cql-dml-lwt"),
+		nil, // txn
+		override,
+		result.SQL,
+		result.Params...,
+	)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+
+	var querySQL string
+	var queryParams []interface{}
+
+	if rowsAffected > 0 {
+		// Mutation applied → [applied]=true.
+		querySQL = `SELECT true AS "[applied]"`
+
+		// Propagate static column values if the mutation succeeded.
+		if result.PropagateStaticSQL != "" {
+			_, propErr := executor.ExecEx(
+				ctx,
+				redact.Sprint("cql-static-propagation"),
+				nil, // txn
+				override,
+				result.PropagateStaticSQL,
+				result.PropagateStaticParams...,
+			)
+			if propErr != nil {
+				return errorResult(errCodeServerError, propErr.Error())
+			}
+		}
+	} else if ifConds {
+		// IF conditions did not match (or row missing). Look up the
+		// existing row so we can return it alongside [applied]=false.
+		meta, ok := e.schema.LookupTable(keyspace, table)
+		if !ok {
+			querySQL = `SELECT false AS "[applied]"`
+		} else {
+			querySQL, queryParams = translate.BuildLWTExistingRowQueryFromWhere(
+				table, keyspace, where, meta,
+			)
+		}
+	} else {
+		// IF EXISTS and row was missing → [applied]=false.
+		querySQL = `SELECT false AS "[applied]"`
+	}
+
+	rows, cols, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("cql-lwt"),
+		nil, // txn
+		override,
+		querySQL,
+		queryParams...,
+	)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+
+	// If the existing-row query returned no rows (row doesn't exist
+	// despite IF conditions), fall back to just [applied]=false.
+	if len(rows) == 0 && querySQL != `SELECT true AS "[applied]"` {
+		rows, cols, err = executor.QueryBufferedExWithCols(
+			ctx,
+			redact.Sprint("cql-lwt"),
+			nil, // txn
+			override,
+			`SELECT false AS "[applied]"`,
+		)
+		if err != nil {
+			return errorResult(errCodeServerError, err.Error())
+		}
+	}
+
+	body, err := buildRowsBody(cols, rows)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+	return ExecuteResult{Body: body}
 }
 
 // executeInsertIfNotExists handles INSERT IF NOT EXISTS with Cassandra's

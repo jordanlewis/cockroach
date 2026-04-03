@@ -59,36 +59,44 @@ k v v1 v2
 # DELETE with IF EXISTS.
 # ---------------------------------------------------------------
 
-exec
+query
 DELETE FROM jd_del WHERE k = 2 IF EXISTS
 ----
+[applied]
+true
 
 query
 SELECT * FROM jd_del WHERE k = 2
 ----
 k v v1 v2
 
-# DELETE IF EXISTS on non-existent row (no-op).
-exec
+# DELETE IF EXISTS on non-existent row → [applied]=false.
+query
 DELETE FROM jd_del WHERE k = 999 IF EXISTS
 ----
+[applied]
+false
 
 # ---------------------------------------------------------------
 # DELETE with IF condition (lightweight transaction).
 # ---------------------------------------------------------------
 
-exec
+query
 DELETE FROM jd_del WHERE k = 3 IF v = 30
 ----
+[applied]
+true
 
 query
 SELECT * FROM jd_del WHERE k = 3
 ----
 k v v1 v2
 
-exec
+query
 DELETE FROM jd_del WHERE k = 4 IF v1 = 700 AND v2 = 800
 ----
+[applied]
+true
 
 query
 SELECT * FROM jd_del WHERE k = 4
