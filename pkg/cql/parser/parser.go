@@ -1501,6 +1501,9 @@ func (p *parser) parseExpr() (Expr, error) {
 			return nil, fmt.Errorf("at position %d: expected name after ':' for named bind marker", t.pos)
 		}
 		return &NamedBindMarker{Name: name}, nil
+	case tokLParen:
+		// Tuple value literal: (val1, val2, ...).
+		return p.parseTupleLiteral()
 	case tokLBracket:
 		return p.parseListLiteral()
 	case tokLBrace:
@@ -1954,6 +1957,24 @@ func (p *parser) parseCreateType() (*CreateTypeStatement, error) {
 		return nil, err
 	}
 	return stmt, nil
+}
+
+// parseTupleLiteral parses a parenthesized list of values: (val1, val2, ...).
+// Used for CQL tuple values in INSERT and UPDATE statements.
+func (p *parser) parseTupleLiteral() (*TupleLiteral, error) {
+	p.lex.next() // consume (
+	lit := &TupleLiteral{}
+	if p.lex.peek().kind != tokRParen {
+		vals, err := p.parseExprList()
+		if err != nil {
+			return nil, err
+		}
+		lit.Values = vals
+	}
+	if err := p.expectToken(tokRParen); err != nil {
+		return nil, err
+	}
+	return lit, nil
 }
 
 // parseListLiteral parses [expr, expr, ...].

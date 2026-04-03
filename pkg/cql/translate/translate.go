@@ -150,11 +150,12 @@ var cqlTypeToCRDBSQL = map[string]string{
 	"counter":   "INT8",
 	"varint":    "INT8",
 	"decimal":   "DECIMAL",
-	// Collection types are stored as JSONB. Lists and sets become JSON
-	// arrays; maps become JSON objects.
+	// Collection and tuple types are stored as JSONB. Lists, sets, and
+	// tuples become JSON arrays; maps become JSON objects.
 	"list":   "JSONB",
 	"set":    "JSONB",
 	"map":    "JSONB",
+	"tuple":  "JSONB",
 	"frozen": "JSONB",
 }
 
@@ -886,6 +887,8 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		return setLiteralToSQL(v, paramIdx)
 	case *parser.MapExprLiteral:
 		return mapLiteralToSQL(v, paramIdx)
+	case *parser.TupleLiteral:
+		return tupleLiteralToSQL(v, paramIdx)
 	case *parser.ColumnRef:
 		return quoteIdent(v.Name), nil, nil
 	case *parser.StarExpr:
@@ -1460,6 +1463,29 @@ func listLiteralToSQL(lit *parser.ListLiteral, paramIdx *int) (string, interface
 // CRDB's jsonb_build_array(v1, v2, ...). CQL sets are stored as
 // JSON arrays (sorted uniqueness is an application-level concern).
 func setLiteralToSQL(lit *parser.SetLiteral, paramIdx *int) (string, interface{}, error) {
+	if len(lit.Values) == 0 {
+		return "'[]'::JSONB", nil, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("jsonb_build_array(")
+	for i, val := range lit.Values {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sqlVal, _, err := exprToSQL(val, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		sb.WriteString(sqlVal)
+	}
+	sb.WriteByte(')')
+	return sb.String(), nil, nil
+}
+
+// tupleLiteralToSQL translates a CQL tuple literal (v1, v2, ...) to
+// CRDB's jsonb_build_array(v1, v2, ...). CQL tuples are stored as
+// JSON arrays in JSONB columns.
+func tupleLiteralToSQL(lit *parser.TupleLiteral, paramIdx *int) (string, interface{}, error) {
 	if len(lit.Values) == 0 {
 		return "'[]'::JSONB", nil, nil
 	}

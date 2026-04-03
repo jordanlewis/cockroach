@@ -59,6 +59,10 @@ func EncodeDatum(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
 		return encodeDuration(d)
 	case CQLDecimal:
 		return encodeDecimal(d)
+	case CQLTuple, CQLList, CQLMap, CQLSet:
+		// Collection and tuple types are stored as JSONB and encoded as
+		// their JSON text representation on the wire.
+		return encodeText(d)
 	default:
 		return nil, false, errors.Newf("unsupported CQL type for encoding: %s", cqlType)
 	}

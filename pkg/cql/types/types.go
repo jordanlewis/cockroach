@@ -59,6 +59,7 @@ const (
 	CQLList      CQLType = 0x0020
 	CQLMap       CQLType = 0x0021
 	CQLSet       CQLType = 0x0022
+	CQLTuple     CQLType = 0x0031
 	CQLText      CQLType = CQLVarchar // text and varchar are identical in CQL
 )
 
@@ -111,6 +112,8 @@ func (t CQLType) String() string {
 		return "map"
 	case CQLSet:
 		return "set"
+	case CQLTuple:
+		return "tuple"
 	case CQLCustom:
 		return "custom"
 	default:
@@ -153,6 +156,8 @@ func (t CQLType) CRDBType() (*types.T, error) {
 		return types.Decimal, nil
 	case CQLVarint:
 		return types.Int, nil
+	case CQLTuple, CQLList, CQLMap, CQLSet:
+		return types.Jsonb, nil
 	default:
 		return nil, errors.Newf("unsupported CQL type: %s (0x%04x)", t, uint16(t))
 	}

@@ -1,22 +1,51 @@
 # Tuples and frozen collection types.
 #
 # The parser accepts tuple<T,...> and frozen<T> type syntax. Tuple
-# columns are not yet supported. Frozen collection columns map to
-# JSONB (same as unfrozen collections — CRDB does not enforce
-# immutability).
+# columns map to JSONB (same as collections). Tuple values are stored
+# as JSON arrays.
 
 exec
 USE defaultdb
 ----
 
-# Tuple column type — unsupported.
-error
+# Tuple column type — stored as JSONB.
+exec
 CREATE TABLE tuple_table (id int PRIMARY KEY, coords tuple<int, int>)
 ----
-unsupported CQL type "tuple" for column "coords"
 
-# Frozen tuple column type — frozen<> maps to JSONB, even though
-# tuple operations are not yet supported.
+# Insert tuple values using parenthesized syntax.
+exec
+INSERT INTO tuple_table (id, coords) VALUES (1, (10, 20))
+----
+
+exec
+INSERT INTO tuple_table (id, coords) VALUES (2, (30, 40))
+----
+
+# Select tuple data back.
+query
+SELECT id, coords FROM tuple_table WHERE id = 1
+----
+id coords
+1 [10, 20]
+
+# Multi-element tuple with mixed types.
+exec
+CREATE TABLE mixed_tuple (id int PRIMARY KEY, data tuple<int, text, float>)
+----
+
+exec
+INSERT INTO mixed_tuple (id, data) VALUES (1, (42, 'hello', 3.14))
+----
+
+query
+SELECT id, data FROM mixed_tuple WHERE id = 1
+----
+id data
+1 [42, "hello", 3.14]
+
+# Frozen tuple column type — frozen<> maps to JSONB, same as
+# unfrozen tuples. CRDB does not enforce immutability.
 exec
 CREATE TABLE frozen_tuple_table (id int PRIMARY KEY, coords frozen<tuple<int, int>>)
 ----
