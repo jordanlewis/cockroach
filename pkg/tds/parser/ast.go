@@ -121,10 +121,14 @@ func (s *CreateTableStmt) String() string {
 }
 
 // InsertStmt represents INSERT INTO <table> [(<columns>)] VALUES (<values>), ...
+// or INSERT INTO <table> [(<columns>)] SELECT ...
+// An optional OUTPUT clause maps to RETURNING in CockroachDB.
 type InsertStmt struct {
 	Table   string
 	Columns []string
-	Values  [][]Expr
+	Values  [][]Expr       // non-nil for VALUES inserts
+	Select  Statement      // non-nil for INSERT...SELECT
+	Output  []SelectColumn // OUTPUT clause
 }
 
 func (*InsertStmt) statementNode() {}
@@ -139,44 +143,90 @@ func (s *InsertStmt) String() string {
 		}
 		fmt.Fprintf(&b, " (%s)", strings.Join(cols, ", "))
 	}
-	b.WriteString(" VALUES ")
-	for i, row := range s.Values {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString("(")
-		for j, v := range row {
-			if j > 0 {
+	if len(s.Output) > 0 {
+		b.WriteString(" OUTPUT ")
+		for i, o := range s.Output {
+			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(v.String())
+			b.WriteString(o.String())
 		}
-		b.WriteString(")")
+	}
+	if s.Select != nil {
+		fmt.Fprintf(&b, " %s", s.Select)
+	} else {
+		b.WriteString(" VALUES ")
+		for i, row := range s.Values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString("(")
+			for j, v := range row {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(v.String())
+			}
+			b.WriteString(")")
+		}
 	}
 	return b.String()
 }
 
 // DeleteStmt represents DELETE [FROM] <table> [WHERE <expr>].
+// Extended for multi-table DELETE (DELETE t FROM t JOIN s ON ...)
+// and OUTPUT clause.
 type DeleteStmt struct {
-	Table string
-	Where Expr
+	Table  string // target table name (or alias for multi-table)
+	Where  Expr
+	From   []TableRef     // non-empty for multi-table DELETE
+	Joins  []JoinClause   // JOINs for multi-table DELETE
+	Output []SelectColumn // OUTPUT clause
 }
 
 func (*DeleteStmt) statementNode() {}
 
 func (s *DeleteStmt) String() string {
-	result := fmt.Sprintf("DELETE FROM %s", formatIdent(s.Table))
-	if s.Where != nil {
-		result += fmt.Sprintf(" WHERE %s", s.Where)
+	var b strings.Builder
+	if len(s.From) > 0 {
+		// Multi-table DELETE: DELETE <target> FROM <tables> [JOIN ...] [WHERE ...]
+		fmt.Fprintf(&b, "DELETE %s FROM ", formatIdent(s.Table))
+		for i, ref := range s.From {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(ref.String())
+		}
+		for _, j := range s.Joins {
+			fmt.Fprintf(&b, " %s", j.String())
+		}
+	} else {
+		fmt.Fprintf(&b, "DELETE FROM %s", formatIdent(s.Table))
 	}
-	return result
+	if len(s.Output) > 0 {
+		b.WriteString(" OUTPUT ")
+		for i, o := range s.Output {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(o.String())
+		}
+	}
+	if s.Where != nil {
+		fmt.Fprintf(&b, " WHERE %s", s.Where)
+	}
+	return b.String()
 }
 
-// UpdateStmt represents UPDATE <table> SET <assignments> [WHERE <expr>].
+// UpdateStmt represents UPDATE <table> SET <assignments> [FROM ...] [WHERE <expr>].
+// Extended for UPDATE...FROM (multi-table UPDATE) and OUTPUT clause.
 type UpdateStmt struct {
 	Table       string
 	Assignments []Assignment
+	From        []TableRef   // FROM clause for multi-table UPDATE
+	Joins       []JoinClause // JOINs in FROM clause
 	Where       Expr
+	Output      []SelectColumn // OUTPUT clause
 }
 
 func (*UpdateStmt) statementNode() {}
@@ -188,7 +238,28 @@ func (s *UpdateStmt) String() string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		fmt.Fprintf(&b, "%s = %s", formatIdent(a.Column), a.Value)
+		fmt.Fprintf(&b, "%s = %s", formatColumnRef(a.Column), a.Value)
+	}
+	if len(s.Output) > 0 {
+		b.WriteString(" OUTPUT ")
+		for i, o := range s.Output {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(o.String())
+		}
+	}
+	if len(s.From) > 0 {
+		b.WriteString(" FROM ")
+		for i, ref := range s.From {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(ref.String())
+		}
+		for _, j := range s.Joins {
+			fmt.Fprintf(&b, " %s", j.String())
+		}
 	}
 	if s.Where != nil {
 		fmt.Fprintf(&b, " WHERE %s", s.Where)
@@ -1021,6 +1092,88 @@ func (s *SaveTranStmt) String() string {
 	return fmt.Sprintf("SAVE TRANSACTION %s", formatIdent(s.Name))
 }
 
+// MergeStmt represents MERGE INTO <target> USING <source> ON <condition>
+// WHEN MATCHED THEN ... WHEN NOT MATCHED THEN ...
+type MergeStmt struct {
+	Target     TableRef
+	Source     TableRef
+	Condition  Expr
+	Matched    *MergeWhenMatched
+	NotMatched *MergeWhenNotMatched
+	Output     []SelectColumn
+}
+
+func (*MergeStmt) statementNode() {}
+
+func (s *MergeStmt) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "MERGE INTO %s", s.Target.String())
+	fmt.Fprintf(&b, " USING %s", s.Source.String())
+	fmt.Fprintf(&b, " ON %s", s.Condition)
+	if s.Matched != nil {
+		if s.Matched.Delete {
+			b.WriteString(" WHEN MATCHED THEN DELETE")
+		} else {
+			b.WriteString(" WHEN MATCHED THEN UPDATE SET ")
+			for i, a := range s.Matched.Assignments {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "%s = %s", formatColumnRef(a.Column), a.Value)
+			}
+		}
+	}
+	if s.NotMatched != nil {
+		b.WriteString(" WHEN NOT MATCHED THEN INSERT")
+		if len(s.NotMatched.Columns) > 0 {
+			b.WriteString(" (")
+			for i, c := range s.NotMatched.Columns {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(formatIdent(c))
+			}
+			b.WriteString(")")
+		}
+		b.WriteString(" VALUES (")
+		for i, v := range s.NotMatched.Values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(v.String())
+		}
+		b.WriteString(")")
+	}
+	return b.String()
+}
+
+// MergeWhenMatched represents the WHEN MATCHED THEN clause of a MERGE:
+// either UPDATE SET ... or DELETE.
+type MergeWhenMatched struct {
+	Assignments []Assignment // for UPDATE SET
+	Delete      bool         // true for WHEN MATCHED THEN DELETE
+}
+
+// MergeWhenNotMatched represents the WHEN NOT MATCHED THEN INSERT clause.
+type MergeWhenNotMatched struct {
+	Columns []string
+	Values  []Expr
+}
+
+// formatColumnRef formats a column reference that may contain dots
+// (e.g., t.name from UPDATE...FROM). Each part is individually quoted
+// if necessary.
+func formatColumnRef(col string) string {
+	if strings.Contains(col, ".") {
+		parts := strings.Split(col, ".")
+		var formatted []string
+		for _, p := range parts {
+			formatted = append(formatted, formatIdent(p))
+		}
+		return strings.Join(formatted, ".")
+	}
+	return formatIdent(col)
+}
 // formatIdent returns an identifier, quoting it with brackets if it contains
 // special characters or is a reserved word. For simplicity, identifiers that
 // are plain alphanumeric (plus underscore) are returned unquoted.

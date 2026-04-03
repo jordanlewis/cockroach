@@ -1026,3 +1026,104 @@ func TestTranslateISNULLInSubquery(t *testing.T) {
 	require.Contains(t, results[0], "COALESCE(uid, 0)")
 	require.NotContains(t, results[0], "ISNULL")
 }
+
+func TestTranslateInsertSelect(t *testing.T) {
+	batch, err := parser.Parse(
+		"INSERT INTO archive (id, name) SELECT id, name FROM users WHERE active = 0")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "INSERT INTO archive")
+	require.Contains(t, results[0], "SELECT")
+	require.NotContains(t, results[0], "VALUES")
+}
+
+func TestTranslateInsertOutput(t *testing.T) {
+	batch, err := parser.Parse(
+		"INSERT INTO users (name) OUTPUT inserted.id VALUES ('alice')")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "RETURNING id")
+	require.NotContains(t, results[0], "OUTPUT")
+	require.NotContains(t, results[0], "inserted")
+}
+
+func TestTranslateDeleteOutput(t *testing.T) {
+	batch, err := parser.Parse(
+		"DELETE FROM users OUTPUT deleted.id, deleted.name WHERE active = 0")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "RETURNING id, name")
+	require.NotContains(t, results[0], "OUTPUT")
+	require.NotContains(t, results[0], "deleted")
+}
+
+func TestTranslateUpdateOutput(t *testing.T) {
+	batch, err := parser.Parse(
+		"UPDATE users SET name = 'bob' OUTPUT inserted.id, inserted.name WHERE id = 1")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "RETURNING id, name")
+	require.NotContains(t, results[0], "OUTPUT")
+}
+
+func TestTranslateUpdateFrom(t *testing.T) {
+	batch, err := parser.Parse(
+		"UPDATE t SET t.name = s.name FROM target t JOIN source s ON t.id = s.id WHERE s.active = 1")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "UPDATE t SET")
+	require.Contains(t, results[0], "FROM target t")
+	require.Contains(t, results[0], "INNER JOIN source s ON")
+}
+
+func TestTranslateDeleteJoin(t *testing.T) {
+	batch, err := parser.Parse(
+		"DELETE t FROM orders t JOIN cancelled c ON t.id = c.order_id")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	// T-SQL multi-table DELETE → CockroachDB DELETE FROM ... USING ...
+	require.Contains(t, results[0], "DELETE FROM")
+	require.Contains(t, results[0], "USING")
+}
+
+func TestTranslateMerge(t *testing.T) {
+	sql := `MERGE INTO target t
+		USING source s ON t.id = s.id
+		WHEN MATCHED THEN UPDATE SET t.name = s.name
+		WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)`
+	batch, err := parser.Parse(sql)
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	// MERGE → INSERT ... ON CONFLICT ... DO UPDATE SET ...
+	require.Contains(t, results[0], "INSERT INTO target")
+	require.Contains(t, results[0], "ON CONFLICT")
+	require.Contains(t, results[0], "DO UPDATE SET")
+}
+
+func TestTranslateMergeInsertOnly(t *testing.T) {
+	sql := `MERGE INTO target t
+		USING source s ON t.id = s.id
+		WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)`
+	batch, err := parser.Parse(sql)
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "INSERT INTO target")
+	require.Contains(t, results[0], "ON CONFLICT")
+	require.Contains(t, results[0], "DO NOTHING")
+}

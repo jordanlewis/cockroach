@@ -87,6 +87,8 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseRollbackTran()
 	case tokenSAVE:
 		return p.parseSaveTran()
+	case tokenMERGE:
+		return p.parseMerge()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -397,7 +399,10 @@ func (p *parser) parseDataType() (string, error) {
 	return typeName, nil
 }
 
-// parseInsert parses: INSERT [INTO] <table> [(<columns>)] VALUES (<values>), ...
+// parseInsert parses:
+//
+//	INSERT [INTO] <table> [(<columns>)] [OUTPUT <cols>] VALUES (<values>), ...
+//	INSERT [INTO] <table> [(<columns>)] [OUTPUT <cols>] SELECT ...
 func (p *parser) parseInsert() (*InsertStmt, error) {
 	p.lex.next() // consume INSERT
 	// INTO is optional in T-SQL.
@@ -429,21 +434,39 @@ func (p *parser) parseInsert() (*InsertStmt, error) {
 		}
 	}
 
-	if err := p.expect(tokenVALUES); err != nil {
-		return nil, err
-	}
-
-	// Parse value rows.
-	for {
-		row, err := p.parseValueRow()
+	// Optional OUTPUT clause.
+	if p.lex.peek().typ == tokenOUTPUT {
+		stmt.Output, err = p.parseOutputClause()
 		if err != nil {
 			return nil, err
 		}
-		stmt.Values = append(stmt.Values, row)
-		if p.lex.peek().typ != tokenComma {
-			break
+	}
+
+	// VALUES or SELECT.
+	switch p.lex.peek().typ {
+	case tokenVALUES:
+		p.lex.next() // consume VALUES
+		for {
+			row, err := p.parseValueRow()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Values = append(stmt.Values, row)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next()
 		}
-		p.lex.next()
+	case tokenSELECT:
+		sel, err := p.parseSelectOrCompound()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Select = sel
+	default:
+		return nil, p.error(fmt.Sprintf(
+			"expected VALUES or SELECT after INSERT, got %q at position %d",
+			p.lex.peek().val, p.lex.peek().pos))
 	}
 	return stmt, nil
 }
@@ -471,18 +494,71 @@ func (p *parser) parseValueRow() ([]Expr, error) {
 	return exprs, nil
 }
 
-// parseDelete parses: DELETE [FROM] <table> [WHERE <expr>]
+// parseDelete parses:
+//
+//	DELETE [FROM] <table> [OUTPUT <cols>] [WHERE <expr>]
+//	DELETE <target> FROM <table_refs> [JOIN ...] [OUTPUT <cols>] [WHERE <expr>]
+//	DELETE [FROM] <table_ref> JOIN <table2> ON ... [OUTPUT <cols>] [WHERE <expr>]
 func (p *parser) parseDelete() (*DeleteStmt, error) {
 	p.lex.next() // consume DELETE
-	// FROM is optional in T-SQL DELETE.
+	stmt := &DeleteStmt{}
+
+	hadFrom := false
 	if p.lex.peek().typ == tokenFROM {
 		p.lex.next()
+		hadFrom = true
 	}
-	table, err := p.parseTableName()
+
+	ref, err := p.parseTableRef()
 	if err != nil {
 		return nil, err
 	}
-	stmt := &DeleteStmt{Table: table}
+	stmt.Table = ref.Name
+
+	// Optional OUTPUT clause (before multi-table FROM).
+	if p.lex.peek().typ == tokenOUTPUT {
+		stmt.Output, err = p.parseOutputClause()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Check for multi-table DELETE patterns.
+	if !hadFrom && p.lex.peek().typ == tokenFROM {
+		// DELETE <target> FROM <table_refs> [JOIN ...] [WHERE ...]
+		p.lex.next() // consume FROM
+		fromRef, err := p.parseTableRef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.From = append(stmt.From, fromRef)
+		for isJoinStart(p.lex.peek().typ) {
+			join, err := p.parseJoinClause()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Joins = append(stmt.Joins, join)
+		}
+	} else if hadFrom && isJoinStart(p.lex.peek().typ) {
+		// DELETE FROM <table_ref> JOIN <table2> ON ... [WHERE ...]
+		stmt.From = append(stmt.From, ref)
+		for isJoinStart(p.lex.peek().typ) {
+			join, err := p.parseJoinClause()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Joins = append(stmt.Joins, join)
+		}
+	}
+
+	// OUTPUT clause can also appear after the FROM/JOIN clauses.
+	if len(stmt.Output) == 0 && p.lex.peek().typ == tokenOUTPUT {
+		stmt.Output, err = p.parseOutputClause()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if p.lex.peek().typ == tokenWHERE {
 		p.lex.next()
 		stmt.Where, err = p.parseExpr()
@@ -493,7 +569,9 @@ func (p *parser) parseDelete() (*DeleteStmt, error) {
 	return stmt, nil
 }
 
-// parseUpdate parses: UPDATE <table> SET <col>=<expr>, ... [WHERE <expr>]
+// parseUpdate parses:
+//
+//	UPDATE <table> SET <col>=<expr>, ... [OUTPUT <cols>] [FROM <tables> [JOIN ...]] [WHERE <expr>]
 func (p *parser) parseUpdate() (*UpdateStmt, error) {
 	p.lex.next() // consume UPDATE
 	table, err := p.parseTableName()
@@ -509,6 +587,15 @@ func (p *parser) parseUpdate() (*UpdateStmt, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Handle dotted column references (e.g., t.name in UPDATE...FROM).
+		for p.lex.peek().typ == tokenDot {
+			p.lex.next() // consume .
+			part, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			col = col + "." + part
+		}
 		if err := p.expect(tokenEq); err != nil {
 			return nil, err
 		}
@@ -522,6 +609,39 @@ func (p *parser) parseUpdate() (*UpdateStmt, error) {
 		}
 		p.lex.next() // consume comma
 	}
+
+	// Optional OUTPUT clause.
+	if p.lex.peek().typ == tokenOUTPUT {
+		stmt.Output, err = p.parseOutputClause()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Optional FROM clause (UPDATE...FROM for multi-table UPDATE).
+	if p.lex.peek().typ == tokenFROM {
+		p.lex.next()
+		for {
+			ref, err := p.parseTableRef()
+			if err != nil {
+				return nil, err
+			}
+			stmt.From = append(stmt.From, ref)
+			// Parse JOINs after each table ref.
+			for isJoinStart(p.lex.peek().typ) {
+				join, err := p.parseJoinClause()
+				if err != nil {
+					return nil, err
+				}
+				stmt.Joins = append(stmt.Joins, join)
+			}
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next() // consume comma
+		}
+	}
+
 	if p.lex.peek().typ == tokenWHERE {
 		p.lex.next()
 		stmt.Where, err = p.parseExpr()
@@ -1776,6 +1896,178 @@ func (p *parser) skipToEndOfStatement() {
 	}
 }
 
+// parseOutputClause parses: OUTPUT <select_column_list>.
+// T-SQL OUTPUT columns may reference inserted.*, deleted.*, or plain columns.
+func (p *parser) parseOutputClause() ([]SelectColumn, error) {
+	p.lex.next() // consume OUTPUT
+	var cols []SelectColumn
+	for {
+		col, err := p.parseSelectColumn()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, col)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next()
+	}
+	return cols, nil
+}
+
+// parseMerge parses:
+//
+//	MERGE [INTO] <target> USING <source> ON <condition>
+//	[WHEN MATCHED THEN (UPDATE SET ...|DELETE)]
+//	[WHEN NOT MATCHED THEN INSERT [(<cols>)] VALUES (<vals>)]
+//	[OUTPUT <cols>]
+func (p *parser) parseMerge() (*MergeStmt, error) {
+	p.lex.next() // consume MERGE
+	if p.lex.peek().typ == tokenINTO {
+		p.lex.next()
+	}
+	target, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenUSING); err != nil {
+		return nil, err
+	}
+	source, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenON); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &MergeStmt{
+		Target:    target,
+		Source:    source,
+		Condition: cond,
+	}
+
+	// Parse WHEN clauses (order-independent).
+	for p.lex.peek().typ == tokenWHEN {
+		p.lex.next() // consume WHEN
+		if p.lex.peek().typ == tokenNOT {
+			// WHEN NOT MATCHED THEN INSERT ...
+			p.lex.next() // consume NOT
+			if err := p.expect(tokenMATCHED); err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenTHEN); err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenINSERT); err != nil {
+				return nil, err
+			}
+			nm := &MergeWhenNotMatched{}
+			// Optional column list.
+			if p.lex.peek().typ == tokenLParen {
+				p.lex.next()
+				for {
+					col, colErr := p.expectIdent()
+					if colErr != nil {
+						return nil, colErr
+					}
+					nm.Columns = append(nm.Columns, col)
+					if p.lex.peek().typ != tokenComma {
+						break
+					}
+					p.lex.next()
+				}
+				if err := p.expect(tokenRParen); err != nil {
+					return nil, err
+				}
+			}
+			if err := p.expect(tokenVALUES); err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenLParen); err != nil {
+				return nil, err
+			}
+			for {
+				val, valErr := p.parseExpr()
+				if valErr != nil {
+					return nil, valErr
+				}
+				nm.Values = append(nm.Values, val)
+				if p.lex.peek().typ != tokenComma {
+					break
+				}
+				p.lex.next()
+			}
+			if err := p.expect(tokenRParen); err != nil {
+				return nil, err
+			}
+			stmt.NotMatched = nm
+		} else {
+			// WHEN MATCHED THEN UPDATE SET ... | DELETE
+			if err := p.expect(tokenMATCHED); err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenTHEN); err != nil {
+				return nil, err
+			}
+			matched := &MergeWhenMatched{}
+			if p.lex.peek().typ == tokenDELETE {
+				p.lex.next()
+				matched.Delete = true
+			} else if p.lex.peek().typ == tokenUPDATE {
+				p.lex.next()
+				if err := p.expect(tokenSET); err != nil {
+					return nil, err
+				}
+				for {
+					col, colErr := p.expectIdent()
+					if colErr != nil {
+						return nil, colErr
+					}
+					// Handle dotted columns (e.g., t.name = s.name).
+					for p.lex.peek().typ == tokenDot {
+						p.lex.next()
+						part, partErr := p.expectIdent()
+						if partErr != nil {
+							return nil, partErr
+						}
+						col = col + "." + part
+					}
+					if err := p.expect(tokenEq); err != nil {
+						return nil, err
+					}
+					val, valErr := p.parseExpr()
+					if valErr != nil {
+						return nil, valErr
+					}
+					matched.Assignments = append(matched.Assignments,
+						Assignment{Column: col, Value: val})
+					if p.lex.peek().typ != tokenComma {
+						break
+					}
+					p.lex.next()
+				}
+			} else {
+				return nil, p.error("expected UPDATE or DELETE after WHEN MATCHED THEN")
+			}
+			stmt.Matched = matched
+		}
+	}
+
+	// Optional OUTPUT clause.
+	if p.lex.peek().typ == tokenOUTPUT {
+		stmt.Output, err = p.parseOutputClause()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return stmt, nil
+}
+
 // parseTruncate parses: TRUNCATE TABLE <name>
 func (p *parser) parseTruncate() (*TruncateTableStmt, error) {
 	p.lex.next() // consume TRUNCATE
@@ -1889,6 +2181,7 @@ func isKeywordToken(typ tokenType) bool {
 		tokenTRUNCATE, tokenIF, tokenEXISTS, tokenUNIQUE,
 		tokenINCLUDE, tokenREFERENCES, tokenPRIMARY, tokenKEY,
 		tokenFOREIGN, tokenCHECK, tokenADD,
+		tokenMERGE, tokenUSING, tokenMATCHED, tokenOUTPUT,
 		tokenUNION, tokenINTERSECT, tokenEXCEPT, tokenALL,
 		tokenWITH, tokenANY, tokenSOME,
 		tokenOVER, tokenPARTITION,

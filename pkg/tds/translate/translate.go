@@ -68,7 +68,7 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.CreateTableStmt:
 		return translateCreateTable(s), nil
 	case *parser.InsertStmt:
-		return translateInsert(s), nil
+		return translateInsert(s)
 	case *parser.SelectStmt:
 		return translateSelect(s), nil
 	case *parser.DeleteStmt:
@@ -101,6 +101,8 @@ func Statement(stmt parser.Statement) (string, error) {
 		return "", fmt.Errorf("unsupported: CREATE FUNCTION is not available in CockroachDB TDS")
 	case *parser.CreateTriggerStmt:
 		return "", fmt.Errorf("unsupported: CREATE TRIGGER is not available in CockroachDB TDS")
+	case *parser.MergeStmt:
+		return translateMerge(s)
 	case *parser.CompoundSelectStmt:
 		return translateCompoundSelect(s)
 	case *parser.WithStmt:
@@ -162,7 +164,8 @@ func translateCreateTable(s *parser.CreateTableStmt) string {
 }
 
 // translateInsert converts a T-SQL INSERT INTO statement to CRDB syntax.
-func translateInsert(s *parser.InsertStmt) string {
+// Handles INSERT...VALUES, INSERT...SELECT, and OUTPUT → RETURNING.
+func translateInsert(s *parser.InsertStmt) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "INSERT INTO %s", quoteIdent(s.Table))
 	if len(s.Columns) > 0 {
@@ -175,21 +178,33 @@ func translateInsert(s *parser.InsertStmt) string {
 		}
 		b.WriteString(")")
 	}
-	b.WriteString(" VALUES ")
-	for i, row := range s.Values {
-		if i > 0 {
-			b.WriteString(", ")
+	if s.Select != nil {
+		sel, err := Statement(s.Select)
+		if err != nil {
+			return "", err
 		}
-		b.WriteString("(")
-		for j, val := range row {
-			if j > 0 {
+		fmt.Fprintf(&b, " %s", sel)
+	} else {
+		b.WriteString(" VALUES ")
+		for i, row := range s.Values {
+			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(translateExpr(val))
+			b.WriteString("(")
+			for j, val := range row {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(translateExpr(val))
+			}
+			b.WriteString(")")
 		}
-		b.WriteString(")")
 	}
-	return b.String()
+	if len(s.Output) > 0 {
+		b.WriteString(" RETURNING ")
+		b.WriteString(translateOutputColumns(s.Output))
+	}
+	return b.String(), nil
 }
 
 // translateSelect converts a T-SQL SELECT (with TOP, WHERE, ORDER BY,
@@ -353,16 +368,57 @@ func translateWith(s *parser.WithStmt) (string, error) {
 }
 
 // translateDelete converts a T-SQL DELETE to CRDB syntax.
+// Multi-table DELETE (DELETE t FROM t JOIN s) is translated to
+// DELETE FROM t USING s WHERE ... (CockroachDB USING syntax).
 func translateDelete(s *parser.DeleteStmt) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(s.Table))
-	if s.Where != nil {
-		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+	if len(s.From) > 0 {
+		// Multi-table DELETE → DELETE FROM <target> USING <other_tables>.
+		// The target is s.Table (which may be an alias). We need to find the
+		// actual table definition from s.From and emit the others as USING.
+		fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(s.Table))
+		var usingParts []string
+		for _, ref := range s.From {
+			name := ref.Name
+			if name == s.Table {
+				continue
+			}
+			usingParts = append(usingParts, translateTableRef(ref))
+		}
+		for _, j := range s.Joins {
+			usingParts = append(usingParts, translateTableRef(j.Table))
+		}
+		if len(usingParts) > 0 {
+			fmt.Fprintf(&b, " USING %s", strings.Join(usingParts, ", "))
+		}
+		// Merge JOIN ON conditions and WHERE into a single WHERE clause.
+		var conditions []string
+		for _, j := range s.Joins {
+			if j.Condition != nil {
+				conditions = append(conditions, translateExpr(j.Condition))
+			}
+		}
+		if s.Where != nil {
+			conditions = append(conditions, translateExpr(s.Where))
+		}
+		if len(conditions) > 0 {
+			fmt.Fprintf(&b, " WHERE %s", strings.Join(conditions, " AND "))
+		}
+	} else {
+		fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(s.Table))
+		if s.Where != nil {
+			fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+		}
+	}
+	if len(s.Output) > 0 {
+		b.WriteString(" RETURNING ")
+		b.WriteString(translateOutputColumns(s.Output))
 	}
 	return b.String()
 }
 
 // translateUpdate converts a T-SQL UPDATE to CRDB syntax.
+// Handles UPDATE...FROM (multi-table) and OUTPUT → RETURNING.
 func translateUpdate(s *parser.UpdateStmt) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "UPDATE %s SET ", quoteIdent(s.Table))
@@ -370,10 +426,31 @@ func translateUpdate(s *parser.UpdateStmt) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		fmt.Fprintf(&b, "%s = %s", quoteIdent(a.Column), translateExpr(a.Value))
+		fmt.Fprintf(&b, "%s = %s",
+			quoteColumnRef(a.Column), translateExpr(a.Value))
+	}
+	if len(s.From) > 0 {
+		b.WriteString(" FROM ")
+		for i, ref := range s.From {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateTableRef(ref))
+		}
+		for _, j := range s.Joins {
+			fmt.Fprintf(&b, " %s %s", j.Type,
+				translateTableRef(j.Table))
+			if j.Condition != nil {
+				fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
+			}
+		}
 	}
 	if s.Where != nil {
 		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+	}
+	if len(s.Output) > 0 {
+		b.WriteString(" RETURNING ")
+		b.WriteString(translateOutputColumns(s.Output))
 	}
 	return b.String()
 }
@@ -1406,6 +1483,207 @@ func mapDataType(dt string) string {
 		}
 		return name
 	}
+}
+
+// translateMerge converts a T-SQL MERGE INTO ... USING ... ON ...
+// to CockroachDB's INSERT ... ON CONFLICT DO UPDATE SET ... syntax.
+// This is a best-effort translation for common MERGE patterns (upsert).
+func translateMerge(s *parser.MergeStmt) (string, error) {
+	var b strings.Builder
+
+	// Build: INSERT INTO <target> (<columns>) SELECT <values> FROM <source>
+	// ON CONFLICT (<conflict_cols>) DO UPDATE SET ...
+	targetName := s.Target.Name
+	if s.Target.Alias != "" {
+		targetName = s.Target.Name
+	}
+
+	if s.NotMatched != nil {
+		fmt.Fprintf(&b, "INSERT INTO %s", quoteIdent(targetName))
+		if len(s.NotMatched.Columns) > 0 {
+			b.WriteString(" (")
+			for i, col := range s.NotMatched.Columns {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(quoteIdent(col))
+			}
+			b.WriteString(")")
+		}
+		// Use a SELECT from the source with the VALUES expressions.
+		b.WriteString(" SELECT ")
+		for i, val := range s.NotMatched.Values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(val))
+		}
+		fmt.Fprintf(&b, " FROM %s", translateTableRef(s.Source))
+		// WHERE NOT EXISTS for rows not already matched, but ON CONFLICT
+		// handles this. Extract conflict columns from the ON condition.
+		conflictCols := extractEqualityColumns(s.Condition, s.Target)
+		if len(conflictCols) > 0 {
+			b.WriteString(" ON CONFLICT (")
+			for i, col := range conflictCols {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(quoteIdent(col))
+			}
+			b.WriteString(")")
+		}
+		if s.Matched != nil && !s.Matched.Delete {
+			b.WriteString(" DO UPDATE SET ")
+			for i, a := range s.Matched.Assignments {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				col := stripTablePrefix(a.Column)
+				val := translateExpr(a.Value)
+				// Replace source table references with excluded.
+				val = replaceSourceRef(val, s.Source)
+				fmt.Fprintf(&b, "%s = %s", quoteIdent(col), val)
+			}
+		} else if s.Matched != nil && s.Matched.Delete {
+			// MERGE with DELETE on match doesn't map cleanly to INSERT ON
+			// CONFLICT. Emit a comment.
+			b.WriteString(" DO NOTHING /* WHEN MATCHED THEN DELETE not supported */")
+		} else {
+			b.WriteString(" DO NOTHING")
+		}
+	} else if s.Matched != nil {
+		// MERGE with only WHEN MATCHED (no INSERT) — this is an UPDATE
+		// against matching rows from the source.
+		fmt.Fprintf(&b, "UPDATE %s SET ", quoteIdent(targetName))
+		for i, a := range s.Matched.Assignments {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			col := stripTablePrefix(a.Column)
+			fmt.Fprintf(&b, "%s = %s",
+				quoteIdent(col), translateExpr(a.Value))
+		}
+		fmt.Fprintf(&b, " FROM %s", translateTableRef(s.Source))
+		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Condition))
+	}
+	if len(s.Output) > 0 {
+		b.WriteString(" RETURNING ")
+		b.WriteString(translateOutputColumns(s.Output))
+	}
+	return b.String(), nil
+}
+
+// translateOutputColumns converts OUTPUT clause columns (which may reference
+// inserted.*/deleted.*) to RETURNING column expressions by stripping the
+// inserted./deleted. prefixes.
+func translateOutputColumns(cols []parser.SelectColumn) string {
+	var parts []string
+	for _, col := range cols {
+		expr := translateExpr(col.Expr)
+		// Strip inserted./deleted. prefixes — in CockroachDB RETURNING,
+		// the columns refer to the row directly.
+		expr = stripOutputPrefix(expr)
+		if col.Alias != "" {
+			parts = append(parts, fmt.Sprintf("%s AS %s",
+				expr, quoteIdent(col.Alias)))
+		} else {
+			parts = append(parts, expr)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// stripOutputPrefix removes "inserted." and "deleted." prefixes from
+// OUTPUT column references for RETURNING translation.
+func stripOutputPrefix(expr string) string {
+	for _, prefix := range []string{
+		"inserted.", "INSERTED.", "deleted.", "DELETED.",
+	} {
+		if strings.HasPrefix(expr, prefix) {
+			return expr[len(prefix):]
+		}
+	}
+	return expr
+}
+
+// quoteColumnRef quotes a possibly dotted column reference, quoting each
+// part individually.
+func quoteColumnRef(col string) string {
+	if strings.Contains(col, ".") {
+		parts := strings.Split(col, ".")
+		var quoted []string
+		for _, p := range parts {
+			quoted = append(quoted, quoteIdent(p))
+		}
+		return strings.Join(quoted, ".")
+	}
+	return quoteIdent(col)
+}
+
+// extractEqualityColumns extracts target table column names from equality
+// conditions in a MERGE ON clause. For example, given
+// target.id = source.id AND target.name = source.name, it returns
+// ["id", "name"].
+func extractEqualityColumns(expr parser.Expr, target parser.TableRef) []string {
+	targetPrefix := target.Alias
+	if targetPrefix == "" {
+		targetPrefix = target.Name
+	}
+	var cols []string
+	extractFromExpr(expr, targetPrefix, &cols)
+	return cols
+}
+
+func extractFromExpr(expr parser.Expr, targetPrefix string, cols *[]string) {
+	switch e := expr.(type) {
+	case *parser.BinaryExpr:
+		if e.Op == "AND" {
+			extractFromExpr(e.Left, targetPrefix, cols)
+			extractFromExpr(e.Right, targetPrefix, cols)
+			return
+		}
+		if e.Op == "=" {
+			if col := extractTargetColumn(e.Left, targetPrefix); col != "" {
+				*cols = append(*cols, col)
+			} else if col := extractTargetColumn(e.Right, targetPrefix); col != "" {
+				*cols = append(*cols, col)
+			}
+		}
+	}
+}
+
+func extractTargetColumn(expr parser.Expr, targetPrefix string) string {
+	id, ok := expr.(*parser.IdentExpr)
+	if !ok || len(id.Parts) != 2 {
+		return ""
+	}
+	if strings.EqualFold(id.Parts[0], targetPrefix) {
+		return id.Parts[1]
+	}
+	return ""
+}
+
+// stripTablePrefix removes the table qualifier from a dotted column reference
+// (e.g. "t.name" → "name").
+func stripTablePrefix(col string) string {
+	if idx := strings.LastIndexByte(col, '.'); idx >= 0 {
+		return col[idx+1:]
+	}
+	return col
+}
+
+// replaceSourceRef replaces source table references with "excluded." in
+// MERGE → INSERT ON CONFLICT translations. The source's alias (or name)
+// is replaced with "excluded" since ON CONFLICT uses the excluded pseudo-table
+// to reference the conflicting row's values.
+func replaceSourceRef(expr string, source parser.TableRef) string {
+	sourcePrefix := source.Alias
+	if sourcePrefix == "" {
+		sourcePrefix = source.Name
+	}
+	// Replace quoted and unquoted references.
+	expr = strings.ReplaceAll(expr, sourcePrefix+".", "excluded.")
+	return expr
 }
 
 // splitTypeArgs splits a data type string like "VARCHAR(255)" into

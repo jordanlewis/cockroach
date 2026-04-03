@@ -117,6 +117,12 @@ const (
 	tokenCHECK
 	tokenADD
 
+	// DML extension keywords.
+	tokenMERGE
+	tokenUSING
+	tokenMATCHED
+	tokenOUTPUT
+
 	// Phase 2 keywords: set operations, subqueries, CTEs, window functions,
 	// OFFSET-FETCH pagination.
 	tokenUNION
@@ -216,6 +222,12 @@ var keywords = map[string]tokenType{
 	"FOREIGN":    tokenFOREIGN,
 	"CHECK":      tokenCHECK,
 	"ADD":        tokenADD,
+
+	// DML extension keywords.
+	"MERGE":   tokenMERGE,
+	"USING":   tokenUSING,
+	"MATCHED": tokenMATCHED,
+	"OUTPUT":  tokenOUTPUT,
 
 	// Phase 2 keywords.
 	"UNION":     tokenUNION,

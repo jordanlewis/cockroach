@@ -1228,4 +1228,178 @@ func TestParseDerivedTableWithUnion(t *testing.T) {
 	}
 }
 
+func TestParseInsertSelect(t *testing.T) {
+	sql := `INSERT INTO archive (id, name) SELECT id, name FROM users WHERE active = 0`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := batch.Stmts[0].(*InsertStmt)
+	if ins.Table != "archive" {
+		t.Errorf("expected table=archive, got %s", ins.Table)
+	}
+	if len(ins.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ins.Columns))
+	}
+	if ins.Select == nil {
+		t.Fatal("expected non-nil Select for INSERT...SELECT")
+	}
+	if len(ins.Values) != 0 {
+		t.Error("expected no Values rows for INSERT...SELECT")
+	}
+}
+
+func TestParseInsertOutput(t *testing.T) {
+	sql := `INSERT INTO users (name) OUTPUT inserted.id VALUES ('alice')`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := batch.Stmts[0].(*InsertStmt)
+	if len(ins.Output) != 1 {
+		t.Fatalf("expected 1 OUTPUT column, got %d", len(ins.Output))
+	}
+}
+
+func TestParseMerge(t *testing.T) {
+	sql := `MERGE INTO target t
+		USING source s ON t.id = s.id
+		WHEN MATCHED THEN UPDATE SET t.name = s.name, t.val = s.val
+		WHEN NOT MATCHED THEN INSERT (id, name, val) VALUES (s.id, s.name, s.val)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, ok := batch.Stmts[0].(*MergeStmt)
+	if !ok {
+		t.Fatalf("expected *MergeStmt, got %T", batch.Stmts[0])
+	}
+	if merge.Target.Name != "target" {
+		t.Errorf("expected target=target, got %s", merge.Target.Name)
+	}
+	if merge.Target.Alias != "t" {
+		t.Errorf("expected target alias=t, got %s", merge.Target.Alias)
+	}
+	if merge.Source.Name != "source" {
+		t.Errorf("expected source=source, got %s", merge.Source.Name)
+	}
+	if merge.Matched == nil {
+		t.Fatal("expected non-nil Matched clause")
+	}
+	if len(merge.Matched.Assignments) != 2 {
+		t.Errorf("expected 2 assignments in WHEN MATCHED, got %d",
+			len(merge.Matched.Assignments))
+	}
+	if merge.NotMatched == nil {
+		t.Fatal("expected non-nil NotMatched clause")
+	}
+	if len(merge.NotMatched.Columns) != 3 {
+		t.Errorf("expected 3 columns in WHEN NOT MATCHED, got %d",
+			len(merge.NotMatched.Columns))
+	}
+}
+
+func TestParseMergeDelete(t *testing.T) {
+	sql := `MERGE INTO target USING source ON target.id = source.id
+		WHEN MATCHED THEN DELETE`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge := batch.Stmts[0].(*MergeStmt)
+	if merge.Matched == nil || !merge.Matched.Delete {
+		t.Error("expected WHEN MATCHED THEN DELETE")
+	}
+}
+
+func TestParseDeleteJoin(t *testing.T) {
+	// DELETE <alias> FROM <table alias> JOIN ... — the target is the alias.
+	sql := `DELETE t FROM orders t JOIN cancelled c ON t.id = c.order_id`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := batch.Stmts[0].(*DeleteStmt)
+	if del.Table != "t" {
+		t.Errorf("expected table=t (alias target), got %s", del.Table)
+	}
+	if len(del.From) != 1 {
+		t.Fatalf("expected 1 FROM ref, got %d", len(del.From))
+	}
+	if del.From[0].Name != "orders" {
+		t.Errorf("expected FROM table=orders, got %s", del.From[0].Name)
+	}
+	if len(del.Joins) != 1 {
+		t.Fatalf("expected 1 JOIN, got %d", len(del.Joins))
+	}
+}
+
+func TestParseDeleteFromJoin(t *testing.T) {
+	// DELETE FROM <table_ref> JOIN <table2> ON ... variant.
+	sql := `DELETE FROM orders o JOIN cancelled c ON o.id = c.order_id WHERE c.reason = 'fraud'`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := batch.Stmts[0].(*DeleteStmt)
+	if len(del.From) != 1 {
+		t.Fatalf("expected 1 FROM ref, got %d", len(del.From))
+	}
+	if len(del.Joins) != 1 {
+		t.Fatalf("expected 1 JOIN, got %d", len(del.Joins))
+	}
+	if del.Where == nil {
+		t.Error("expected non-nil WHERE clause")
+	}
+}
+
+func TestParseDeleteOutput(t *testing.T) {
+	sql := `DELETE FROM users OUTPUT deleted.id, deleted.name WHERE active = 0`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := batch.Stmts[0].(*DeleteStmt)
+	if len(del.Output) != 2 {
+		t.Fatalf("expected 2 OUTPUT columns, got %d", len(del.Output))
+	}
+}
+
+func TestParseUpdateFrom(t *testing.T) {
+	sql := `UPDATE t SET t.name = s.name, t.val = s.val
+		FROM target t JOIN source s ON t.id = s.id WHERE s.active = 1`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd := batch.Stmts[0].(*UpdateStmt)
+	if upd.Table != "t" {
+		t.Errorf("expected table=t, got %s", upd.Table)
+	}
+	if len(upd.Assignments) != 2 {
+		t.Fatalf("expected 2 assignments, got %d", len(upd.Assignments))
+	}
+	if upd.Assignments[0].Column != "t.name" {
+		t.Errorf("expected col=t.name, got %s", upd.Assignments[0].Column)
+	}
+	if len(upd.From) != 1 {
+		t.Fatalf("expected 1 FROM ref, got %d", len(upd.From))
+	}
+	if len(upd.Joins) != 1 {
+		t.Fatalf("expected 1 JOIN, got %d", len(upd.Joins))
+	}
+}
+
+func TestParseUpdateOutput(t *testing.T) {
+	sql := `UPDATE users SET name = 'bob' OUTPUT inserted.id, inserted.name WHERE id = 1`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd := batch.Stmts[0].(*UpdateStmt)
+	if len(upd.Output) != 2 {
+		t.Fatalf("expected 2 OUTPUT columns, got %d", len(upd.Output))
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
