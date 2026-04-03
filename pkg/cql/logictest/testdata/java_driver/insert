@@ -37,15 +37,18 @@ INSERT INTO jd_ins (k) VALUES (1)
 # INSERT IF NOT EXISTS.
 # ---------------------------------------------------------------
 
-exec
+query
 INSERT INTO jd_ins (k) VALUES (100) IF NOT EXISTS
 ----
+[applied]
+true
 
-# Duplicate with IF NOT EXISTS fails.
-error
+# Duplicate with IF NOT EXISTS returns [applied]=false.
+query
 INSERT INTO jd_ins (k) VALUES (100) IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "jd_ins_pkey"
+[applied] k a b c
+false 100 NULL NULL NULL
 
 # ---------------------------------------------------------------
 # INSERT with multiple columns.
@@ -101,9 +104,11 @@ INSERT INTO jd_ins (k) VALUES (400) USING TIMESTAMP 30 AND TTL 10
 # INSERT IF NOT EXISTS with USING TIMESTAMP.
 # ---------------------------------------------------------------
 
-exec
+query
 INSERT INTO jd_ins (k) VALUES (500) IF NOT EXISTS USING TIMESTAMP 1
 ----
+[applied]
+true
 
 # ---------------------------------------------------------------
 # INSERT JSON.

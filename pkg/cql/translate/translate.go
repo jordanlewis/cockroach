@@ -32,10 +32,12 @@ import (
 )
 
 // TableMeta holds metadata about a CQL table needed for translations that
-// require schema context, such as PER PARTITION LIMIT.
+// require schema context, such as PER PARTITION LIMIT and INSERT IF NOT
+// EXISTS (lightweight transaction) result sets.
 type TableMeta struct {
-	PartitionKeys []string // partition key columns from PRIMARY KEY
-	Columns       []string // all column names in declaration order
+	PartitionKeys  []string // partition key columns from PRIMARY KEY
+	ClusteringKeys []string // clustering key columns from PRIMARY KEY
+	Columns        []string // all column names in declaration order
 }
 
 // SchemaInfo tracks table metadata accumulated from CREATE TABLE statements,
@@ -200,7 +202,7 @@ func TranslateWithSchema(stmt parser.Statement, schema *SchemaInfo) (Result, err
 	case *parser.CreateIndexStatement:
 		return translateCreateIndex(s)
 	case *parser.AlterTableStatement:
-		return translateAlterTable(s)
+		return translateAlterTable(s, schema)
 	case *parser.AlterKeyspaceStatement:
 		return translateAlterKeyspace(s)
 	case *parser.DropStatement:
@@ -365,6 +367,10 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 		}
 	}
 	sb.WriteByte(')')
+
+	if s.IfNotExists {
+		sb.WriteString(" ON CONFLICT DO NOTHING")
+	}
 
 	return Result{SQL: sb.String(), Params: params}, nil
 }
@@ -1160,6 +1166,10 @@ func translateInsertJSON(s *parser.InsertStatement) (Result, error) {
 	}
 	sb.WriteByte(')')
 
+	if s.IfNotExists {
+		sb.WriteString(" ON CONFLICT DO NOTHING")
+	}
+
 	return Result{SQL: sb.String()}, nil
 }
 
@@ -1348,6 +1358,105 @@ func qualifiedTable(keyspace, table string) string {
 	return quoteIdent(table)
 }
 
+// BuildLWTExistingRowQuery generates a SELECT query that returns
+// false AS "[applied]" plus all columns of the existing row, filtered by
+// the primary key values from the INSERT statement. Used by the executor
+// when INSERT IF NOT EXISTS finds a duplicate row.
+func BuildLWTExistingRowQuery(
+	stmt *parser.InsertStatement, meta TableMeta, keyspace string,
+) (string, []interface{}) {
+	if stmt.JSON {
+		return buildLWTExistingRowQueryJSON(stmt, meta, keyspace)
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString(`SELECT false AS "[applied]"`)
+	for _, col := range meta.Columns {
+		sb.WriteString(", ")
+		sb.WriteString(quoteIdent(col))
+	}
+
+	sb.WriteString(" FROM ")
+	sb.WriteString(qualifiedTable(keyspace, stmt.Table))
+	sb.WriteString(" WHERE ")
+
+	pkCols := make([]string, 0, len(meta.PartitionKeys)+len(meta.ClusteringKeys))
+	pkCols = append(pkCols, meta.PartitionKeys...)
+	pkCols = append(pkCols, meta.ClusteringKeys...)
+
+	written := 0
+	for _, pk := range pkCols {
+		for j, col := range stmt.Columns {
+			if !strings.EqualFold(col, pk) {
+				continue
+			}
+			if written > 0 {
+				sb.WriteString(" AND ")
+			}
+			written++
+			sb.WriteString(quoteIdent(pk))
+			sb.WriteString(" = ")
+			sqlVal, param, err := exprToSQL(stmt.Values[j], &paramIdx)
+			if err != nil {
+				return `SELECT false AS "[applied]"`, nil
+			}
+			sb.WriteString(sqlVal)
+			if param != nil {
+				params = append(params, param)
+			}
+			break
+		}
+	}
+
+	return sb.String(), params
+}
+
+// buildLWTExistingRowQueryJSON generates the existing-row SELECT for
+// INSERT JSON IF NOT EXISTS by extracting PK values from parsed JSON.
+func buildLWTExistingRowQueryJSON(
+	stmt *parser.InsertStatement, meta TableMeta, keyspace string,
+) (string, []interface{}) {
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal([]byte(stmt.JSONValue), &jsonData); err != nil {
+		return `SELECT false AS "[applied]"`, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`SELECT false AS "[applied]"`)
+	for _, col := range meta.Columns {
+		sb.WriteString(", ")
+		sb.WriteString(quoteIdent(col))
+	}
+
+	sb.WriteString(" FROM ")
+	sb.WriteString(qualifiedTable(keyspace, stmt.Table))
+	sb.WriteString(" WHERE ")
+
+	pkCols := make([]string, 0, len(meta.PartitionKeys)+len(meta.ClusteringKeys))
+	pkCols = append(pkCols, meta.PartitionKeys...)
+	pkCols = append(pkCols, meta.ClusteringKeys...)
+
+	written := 0
+	for _, pk := range pkCols {
+		val, ok := jsonData[pk]
+		if !ok {
+			continue
+		}
+		if written > 0 {
+			sb.WriteString(" AND ")
+		}
+		written++
+		sb.WriteString(quoteIdent(pk))
+		sb.WriteString(" = ")
+		sb.WriteString(jsonValueToSQL(val))
+	}
+
+	return sb.String(), nil
+}
+
 // translateAlterKeyspace silently accepts ALTER KEYSPACE for compatibility.
 // CQL keyspace properties (replication strategy, durable_writes) have no CRDB
 // equivalent — CRDB uses zone configurations instead.
@@ -1355,8 +1464,10 @@ func translateAlterKeyspace(_ *parser.AlterKeyspaceStatement) (Result, error) {
 	return Result{}, nil
 }
 
-// translateAlterTable maps CQL ALTER TABLE operations to CRDB SQL.
-func translateAlterTable(s *parser.AlterTableStatement) (Result, error) {
+// translateAlterTable maps CQL ALTER TABLE operations to CRDB SQL. When
+// schema is available, ALTER TYPE on primary key columns is rejected early
+// with a CQL-appropriate error (Cassandra also forbids PK type changes).
+func translateAlterTable(s *parser.AlterTableStatement, schema *SchemaInfo) (Result, error) {
 	var sb strings.Builder
 	sb.WriteString("ALTER TABLE ")
 	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
@@ -1380,6 +1491,25 @@ func translateAlterTable(s *parser.AlterTableStatement) (Result, error) {
 		sb.WriteString(" TO ")
 		sb.WriteString(quoteIdent(op.NewName))
 	case *parser.AlterTableAlterType:
+		// Reject type changes on primary key columns. Cassandra also
+		// forbids this; CockroachDB would fail later with a less
+		// helpful error about on-disk data rewrites.
+		if schema != nil {
+			if meta, ok := schema.LookupTable(s.Keyspace, s.Table); ok {
+				for _, pk := range meta.PartitionKeys {
+					if strings.EqualFold(pk, op.Column) {
+						return Result{}, errors.Newf(
+							"cannot alter type of primary key column %q", op.Column)
+					}
+				}
+				for _, ck := range meta.ClusteringKeys {
+					if strings.EqualFold(ck, op.Column) {
+						return Result{}, errors.Newf(
+							"cannot alter type of clustering key column %q", op.Column)
+					}
+				}
+			}
+		}
 		sqlType, ok := cqlTypeToCRDBSQL[op.DataType.Name]
 		if !ok {
 			return Result{}, errors.Newf("unsupported CQL type %q", op.DataType.Name)

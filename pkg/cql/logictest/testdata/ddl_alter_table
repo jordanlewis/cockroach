@@ -160,14 +160,16 @@ exec
 ALTER TABLE lt_alt_compound ALTER age TYPE bigint
 ----
 
-# CRDB limitation: PK column type change requires on-disk data rewrite,
-# which CRDB does not support for indexed columns.
+# PK column type change is rejected. Cassandra also forbids ALTER TYPE
+# on primary key columns; the CQL layer catches this before execution.
 error
 ALTER TABLE lt_alt_basic ALTER id TYPE text
 ----
-cql-ddl: unimplemented: ALTER COLUMN TYPE requiring rewrite of on-disk data is currently not supported for columns that are part of an index
+cannot alter type of primary key column "id"
 
-# CRDB limitation: incompatible column type change (INT8 to BYTES).
+# Incompatible column type change (INT8 to BYTES). Cassandra also
+# rejects incompatible type changes; the error comes from CRDB's
+# ALTER COLUMN TYPE execution.
 error
 ALTER TABLE lt_alt_compound ALTER age TYPE blob
 ----

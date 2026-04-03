@@ -3,8 +3,9 @@
 # CQL INSERT is an upsert by default (last-write-wins): if a row with
 # the same primary key already exists, it is silently overwritten. The
 # translator maps this to UPSERT INTO. When IF NOT EXISTS is present,
-# the INSERT is conditional and maps to a SQL INSERT (which fails on
-# constraint violation rather than returning CQL's [applied] result set).
+# the INSERT is conditional and maps to INSERT ... ON CONFLICT DO
+# NOTHING. The result is a rows result set with an [applied] column:
+# true on success, false (with existing row data) on duplicate.
 
 exec
 USE defaultdb
@@ -101,16 +102,17 @@ pk ck name val
 # ---------------------------------------------------------------
 # INSERT IF NOT EXISTS: conditional insert.
 #
-# When IF NOT EXISTS is specified, the INSERT maps to a SQL INSERT
-# (not UPSERT). If the row already exists, a constraint violation
-# error is returned. In Cassandra, this returns [applied]=false
-# with the existing row; CockroachDB returns an error instead.
+# When IF NOT EXISTS is specified, the INSERT maps to INSERT ...
+# ON CONFLICT DO NOTHING. The result is always a rows result set
+# with an [applied] column, matching Cassandra's LWT semantics.
 # ---------------------------------------------------------------
 
-# Insert into a fresh primary key — succeeds.
-exec
+# Insert into a fresh primary key — succeeds with [applied]=true.
+query
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (20, 1, 'unique', 42) IF NOT EXISTS
 ----
+[applied]
+true
 
 query
 SELECT pk, ck, name, val FROM dml_ins WHERE pk = 20 AND ck = 1
@@ -118,12 +120,13 @@ SELECT pk, ck, name, val FROM dml_ins WHERE pk = 20 AND ck = 1
 pk ck name val
 20 1 unique 42
 
-# CRDB limitation: duplicate primary key fails with constraint violation
-# (Cassandra returns [applied]=false with existing row instead).
-error
+# Duplicate primary key returns [applied]=false with existing row,
+# matching Cassandra's lightweight transaction semantics.
+query
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (20, 1, 'dupe', 99) IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "dml_ins_pkey"
+[applied] pk ck name val
+false 20 1 unique 42
 
 # Verify original row is unchanged after failed IF NOT EXISTS.
 query

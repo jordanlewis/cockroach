@@ -141,6 +141,13 @@ func (e *Executor) ExecuteQuery(
 		}
 		return e.executeDDL(ctx, result, override, "UPDATED", "TYPE", ks, s.TypeName)
 	case *parser.InsertStatement:
+		if s.IfNotExists {
+			ks := s.Keyspace
+			if ks == "" {
+				ks = keyspace
+			}
+			return e.executeInsertIfNotExists(ctx, s, result, override, ks)
+		}
 		return e.executeDML(ctx, result, override)
 	case *parser.UpdateStatement:
 		return e.executeDML(ctx, result, override)
@@ -205,8 +212,9 @@ func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace st
 		cols[i] = col.Name
 	}
 	e.schema.RecordTable(keyspace, s.Table, translate.TableMeta{
-		PartitionKeys: s.PrimaryKey.PartitionKeys,
-		Columns:       cols,
+		PartitionKeys:  s.PrimaryKey.PartitionKeys,
+		ClusteringKeys: s.PrimaryKey.ClusteringKeys,
+		Columns:        cols,
 	})
 }
 
@@ -257,6 +265,71 @@ func (e *Executor) executeDML(
 	return ExecuteResult{
 		Body: buildVoidBody(),
 	}
+}
+
+// executeInsertIfNotExists handles INSERT IF NOT EXISTS with Cassandra's
+// lightweight transaction (LWT) semantics. The translated SQL uses
+// ON CONFLICT DO NOTHING so duplicates are silently skipped instead of
+// raising a constraint violation. The result is a rows result set
+// containing an [applied] boolean column:
+//   - [applied]=true when the insert succeeded (new row)
+//   - [applied]=false plus the existing row when a duplicate was found
+func (e *Executor) executeInsertIfNotExists(
+	ctx context.Context,
+	stmt *parser.InsertStatement,
+	result translate.Result,
+	override sessiondata.InternalExecutorOverride,
+	keyspace string,
+) ExecuteResult {
+	executor := e.db.Executor()
+	rowsAffected, err := executor.ExecEx(
+		ctx,
+		redact.Sprint("cql-dml-lwt"),
+		nil, // txn
+		override,
+		result.SQL,
+		result.Params...,
+	)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+
+	// Build the SELECT query for the [applied] result set.
+	var querySQL string
+	var queryParams []interface{}
+
+	if rowsAffected > 0 {
+		// Insert succeeded → [applied]=true.
+		querySQL = `SELECT true AS "[applied]"`
+	} else {
+		// Duplicate found → [applied]=false + existing row.
+		meta, ok := e.schema.LookupTable(keyspace, stmt.Table)
+		if !ok {
+			querySQL = `SELECT false AS "[applied]"`
+		} else {
+			querySQL, queryParams = translate.BuildLWTExistingRowQuery(
+				stmt, meta, keyspace,
+			)
+		}
+	}
+
+	rows, cols, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("cql-lwt"),
+		nil, // txn
+		override,
+		querySQL,
+		queryParams...,
+	)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+
+	body, err := buildRowsBody(cols, rows)
+	if err != nil {
+		return errorResult(errCodeServerError, err.Error())
+	}
+	return ExecuteResult{Body: body}
 }
 
 // executeSelect executes a SELECT and returns a Rows RESULT with the

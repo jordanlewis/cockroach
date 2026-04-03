@@ -228,7 +228,7 @@ func TestTranslateInsert(t *testing.T) {
 		{
 			name: "insert if not exists",
 			cql:  "INSERT INTO users (id, name) VALUES (1, 'bob') IF NOT EXISTS",
-			want: `INSERT INTO "users" ("id", "name") VALUES (1, 'bob')`,
+			want: `INSERT INTO "users" ("id", "name") VALUES (1, 'bob') ON CONFLICT DO NOTHING`,
 		},
 		{
 			name:       "upsert with bind markers",
@@ -698,7 +698,7 @@ func TestTranslateInsertJSON(t *testing.T) {
 		{
 			name: "insert json if not exists",
 			cql:  `INSERT INTO t JSON '{"id": 2, "name": "bob"}' IF NOT EXISTS`,
-			want: `INSERT INTO "t" ("id", "name") VALUES (2, 'bob')`,
+			want: `INSERT INTO "t" ("id", "name") VALUES (2, 'bob') ON CONFLICT DO NOTHING`,
 		},
 		{
 			name: "insert json with boolean and null",

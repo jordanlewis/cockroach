@@ -18,15 +18,18 @@ exec
 CREATE TABLE IF NOT EXISTS lwt_pk_single (pk int PRIMARY KEY, data text)
 ----
 
-exec
+query
 INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'first') IF NOT EXISTS
 ----
+[applied]
+true
 
-# CRDB limitation: Cassandra returns [applied]=false; CRDB returns error.
-error
+# Duplicate returns [applied]=false with existing row.
+query
 INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'duplicate') IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_pk_single_pkey"
+[applied] pk data
+false 1 first
 
 query
 SELECT pk, data FROM lwt_pk_single WHERE pk = 1
@@ -43,24 +46,31 @@ exec
 CREATE TABLE IF NOT EXISTS lwt_pk_cluster (pk int, ck int, data text, PRIMARY KEY (pk, ck))
 ----
 
-exec
+query
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 1, 'row-1-1') IF NOT EXISTS
 ----
+[applied]
+true
 
-exec
+query
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 2, 'row-1-2') IF NOT EXISTS
 ----
+[applied]
+true
 
-# CRDB limitation: same (pk=1, ck=1) → constraint violation (not [applied]=false).
-error
+# Same (pk=1, ck=1) → [applied]=false with existing row.
+query
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 1, 'conflict') IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_pk_cluster_pkey"
+[applied] pk ck data
+false 1 1 row-1-1
 
 # Different pk entirely → succeeds.
-exec
+query
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (2, 1, 'row-2-1') IF NOT EXISTS
 ----
+[applied]
+true
 
 query rowsort
 SELECT pk, ck, data FROM lwt_pk_cluster
@@ -79,25 +89,32 @@ exec
 CREATE TABLE IF NOT EXISTS lwt_pk_composite (pk1 int, pk2 int, ck int, data text, PRIMARY KEY ((pk1, pk2), ck))
 ----
 
-exec
+query
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 1, 'a') IF NOT EXISTS
 ----
+[applied]
+true
 
 # Same pk1 but different pk2 → different partition → succeeds.
-exec
+query
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 2, 1, 'b') IF NOT EXISTS
 ----
+[applied]
+true
 
-# CRDB limitation: same (pk1, pk2, ck) → constraint violation (not [applied]=false).
-error
+# Same (pk1, pk2, ck) → [applied]=false with existing row.
+query
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_pk_composite_pkey"
+[applied] pk1 pk2 ck data
+false 1 1 1 a
 
 # Same partition, different clustering key → succeeds.
-exec
+query
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 2, 'c') IF NOT EXISTS
 ----
+[applied]
+true
 
 query rowsort
 SELECT pk1, pk2, ck, data FROM lwt_pk_composite
@@ -115,23 +132,30 @@ exec
 CREATE TABLE IF NOT EXISTS lwt_pk_multi_ck (pk int, ck1 int, ck2 int, data text, PRIMARY KEY (pk, ck1, ck2))
 ----
 
-exec
+query
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 1, 'x') IF NOT EXISTS
 ----
+[applied]
+true
 
-exec
+query
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 2, 'y') IF NOT EXISTS
 ----
+[applied]
+true
 
-exec
+query
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 2, 1, 'z') IF NOT EXISTS
 ----
+[applied]
+true
 
-# CRDB limitation: full PK match → constraint violation (not [applied]=false).
-error
+# Full PK match → [applied]=false with existing row.
+query
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_pk_multi_ck_pkey"
+[applied] pk ck1 ck2 data
+false 1 1 1 x
 
 query rowsort
 SELECT pk, ck1, ck2, data FROM lwt_pk_multi_ck

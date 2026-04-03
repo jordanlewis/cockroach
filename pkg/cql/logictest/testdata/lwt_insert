@@ -2,12 +2,13 @@
 #
 # CQL lightweight transactions (LWT) use IF clauses for conditional
 # mutations. INSERT IF NOT EXISTS is the most common form: it inserts
-# a row only if no row with the same primary key exists. In Cassandra,
-# the result always includes an [applied] boolean column; on failure
-# the existing row values are also returned. CockroachDB's CQL
-# implementation currently translates IF NOT EXISTS to a plain SQL
-# INSERT (which fails on constraint violation) rather than returning
-# the Cassandra-style [applied] result set.
+# a row only if no row with the same primary key exists. The result
+# always includes an [applied] boolean column. On success, [applied]
+# is true. On failure (duplicate), [applied] is false and the existing
+# row values are returned. This matches Cassandra's LWT semantics.
+#
+# Implementation: INSERT ... ON CONFLICT DO NOTHING, then check
+# rows_affected. If 0, SELECT the existing row for the result set.
 
 exec
 USE defaultdb
@@ -19,12 +20,15 @@ CREATE TABLE IF NOT EXISTS lwt_ins (id int, name text, val int, PRIMARY KEY (id)
 ----
 
 # ---------------------------------------------------------------
-# INSERT IF NOT EXISTS: row does not exist → succeeds (void).
+# INSERT IF NOT EXISTS: row does not exist → succeeds.
+# Returns [applied]=true result set.
 # ---------------------------------------------------------------
 
-exec
+query
 INSERT INTO lwt_ins (id, name, val) VALUES (1, 'alice', 100) IF NOT EXISTS
 ----
+[applied]
+true
 
 # Verify the row was inserted.
 query
@@ -34,16 +38,16 @@ id name val
 1 alice 100
 
 # ---------------------------------------------------------------
-# INSERT IF NOT EXISTS: row already exists → constraint violation.
-#
-# CRDB limitation: Cassandra returns [applied]=false plus the
-# existing row; CockroachDB returns a constraint violation error.
+# INSERT IF NOT EXISTS: row already exists → [applied]=false.
+# Returns the existing row along with [applied]=false, matching
+# Cassandra's lightweight transaction semantics.
 # ---------------------------------------------------------------
 
-error
+query
 INSERT INTO lwt_ins (id, name, val) VALUES (1, 'bob', 200) IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_ins_pkey"
+[applied] id name val
+false 1 alice 100
 
 # Verify the original row is unchanged.
 query
@@ -72,19 +76,24 @@ id name val
 # INSERT IF NOT EXISTS with multiple rows: each conditional.
 # ---------------------------------------------------------------
 
-exec
+query
 INSERT INTO lwt_ins (id, name, val) VALUES (2, 'carol', 300) IF NOT EXISTS
 ----
+[applied]
+true
 
-exec
+query
 INSERT INTO lwt_ins (id, name, val) VALUES (3, 'dave', 400) IF NOT EXISTS
 ----
+[applied]
+true
 
-# CRDB limitation: second insert of id=2 fails with constraint violation.
-error
+# Second insert of id=2 returns [applied]=false with existing row.
+query
 INSERT INTO lwt_ins (id, name, val) VALUES (2, 'eve', 500) IF NOT EXISTS
 ----
-cql-dml: duplicate key value violates unique constraint "lwt_ins_pkey"
+[applied] id name val
+false 2 carol 300
 
 # Verify only the first insert took effect for id=2.
 query
