@@ -153,6 +153,9 @@ const (
 	// Sybase ASE pagination keyword.
 	tokenLIMIT
 
+	// Sybase ASE COMPUTE BY keyword.
+	tokenCOMPUTE
+
 	// Type system keywords.
 	tokenIDENTITY
 	tokenDEFAULT
@@ -264,6 +267,9 @@ var keywords = map[string]tokenType{
 
 	// Sybase ASE pagination keyword.
 	"LIMIT": tokenLIMIT,
+
+	// Sybase ASE COMPUTE BY keyword.
+	"COMPUTE": tokenCOMPUTE,
 
 	// Type system keywords.
 	"IDENTITY": tokenIDENTITY,

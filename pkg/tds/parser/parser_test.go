@@ -1651,4 +1651,98 @@ func TestParseSybaseTypes(t *testing.T) {
 	}
 }
 
+func TestParseComputeBy(t *testing.T) {
+	sql := `SELECT region, product, amount FROM sales
+		ORDER BY region
+		COMPUTE SUM(amount), AVG(amount) BY region`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+	}
+	sel, ok := batch.Stmts[0].(*SelectStmt)
+	if !ok {
+		t.Fatalf("expected *SelectStmt, got %T", batch.Stmts[0])
+	}
+	if len(sel.Compute) != 1 {
+		t.Fatalf("expected 1 COMPUTE clause, got %d", len(sel.Compute))
+	}
+	cc := sel.Compute[0]
+	if len(cc.Aggregates) != 2 {
+		t.Fatalf("expected 2 aggregates, got %d", len(cc.Aggregates))
+	}
+	if cc.Aggregates[0].Func != "SUM" {
+		t.Errorf("expected SUM, got %s", cc.Aggregates[0].Func)
+	}
+	if cc.Aggregates[1].Func != "AVG" {
+		t.Errorf("expected AVG, got %s", cc.Aggregates[1].Func)
+	}
+	if len(cc.By) != 1 {
+		t.Fatalf("expected 1 BY column, got %d", len(cc.By))
+	}
+}
+
+func TestParseComputeWithoutBy(t *testing.T) {
+	sql := `SELECT product, amount FROM sales COMPUTE SUM(amount)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if len(sel.Compute) != 1 {
+		t.Fatalf("expected 1 COMPUTE clause, got %d", len(sel.Compute))
+	}
+	cc := sel.Compute[0]
+	if len(cc.Aggregates) != 1 {
+		t.Fatalf("expected 1 aggregate, got %d", len(cc.Aggregates))
+	}
+	if cc.Aggregates[0].Func != "SUM" {
+		t.Errorf("expected SUM, got %s", cc.Aggregates[0].Func)
+	}
+	if len(cc.By) != 0 {
+		t.Errorf("expected no BY columns, got %d", len(cc.By))
+	}
+}
+
+func TestParseMultipleComputeClauses(t *testing.T) {
+	sql := `SELECT region, product, amount FROM sales
+		ORDER BY region, product
+		COMPUTE SUM(amount) BY region, product
+		COMPUTE SUM(amount) BY region`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if len(sel.Compute) != 2 {
+		t.Fatalf("expected 2 COMPUTE clauses, got %d", len(sel.Compute))
+	}
+	// First COMPUTE has BY region, product.
+	if len(sel.Compute[0].By) != 2 {
+		t.Errorf("expected 2 BY columns in first COMPUTE, got %d",
+			len(sel.Compute[0].By))
+	}
+	// Second COMPUTE has BY region.
+	if len(sel.Compute[1].By) != 1 {
+		t.Errorf("expected 1 BY column in second COMPUTE, got %d",
+			len(sel.Compute[1].By))
+	}
+}
+
+func TestComputeByString(t *testing.T) {
+	sql := `SELECT region, amount FROM sales
+		ORDER BY region
+		COMPUTE SUM(amount) BY region`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := batch.Stmts[0].String()
+	if !strings.Contains(result, "COMPUTE SUM(amount) BY region") {
+		t.Errorf("String() missing COMPUTE clause: %s", result)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

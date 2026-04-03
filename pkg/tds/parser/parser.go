@@ -928,7 +928,76 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		}
 	}
 
+	// Optional COMPUTE [aggregate](expr) [, ...] [BY col [, col ...]].
+	// Multiple COMPUTE clauses are allowed.
+	for p.lex.peek().typ == tokenCOMPUTE {
+		cc, err := p.parseComputeClause()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Compute = append(stmt.Compute, cc)
+	}
+
 	return stmt, nil
+}
+
+// parseComputeClause parses:
+// COMPUTE <agg>(<expr>) [, <agg>(<expr>) ...] [BY <expr> [, <expr> ...]]
+func (p *parser) parseComputeClause() (ComputeClause, error) {
+	p.lex.next() // consume COMPUTE
+	cc := ComputeClause{}
+
+	// Parse aggregate list: SUM(col), AVG(col), etc.
+	for {
+		agg, err := p.parseComputeAgg()
+		if err != nil {
+			return ComputeClause{}, err
+		}
+		cc.Aggregates = append(cc.Aggregates, agg)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+
+	// Optional BY clause.
+	if p.lex.peek().typ == tokenBY {
+		p.lex.next() // consume BY
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return ComputeClause{}, err
+			}
+			cc.By = append(cc.By, expr)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next() // consume comma
+		}
+	}
+
+	return cc, nil
+}
+
+// parseComputeAgg parses a single aggregate in a COMPUTE clause:
+// <funcname>(<expr>)
+func (p *parser) parseComputeAgg() (ComputeAgg, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return ComputeAgg{}, p.error(fmt.Sprintf(
+			"expected aggregate function name in COMPUTE, got %q", p.lex.peek().val))
+	}
+	if err := p.expect(tokenLParen); err != nil {
+		return ComputeAgg{}, err
+	}
+	arg, err := p.parseExpr()
+	if err != nil {
+		return ComputeAgg{}, err
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return ComputeAgg{}, err
+	}
+	return ComputeAgg{Func: strings.ToUpper(name), Arg: arg}, nil
 }
 
 // parseBeginTran parses: BEGIN TRAN[SACTION] [name]
@@ -2294,7 +2363,8 @@ func isKeywordToken(typ tokenType) bool {
 		tokenONLY, tokenROWS, tokenROW, tokenLIMIT,
 		tokenBEGIN, tokenTRAN, tokenTRANSACTION, tokenCOMMIT,
 		tokenROLLBACK, tokenSAVE,
-		tokenIDENTITY, tokenDEFAULT:
+		tokenIDENTITY, tokenDEFAULT,
+		tokenCOMPUTE:
 		return true
 	}
 	return false

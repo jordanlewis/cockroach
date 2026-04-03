@@ -6,6 +6,7 @@
 package translate
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/tds/parser"
@@ -1241,4 +1242,103 @@ func TestTranslateBitToInt2(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Contains(t, results[0], "flag INT2 NULL")
+}
+
+func TestTranslateComputeBy(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedBase  string
+		expectedAgg   string
+		expectedParts int
+	}{
+		{
+			name: "compute sum by region",
+			input: `SELECT region, amount FROM sales
+				ORDER BY region
+				COMPUTE SUM(amount) BY region`,
+			expectedBase:  "SELECT region, amount FROM sales ORDER BY region ASC",
+			expectedAgg:   "SELECT region, SUM(amount) FROM sales GROUP BY region ORDER BY region ASC",
+			expectedParts: 2,
+		},
+		{
+			name: "compute without by (grand total)",
+			input: `SELECT product, amount FROM sales
+				COMPUTE SUM(amount)`,
+			expectedBase:  "SELECT product, amount FROM sales",
+			expectedAgg:   "SELECT SUM(amount) FROM sales",
+			expectedParts: 2,
+		},
+		{
+			name: "compute multiple aggregates",
+			input: `SELECT region, amount FROM sales
+				ORDER BY region
+				COMPUTE SUM(amount), AVG(amount), COUNT(amount) BY region`,
+			expectedBase:  "SELECT region, amount FROM sales ORDER BY region ASC",
+			expectedAgg:   "SELECT region, SUM(amount), AVG(amount), COUNT(amount) FROM sales GROUP BY region ORDER BY region ASC",
+			expectedParts: 2,
+		},
+		{
+			name: "compute with where clause",
+			input: `SELECT region, amount FROM sales
+				WHERE amount > 100
+				ORDER BY region
+				COMPUTE SUM(amount) BY region`,
+			expectedBase:  "SELECT region, amount FROM sales WHERE amount > 100 ORDER BY region ASC",
+			expectedAgg:   "SELECT region, SUM(amount) FROM sales WHERE amount > 100 GROUP BY region ORDER BY region ASC",
+			expectedParts: 2,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch, err := parser.Parse(tc.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+
+			// The result contains base + aggregate separated by ";\n".
+			parts := strings.Split(results[0], ";\n")
+			require.Len(t, parts, tc.expectedParts)
+			require.Equal(t, tc.expectedBase, parts[0])
+			if tc.expectedParts > 1 {
+				require.Equal(t, tc.expectedAgg, parts[1])
+			}
+		})
+	}
+}
+
+func TestTranslateMultipleComputeClauses(t *testing.T) {
+	input := `SELECT region, product, amount FROM sales
+		ORDER BY region, product
+		COMPUTE SUM(amount) BY region, product
+		COMPUTE SUM(amount) BY region`
+	batch, err := parser.Parse(input)
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	parts := strings.Split(results[0], ";\n")
+	require.Len(t, parts, 3)
+
+	// First COMPUTE: GROUP BY region, product.
+	require.Contains(t, parts[1], "GROUP BY region, product")
+	// Second COMPUTE: GROUP BY region.
+	require.Contains(t, parts[2], "GROUP BY region")
+}
+
+func TestTranslateComputeQueries(t *testing.T) {
+	input := `SELECT region, amount FROM sales
+		WHERE amount > 0
+		COMPUTE SUM(amount) BY region`
+	batch, err := parser.Parse(input)
+	require.NoError(t, err)
+	sel := batch.Stmts[0].(*parser.SelectStmt)
+	queries := TranslateComputeQueries(sel)
+	require.Len(t, queries, 1)
+	require.Equal(t,
+		"SELECT region, SUM(amount) FROM sales WHERE amount > 0 GROUP BY region ORDER BY region ASC",
+		queries[0])
 }

@@ -212,6 +212,9 @@ func (e *Executor) executeStatement(
 		return e.executeDML(ctx, crdbSQL, tw)
 
 	case *parser.SelectStmt:
+		if len(s.Compute) > 0 {
+			return e.executeSelectWithCompute(ctx, s, crdbSQL, tw)
+		}
 		return e.executeSelect(ctx, crdbSQL, tw)
 
 	case *parser.BeginTranStmt:
@@ -364,6 +367,91 @@ func (e *Executor) executeSelect(ctx context.Context, sql string, tw *tdswire.To
 	return tw.WriteDone(tdswire.DoneToken{
 		TokenType: tdswire.TokenDone,
 		Status:    tdswire.DoneFinal | tdswire.DoneCount,
+		RowCount:  uint64(len(rows)),
+	})
+}
+
+// executeSelectWithCompute handles a SELECT with COMPUTE clauses. The
+// translated SQL contains the base SELECT and one aggregate query per
+// COMPUTE clause, separated by semicolons. The base query is executed
+// first, followed by each aggregate query, producing multiple result
+// sets on the TDS stream.
+func (e *Executor) executeSelectWithCompute(
+	ctx context.Context, stmt *parser.SelectStmt, crdbSQL string, tw *tdswire.TokenWriter,
+) error {
+	parts := strings.Split(crdbSQL, ";\n")
+
+	// Execute the base SELECT (first part).
+	baseSQL := e.substituteTranCount(parts[0])
+	if err := e.executeSelectNonFinal(ctx, baseSQL, tw); err != nil {
+		return err
+	}
+
+	// Execute each COMPUTE aggregate query.
+	for i := 1; i < len(parts); i++ {
+		aggSQL := e.substituteTranCount(parts[i])
+		if i == len(parts)-1 {
+			// Last result set gets DONE(FINAL).
+			if err := e.executeSelect(ctx, aggSQL, tw); err != nil {
+				return err
+			}
+		} else {
+			if err := e.executeSelectNonFinal(ctx, aggSQL, tw); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// executeSelectNonFinal executes a SELECT and writes COLMETADATA + ROW
+// tokens + DONE (without FINAL flag) so additional result sets can
+// follow on the same TDS stream.
+func (e *Executor) executeSelectNonFinal(
+	ctx context.Context, sql string, tw *tdswire.TokenWriter,
+) error {
+	executor := e.db.Executor()
+	rows, resultCols, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("tds-select-compute"),
+		nil, // txn
+		e.executorOverride(),
+		sql,
+	)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16, err.Error())
+	}
+
+	rcInfos := make([]resultColumnInfo, len(resultCols))
+	for i, rc := range resultCols {
+		rcInfos[i] = resultColumnInfo{Name: rc.Name, Typ: rc.Typ}
+	}
+
+	md, typeInfos, err := mapResultColumns(rcInfos)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("type mapping error: %s", err))
+	}
+
+	if err := tw.WriteColMetaData(md); err != nil {
+		return err
+	}
+
+	for _, datums := range rows {
+		row, err := mapDatumsToRow(datums, typeInfos)
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteRow(md, row); err != nil {
+			return err
+		}
+	}
+
+	// DONE without FINAL — more result sets follow.
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneCount,
 		RowCount:  uint64(len(rows)),
 	})
 }

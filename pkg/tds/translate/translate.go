@@ -70,6 +70,9 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.InsertStmt:
 		return translateInsert(s)
 	case *parser.SelectStmt:
+		if len(s.Compute) > 0 {
+			return translateSelectWithCompute(s)
+		}
 		return translateSelect(s), nil
 	case *parser.DeleteStmt:
 		return translateDelete(s), nil
@@ -309,6 +312,102 @@ func translateSelect(s *parser.SelectStmt) string {
 		fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
 	}
 	return b.String()
+}
+
+// translateSelectWithCompute translates a SELECT that has COMPUTE clauses.
+// The base SELECT (without COMPUTE) is returned as the primary statement.
+// The COMPUTE aggregate queries are appended, separated by semicolons,
+// so the executor can split and run them as additional result sets.
+func translateSelectWithCompute(s *parser.SelectStmt) (string, error) {
+	base := translateSelect(s)
+	computes := TranslateComputeQueries(s)
+	parts := make([]string, 0, 1+len(computes))
+	parts = append(parts, base)
+	parts = append(parts, computes...)
+	return strings.Join(parts, ";\n"), nil
+}
+
+// TranslateComputeQueries generates aggregate SELECT statements for each
+// COMPUTE clause on the given SelectStmt. Each query mirrors the base
+// SELECT's FROM/JOIN/WHERE clauses and adds GROUP BY from the COMPUTE BY
+// columns. COMPUTE without BY produces a grand total with no GROUP BY.
+func TranslateComputeQueries(s *parser.SelectStmt) []string {
+	var queries []string
+	for _, cc := range s.Compute {
+		var b strings.Builder
+		b.WriteString("SELECT ")
+
+		// BY columns come first in the result.
+		for i, byExpr := range cc.By {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(byExpr))
+		}
+
+		// Then the aggregate expressions.
+		for i, agg := range cc.Aggregates {
+			if len(cc.By) > 0 || i > 0 {
+				b.WriteString(", ")
+			}
+			funcName := strings.ToUpper(agg.Func)
+			b.WriteString(funcName)
+			b.WriteString("(")
+			b.WriteString(translateExpr(agg.Arg))
+			b.WriteString(")")
+		}
+
+		// FROM clause (same as base query).
+		if len(s.From) > 0 {
+			b.WriteString(" FROM ")
+			for i, ref := range s.From {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(translateTableRef(ref))
+			}
+			for _, j := range s.Joins {
+				fmt.Fprintf(&b, " %s %s", j.Type, quoteIdent(j.Table.Name))
+				if j.Table.Alias != "" {
+					fmt.Fprintf(&b, " %s", quoteIdent(j.Table.Alias))
+				}
+				if j.Condition != nil {
+					fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
+				}
+			}
+		}
+
+		// WHERE clause (same as base query).
+		if s.Where != nil {
+			fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+		}
+
+		// GROUP BY from the COMPUTE BY columns.
+		if len(cc.By) > 0 {
+			b.WriteString(" GROUP BY ")
+			for i, byExpr := range cc.By {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(translateExpr(byExpr))
+			}
+		}
+
+		// ORDER BY the grouping columns to match the base query ordering.
+		if len(cc.By) > 0 {
+			b.WriteString(" ORDER BY ")
+			for i, byExpr := range cc.By {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(translateExpr(byExpr))
+				b.WriteString(" ASC")
+			}
+		}
+
+		queries = append(queries, b.String())
+	}
+	return queries
 }
 
 // translateTableRef converts a table reference. Derived tables (subqueries in

@@ -1,0 +1,59 @@
+# COMPUTE BY — Sybase ASE row aggregates.
+#
+# COMPUTE inserts summary rows into the result set after each group.
+# CockroachDB emits the aggregate results as a separate result set
+# following the detail rows.
+
+# Set up test data.
+exec
+CREATE TABLE compute_sales (id INT, region VARCHAR(20), product VARCHAR(20), amount INT)
+----
+
+exec
+INSERT INTO compute_sales (id, region, product, amount) VALUES (1, 'east', 'widget', 100)
+----
+
+exec
+INSERT INTO compute_sales (id, region, product, amount) VALUES (2, 'east', 'gadget', 200)
+----
+
+exec
+INSERT INTO compute_sales (id, region, product, amount) VALUES (3, 'west', 'widget', 150)
+----
+
+exec
+INSERT INTO compute_sales (id, region, product, amount) VALUES (4, 'west', 'gadget', 300)
+----
+
+# COMPUTE SUM BY region — produces detail rows + aggregate result set.
+# The first result set is the detail rows (same as SELECT ... ORDER BY).
+query
+SELECT region, product, amount FROM compute_sales ORDER BY region COMPUTE SUM(amount) BY region
+----
+east  gadget  200
+east  widget  100
+west  gadget  300
+west  widget  150
+
+# COMPUTE without BY — grand total.
+query
+SELECT region, amount FROM compute_sales COMPUTE SUM(amount)
+----
+east  100
+east  200
+west  150
+west  300
+
+# COMPUTE with multiple aggregates.
+query
+SELECT region, amount FROM compute_sales ORDER BY region COMPUTE SUM(amount), COUNT(amount) BY region
+----
+east  100
+east  200
+west  150
+west  300
+
+# Clean up.
+exec
+DROP TABLE compute_sales
+----

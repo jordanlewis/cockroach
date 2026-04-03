@@ -337,10 +337,52 @@ func (j *JoinClause) String() string {
 	return s
 }
 
+// ComputeClause represents a Sybase ASE COMPUTE clause:
+// COMPUTE <agg>(expr) [, <agg>(expr) ...] [BY col [, col ...]].
+// COMPUTE without BY produces a grand total; with BY, it produces
+// summary rows after each group (like a control break).
+type ComputeClause struct {
+	Aggregates []ComputeAgg
+	By         []Expr // nil for grand total (COMPUTE without BY)
+}
+
+func (c *ComputeClause) String() string {
+	var b strings.Builder
+	b.WriteString("COMPUTE ")
+	for i, agg := range c.Aggregates {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(agg.String())
+	}
+	if len(c.By) > 0 {
+		b.WriteString(" BY ")
+		for i, col := range c.By {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(col.String())
+		}
+	}
+	return b.String()
+}
+
+// ComputeAgg represents a single aggregate in a COMPUTE clause,
+// e.g. SUM(amount) or COUNT(*).
+type ComputeAgg struct {
+	Func string // aggregate function name: SUM, AVG, COUNT, MAX, MIN
+	Arg  Expr   // expression to aggregate
+}
+
+func (a *ComputeAgg) String() string {
+	return fmt.Sprintf("%s(%s)", strings.ToUpper(a.Func), a.Arg)
+}
+
 // SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
 // [JOIN ...] [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>]
 // [ORDER BY <exprs>] [OFFSET n ROWS [FETCH NEXT m ROWS ONLY]]
 // or the Sybase ASE pagination variant: [ROWS LIMIT x [OFFSET y]].
+// An optional trailing COMPUTE clause adds summary rows.
 type SelectStmt struct {
 	Distinct        bool
 	Top             *int
@@ -351,9 +393,10 @@ type SelectStmt struct {
 	GroupBy         []Expr
 	Having          Expr
 	OrderBy         []OrderByExpr
-	Offset          *int // OFFSET n ROWS, or OFFSET y in Sybase ROWS LIMIT
-	Fetch           *int // FETCH NEXT m ROWS ONLY, or LIMIT x in Sybase ROWS LIMIT
-	RowsLimitSyntax bool // true when parsed from Sybase ROWS LIMIT syntax
+	Offset          *int            // OFFSET n ROWS, or OFFSET y in Sybase ROWS LIMIT
+	Fetch           *int            // FETCH NEXT m ROWS ONLY, or LIMIT x in Sybase ROWS LIMIT
+	RowsLimitSyntax bool            // true when parsed from Sybase ROWS LIMIT syntax
+	Compute         []ComputeClause // Sybase ASE COMPUTE [BY] clauses
 }
 
 func (*SelectStmt) statementNode() {}
@@ -423,6 +466,9 @@ func (s *SelectStmt) String() string {
 		if s.Fetch != nil {
 			fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
 		}
+	}
+	for _, c := range s.Compute {
+		fmt.Fprintf(&b, " %s", c.String())
 	}
 	return b.String()
 }
