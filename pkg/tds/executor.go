@@ -260,6 +260,9 @@ func (e *Executor) executeStatement(
 	case *parser.RaiserrorStmt:
 		return e.executeRaiserror(s, tw)
 
+	case *parser.ThrowStmt:
+		return e.executeThrow(s, tw)
+
 	default:
 		// Best-effort: try as DML.
 		return e.executeDML(ctx, crdbSQL, tw)
@@ -351,6 +354,32 @@ func (e *Executor) executeRaiserror(stmt *parser.RaiserrorStmt, tw *tdswire.Toke
 		msg = fmt.Sprintf("error %d", stmt.ErrNum)
 	}
 	return writeErrorToken(tw, int32(stmt.ErrNum), 1, 16, msg)
+}
+
+// executeThrow handles the SQL Server THROW syntax by sending a TDS ERROR
+// token with the specified error number, message, and state.
+func (e *Executor) executeThrow(stmt *parser.ThrowStmt, tw *tdswire.TokenWriter) error {
+	return writeErrorToken(tw, int32(stmt.ErrNum), byte(stmt.State), 16, stmt.Message)
+}
+
+// executeBeginTryCatch executes the TRY body. If any statement in the TRY
+// body produces an error, execution continues with the CATCH body.
+func (e *Executor) executeBeginTryCatch(
+	ctx context.Context, stmt *parser.BeginTryCatchStmt, tw *tdswire.TokenWriter,
+) error {
+	// Execute TRY body; on error, run CATCH body instead.
+	for _, s := range stmt.TryBody {
+		if err := e.execParsedStmt(ctx, s, tw); err != nil {
+			// Error in TRY: execute CATCH body.
+			for _, cs := range stmt.CatchBody {
+				if catchErr := e.execParsedStmt(ctx, cs, tw); catchErr != nil {
+					return catchErr
+				}
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // exprToString extracts the string value from a parser expression.
@@ -779,6 +808,19 @@ func (e *Executor) execParsedStmt(
 	case *parser.ExecStmt:
 		return writeErrorToken(tw, 2812, 1, 16,
 			fmt.Sprintf("unsupported: stored procedure '%s' is not available in CockroachDB TDS", s.Procedure))
+	case *parser.ThrowStmt:
+		return e.executeThrow(s, tw)
+	case *parser.GotoStmt:
+		// GOTO is silently acknowledged (label-based flow not supported).
+		return nil
+	case *parser.ReturnStmt:
+		// RETURN is silently acknowledged (stored procedure context only).
+		return nil
+	case *parser.WaitforStmt:
+		// WAITFOR is silently acknowledged (delay/scheduling not supported).
+		return nil
+	case *parser.BeginTryCatchStmt:
+		return e.executeBeginTryCatch(ctx, s, tw)
 	default:
 		// Regular statement: translate then execute.
 		crdbSQL, err := translate.Statement(stmt)

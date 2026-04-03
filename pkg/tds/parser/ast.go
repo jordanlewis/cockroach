@@ -304,6 +304,8 @@ const (
 	RightJoin
 	FullJoin
 	CrossJoin
+	CrossApplyJoin
+	OuterApplyJoin
 )
 
 func (j JoinType) String() string {
@@ -318,6 +320,10 @@ func (j JoinType) String() string {
 		return "FULL OUTER JOIN"
 	case CrossJoin:
 		return "CROSS JOIN"
+	case CrossApplyJoin:
+		return "CROSS APPLY"
+	case OuterApplyJoin:
+		return "OUTER APPLY"
 	default:
 		return "JOIN"
 	}
@@ -496,10 +502,14 @@ func (c *SelectColumn) String() string {
 
 // TableRef represents a table reference in a FROM clause, optionally aliased.
 // When Subquery is non-nil, this is a derived table (inline view).
+// When Pivot or Unpivot is non-nil, the table reference is wrapped in a
+// PIVOT or UNPIVOT operator (Alias then holds the pivot/unpivot alias).
 type TableRef struct {
 	Name     string
 	Alias    string
-	Subquery Statement // non-nil for derived tables: (SELECT ...) alias
+	Subquery Statement      // non-nil for derived tables: (SELECT ...) alias
+	Pivot    *PivotClause   // non-nil for PIVOT operator
+	Unpivot  *UnpivotClause // non-nil for UNPIVOT operator
 }
 
 func (t *TableRef) String() string {
@@ -1442,6 +1452,110 @@ func (a *ExecArg) String() string {
 	return a.Value.String()
 }
 
+// ThrowStmt represents THROW <errnum>, '<message>', <state>.
+// [SQL Server] THROW is SQL Server 2012+ (replacement for RAISERROR).
+type ThrowStmt struct {
+	ErrNum  int
+	Message string
+	State   int
+}
+
+func (*ThrowStmt) statementNode() {}
+
+func (s *ThrowStmt) String() string {
+	escaped := strings.ReplaceAll(s.Message, "'", "''")
+	return fmt.Sprintf("THROW %d, '%s', %d", s.ErrNum, escaped, s.State)
+}
+
+// GotoStmt represents GOTO <label>. The label target is not tracked
+// by the parser; GOTO is parsed for recognition but not executed.
+type GotoStmt struct {
+	Label string
+}
+
+func (*GotoStmt) statementNode() {}
+
+func (s *GotoStmt) String() string {
+	return fmt.Sprintf("GOTO %s", s.Label)
+}
+
+// ReturnStmt represents RETURN [<value>], used to exit a stored procedure
+// or batch. The optional value is the return status.
+type ReturnStmt struct {
+	Value *int // optional return value
+}
+
+func (*ReturnStmt) statementNode() {}
+
+func (s *ReturnStmt) String() string {
+	if s.Value != nil {
+		return fmt.Sprintf("RETURN %d", *s.Value)
+	}
+	return "RETURN"
+}
+
+// WaitforStmt represents WAITFOR DELAY '<time>' or WAITFOR TIME '<time>'.
+type WaitforStmt struct {
+	IsDelay bool   // true for DELAY, false for TIME
+	Time    string // time string, e.g. '00:00:01'
+}
+
+func (*WaitforStmt) statementNode() {}
+
+func (s *WaitforStmt) String() string {
+	kind := "TIME"
+	if s.IsDelay {
+		kind = "DELAY"
+	}
+	escaped := strings.ReplaceAll(s.Time, "'", "''")
+	return fmt.Sprintf("WAITFOR %s '%s'", kind, escaped)
+}
+
+// BeginTryCatchStmt represents BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH.
+// [SQL Server] Structured error handling (SQL Server 2005+).
+type BeginTryCatchStmt struct {
+	TryBody   []Statement
+	CatchBody []Statement
+}
+
+func (*BeginTryCatchStmt) statementNode() {}
+
+func (s *BeginTryCatchStmt) String() string {
+	var b strings.Builder
+	b.WriteString("BEGIN TRY ")
+	for i, stmt := range s.TryBody {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(stmt.String())
+	}
+	b.WriteString(" END TRY BEGIN CATCH ")
+	for i, stmt := range s.CatchBody {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(stmt.String())
+	}
+	b.WriteString(" END CATCH")
+	return b.String()
+}
+
+// PivotClause represents a PIVOT table operator:
+// PIVOT (agg_func(agg_col) FOR pivot_col IN (val1, val2, ...)) alias
+type PivotClause struct {
+	AggFunc  string // aggregate function name (e.g. "SUM")
+	AggCol   Expr   // column being aggregated
+	ForCol   string // pivot column
+	InValues []Expr // values to pivot on
+}
+
+// UnpivotClause represents an UNPIVOT table operator:
+// UNPIVOT (value_col FOR label_col IN (col1, col2, ...)) alias
+type UnpivotClause struct {
+	ValueCol string   // column name for the unpivoted values
+	ForCol   string   // column name for the source column labels
+	InCols   []string // source columns to unpivot
+}
 // formatColumnRef formats a column reference that may contain dots
 // (e.g., t.name from UPDATE...FROM). Each part is individually quoted
 // if necessary.

@@ -169,17 +169,30 @@ name  salary
 dave  7000
 bob  6000
 
-# --- CROSS APPLY (not yet supported by parser) ---
+# --- CROSS APPLY → CROSS JOIN LATERAL ---
 
-query error=(parse error)
-SELECT e.name, x.max_salary FROM emp e CROSS APPLY (SELECT MAX(salary) AS max_salary FROM emp WHERE dept_id = e.dept_id) x
+query colnames
+SELECT e.name, x.max_salary FROM emp e CROSS APPLY (SELECT MAX(salary) AS max_salary FROM emp WHERE dept_id = e.dept_id) x ORDER BY e.name
 ----
+name  max_salary
+alice  6000
+bob  6000
+carol  7000
+dave  7000
+eve  8000
 
-# --- OUTER APPLY ---
+# --- OUTER APPLY → LEFT JOIN LATERAL ---
+# OUTER APPLY is like LEFT JOIN LATERAL: all left rows appear even if
+# the subquery returns no rows. dept 40 ('hr') has no employees.
 
-query error=(parse error)
-SELECT d.name, x.emp_count FROM dept d OUTER APPLY (SELECT COUNT(*) AS emp_count FROM emp WHERE dept_id = d.id) x
+query colnames
+SELECT d.name, x.emp_count FROM dept d OUTER APPLY (SELECT COUNT(*) AS emp_count FROM emp WHERE dept_id = d.id) x ORDER BY d.name
 ----
+name  emp_count
+engineering  2
+hr  0
+marketing  1
+sales  2
 
 # --- Common Table Expression (CTE) ---
 # CTE parses correctly but TDS wire-protocol doesn't return result sets
@@ -221,14 +234,14 @@ carol  5500  12500
 dave  7000  12500
 eve  8000  8000
 
-# --- PIVOT (not yet supported by parser) ---
+# --- PIVOT (parsed but not yet translatable) ---
 
-query error=(parse error)
+query error=(unsupported: PIVOT)
 SELECT engineering, sales, marketing FROM (SELECT dept_id, salary FROM emp) src PIVOT (SUM(salary) FOR dept_id IN (10, 20, 30)) pvt
 ----
 
-# --- UNPIVOT ---
+# --- UNPIVOT (parsed but not yet translatable) ---
 
-query error=(parse error)
+query error=(unsupported: UNPIVOT)
 SELECT dept, val FROM (SELECT 100 AS engineering, 200 AS sales) src UNPIVOT (val FOR dept IN (engineering, sales)) unpvt
 ----

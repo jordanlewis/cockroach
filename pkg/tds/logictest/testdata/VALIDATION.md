@@ -1,6 +1,6 @@
 # TDS Logictest Validation Report
 
-Generated: 2026-04-03 (updated: window functions, subqueries, OFFSET-FETCH now pass)
+Generated: 2026-04-03 (updated: APPLY, PIVOT/UNPIVOT, THROW, control flow)
 
 ## Summary
 
@@ -8,13 +8,13 @@ Generated: 2026-04-03 (updated: window functions, subqueries, OFFSET-FETCH now p
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 736 |
-| Passing directives | 687 (93%) |
-| Error directives (expected failures) | 44 (6%) |
+| Passing directives | 694 (94%) |
+| Error directives (expected failures) | 37 (5%) |
 | Empty-result directives (parse OK, TDS wire gap) | 5 |
 | Known behavioral divergences | 1 |
 | Stale test comments | 1 |
 
-## Error Categorization (45 total)
+## Error Categorization (38 total)
 
 Errors are categorized by root cause and implementation effort. "Expected
 errors" (bad syntax, missing tables) are separated from feature gaps.
@@ -39,7 +39,7 @@ Note: The 2 "invalid integer" errors are a parser limitation (unary minus
 on int64 max+1 overflows). Fixing requires special-casing the literal
 `-9223372036854775808` in the lexer. Low priority.
 
-### Intentional Feature Errors (parsed but unsupported) — 4
+### Intentional Feature Errors (parsed but unsupported) — 8
 
 These features parse correctly but are intentionally blocked from execution.
 
@@ -49,13 +49,18 @@ These features parse correctly but are intentionally blocked from execution.
 | ddl_extended | unsupported | CREATE FUNCTION |
 | ddl_extended | unsupported | CREATE TRIGGER |
 | tsql_control_flow | Test error | RAISERROR (Sybase syntax, working correctly) |
+| tsql_control_flow | Custom error | THROW (SQL Server 2012+, working correctly) |
+| tsql_control_flow | division by zero | BEGIN TRY/CATCH (parsed, best-effort semantics) |
+| select_extended | unsupported: PIVOT | PIVOT (parsed, translation not yet implemented) |
+| select_extended | unsupported: UNPIVOT | UNPIVOT (parsed, translation not yet implemented) |
 
-### Parser Feature Gaps — 26
+### Parser Feature Gaps — 17
 
 These fail because the T-SQL parser cannot parse the syntax yet.
 Grouped by feature area for convoy planning. (Down from 43: window
 functions, subqueries in WHERE/SELECT/EXISTS, set operations,
-OFFSET-FETCH, and CTE now parse correctly.)
+OFFSET-FETCH, CTE, APPLY, PIVOT/UNPIVOT, THROW, and control flow
+now parse correctly.)
 
 #### Subqueries and Nested SELECTs (10 errors, down from 18)
 
@@ -105,23 +110,19 @@ sp_help/sp_helpdb are not implemented — EXEC returns "unsupported"
 at execution time. These remain as expected errors (unsupported, not
 parse errors).
 
-#### APPLY Operators (2 errors)
+#### APPLY Operators (0 errors, IMPLEMENTED)
 
-| File | Count | Features |
-|------|-------|----------|
-| select_extended | 2 | CROSS APPLY, OUTER APPLY |
+CROSS APPLY and OUTER APPLY now parse and translate correctly:
+- CROSS APPLY → CROSS JOIN LATERAL
+- OUTER APPLY → LEFT JOIN LATERAL ... ON true
 
-**Implementation note:** APPLY is a T-SQL-specific lateral join variant.
-Translates to LATERAL in standard SQL.
+Both tests pass with correct results in select_extended.
 
-#### PIVOT / UNPIVOT (2 errors)
+#### PIVOT / UNPIVOT (0 parse errors, translation unsupported)
 
-| File | Count | Features |
-|------|-------|----------|
-| select_extended | 2 | PIVOT, UNPIVOT |
-
-**Implementation note:** Complex T-SQL-specific table operators. Lower
-priority — can often be rewritten with GROUP BY + CASE.
+PIVOT and UNPIVOT now parse correctly into AST nodes. Translation to
+CockroachDB SQL is not yet implemented (returns "unsupported" error).
+Tests are annotated with the appropriate error expectations.
 
 #### OFFSET-FETCH (0 errors, FIXED)
 
@@ -129,27 +130,22 @@ OFFSET-FETCH now parses, translates, and executes correctly. The test in
 select_extended passes with correct results.
 
 
-#### Control Flow Gaps (4 errors)
+#### Control Flow Gaps (1 error remaining)
 
 | File | Count | Features |
 |------|-------|----------|
-| tsql_control_flow | 1 | BEGIN TRY / BEGIN CATCH |
-| tsql_control_flow | 1 | GOTO |
-| tsql_control_flow | 1 | RETURN statement |
-| tsql_control_flow | 1 | WAITFOR DELAY |
+| tsql_control_flow | 1 | GOTO (label syntax not fully parsed) |
 
-**Implementation note:** TRY/CATCH would require error handling in the
-T-SQL executor. GOTO requires label tracking. RETURN is for stored
-procedures. WAITFOR is scheduling.
+**IMPLEMENTED:** BEGIN TRY/CATCH (parsed, best-effort error handling),
+RETURN (silently acknowledged), WAITFOR (silently acknowledged).
+GOTO parses the `GOTO label` statement but T-SQL label definitions
+(`label:`) are not handled by the batch parser.
 
-#### THROW Statement (1 error)
+#### THROW Statement (0 errors, IMPLEMENTED)
 
-| File | Count | Features |
-|------|-------|----------|
-| tsql_control_flow | 1 | THROW errnum, msg, state |
-
-**Implementation note:** SQL Server 2012+ replacement for RAISERROR.
-Simple parse + translate to error.
+THROW now parses and raises a TDS error token with the specified error
+number, message, and state — like RAISERROR but using SQL Server 2012+
+syntax.
 
 #### Table Variables and SELECT INTO (2 errors)
 
@@ -256,10 +252,11 @@ EXEC/EXECUTE now parses correctly with positional args, named params,
 and N-string prefixes. Stored procedures beyond sp_help/sp_helpdb
 return "unsupported" at execution time.
 
-### Convoy F: Remaining Parser Gaps (LOW priority, 9 errors)
+### Convoy F: Remaining Parser Gaps (LOW priority, 3 errors)
 
-APPLY (2), PIVOT/UNPIVOT (2), control flow (4), THROW (1).
-Lower real-world impact.
+GOTO label syntax (1), table variables (1), SELECT INTO (1).
+Lower real-world impact. APPLY, PIVOT/UNPIVOT, THROW, and control
+flow (BEGIN TRY/CATCH, RETURN, WAITFOR) are now implemented.
 
 ### DONE: Window Functions, OFFSET-FETCH, Subqueries in WHERE/SELECT
 

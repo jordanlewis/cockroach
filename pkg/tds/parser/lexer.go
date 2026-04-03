@@ -174,8 +174,26 @@ const (
 	tokenBREAK
 	tokenCONTINUE
 
+
 	// EXEC/EXECUTE keyword for stored procedure calls.
 	tokenEXEC
+	tokenRETURN
+	tokenGOTO
+	tokenTHROW
+	tokenWAITFOR
+	tokenTRY
+	tokenCATCH
+
+	// APPLY operator keywords.
+	tokenAPPLY
+
+	// PIVOT/UNPIVOT keywords.
+	tokenPIVOT
+	tokenUNPIVOT
+	tokenFOR
+
+	// WAITFOR sub-keyword.
+	tokenDELAY
 )
 
 var keywords = map[string]tokenType{
@@ -307,6 +325,23 @@ var keywords = map[string]tokenType{
 	// EXEC/EXECUTE keywords.
 	"EXEC":    tokenEXEC,
 	"EXECUTE": tokenEXEC,
+	"RETURN":   tokenRETURN,
+	"GOTO":     tokenGOTO,
+	"THROW":    tokenTHROW,
+	"WAITFOR":  tokenWAITFOR,
+	"TRY":      tokenTRY,
+	"CATCH":    tokenCATCH,
+
+	// APPLY operator keyword.
+	"APPLY": tokenAPPLY,
+
+	// PIVOT/UNPIVOT keywords.
+	"PIVOT":   tokenPIVOT,
+	"UNPIVOT": tokenUNPIVOT,
+	"FOR":     tokenFOR,
+
+	// WAITFOR sub-keyword.
+	"DELAY": tokenDELAY,
 }
 
 // token represents a single lexical token from T-SQL input.

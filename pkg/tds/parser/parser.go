@@ -139,6 +139,14 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseRaiserror()
 	case tokenEXEC:
 		return p.parseExec()
+	case tokenTHROW:
+		return p.parseThrow()
+	case tokenRETURN:
+		return p.parseReturn()
+	case tokenGOTO:
+		return p.parseGoto()
+	case tokenWAITFOR:
+		return p.parseWaitfor()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -1066,6 +1074,10 @@ func (p *parser) parseBegin() (Statement, error) {
 		}
 		return stmt, nil
 	}
+	// BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH.
+	if p.lex.peek().typ == tokenTRY {
+		return p.parseBeginTryCatch()
+	}
 	// Otherwise BEGIN...END statement block.
 	return p.parseBeginEndBody()
 }
@@ -1350,7 +1362,7 @@ func (p *parser) parseSelectColumn() (SelectColumn, error) {
 // clause.
 func isJoinStart(typ tokenType) bool {
 	switch typ {
-	case tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL, tokenCROSS, tokenJOIN:
+	case tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL, tokenCROSS, tokenJOIN, tokenOUTER:
 		return true
 	}
 	return false
@@ -1385,7 +1397,20 @@ func (p *parser) parseJoinClause() (JoinClause, error) {
 		joinType = FullJoin
 	case tokenCROSS:
 		p.lex.next()
-		joinType = CrossJoin
+		if p.lex.peek().typ == tokenAPPLY {
+			p.lex.next() // consume APPLY
+			joinType = CrossApplyJoin
+		} else {
+			joinType = CrossJoin
+		}
+	case tokenOUTER:
+		p.lex.next()
+		if p.lex.peek().typ == tokenAPPLY {
+			p.lex.next() // consume APPLY
+			joinType = OuterApplyJoin
+		} else {
+			return JoinClause{}, p.error("expected APPLY after OUTER")
+		}
 	case tokenJOIN:
 		// Plain JOIN = INNER JOIN.
 		joinType = InnerJoin
@@ -1393,8 +1418,11 @@ func (p *parser) parseJoinClause() (JoinClause, error) {
 		return JoinClause{}, p.error("expected JOIN keyword")
 	}
 
-	if err := p.expect(tokenJOIN); err != nil {
-		return JoinClause{}, err
+	// APPLY operators don't use the JOIN keyword.
+	if joinType != CrossApplyJoin && joinType != OuterApplyJoin {
+		if err := p.expect(tokenJOIN); err != nil {
+			return JoinClause{}, err
+		}
 	}
 
 	table, err := p.parseTableRef()
@@ -1417,8 +1445,11 @@ func (p *parser) parseJoinClause() (JoinClause, error) {
 	return join, nil
 }
 
-// parseTableRef parses a table reference: <name> [<alias>] or (<subquery>) <alias>.
+// parseTableRef parses a table reference: <name> [<alias>] or (<subquery>) <alias>,
+// optionally followed by a PIVOT or UNPIVOT operator.
 func (p *parser) parseTableRef() (TableRef, error) {
+	var ref TableRef
+
 	// Check for derived table: (SELECT ...) [AS] alias.
 	if p.lex.peek().typ == tokenLParen {
 		p.lex.next() // consume (
@@ -1429,7 +1460,7 @@ func (p *parser) parseTableRef() (TableRef, error) {
 		if err := p.expect(tokenRParen); err != nil {
 			return TableRef{}, err
 		}
-		ref := TableRef{Subquery: sel}
+		ref = TableRef{Subquery: sel}
 		if p.lex.peek().typ == tokenAS {
 			p.lex.next()
 		}
@@ -1438,26 +1469,34 @@ func (p *parser) parseTableRef() (TableRef, error) {
 			return TableRef{}, err
 		}
 		ref.Alias = alias
-		return ref, nil
-	}
-
-	name, err := p.parseTableName()
-	if err != nil {
-		return TableRef{}, err
-	}
-	ref := TableRef{Name: name}
-	// Check for optional alias (identifier that isn't a keyword like WHERE,
-	// ORDER, etc.).
-	if p.lex.peek().typ == tokenIdent || p.lex.peek().typ == tokenAS {
-		if p.lex.peek().typ == tokenAS {
-			p.lex.next() // consume AS
-		}
-		alias, err := p.expectIdent()
+	} else {
+		name, err := p.parseTableName()
 		if err != nil {
 			return TableRef{}, err
 		}
-		ref.Alias = alias
+		ref = TableRef{Name: name}
+		// Check for optional alias (identifier that isn't a keyword like WHERE,
+		// ORDER, etc.).
+		if p.lex.peek().typ == tokenIdent || p.lex.peek().typ == tokenAS {
+			if p.lex.peek().typ == tokenAS {
+				p.lex.next() // consume AS
+			}
+			alias, err := p.expectIdent()
+			if err != nil {
+				return TableRef{}, err
+			}
+			ref.Alias = alias
+		}
 	}
+
+	// Check for PIVOT or UNPIVOT operator following the table reference.
+	if p.lex.peek().typ == tokenPIVOT {
+		return p.parsePivot(ref)
+	}
+	if p.lex.peek().typ == tokenUNPIVOT {
+		return p.parseUnpivot(ref)
+	}
+
 	return ref, nil
 }
 
@@ -2749,4 +2788,286 @@ func FormatBatch(b *Batch) string {
 		parts = append(parts, s.String())
 	}
 	return strings.Join(parts, "\nGO\n")
+}
+
+// parseThrow parses: THROW <errnum>, '<message>', <state>
+func (p *parser) parseThrow() (*ThrowStmt, error) {
+	p.lex.next() // consume THROW
+	numTok := p.lex.next()
+	if numTok.typ != tokenInt {
+		return nil, p.error(fmt.Sprintf(
+			"expected error number after THROW, got %q", numTok.val))
+	}
+	errNum, err := strconv.Atoi(numTok.val)
+	if err != nil {
+		return nil, p.error(fmt.Sprintf("invalid THROW error number: %s", numTok.val))
+	}
+	if err := p.expect(tokenComma); err != nil {
+		return nil, err
+	}
+	msgTok := p.lex.next()
+	if msgTok.typ != tokenString {
+		return nil, p.error(fmt.Sprintf(
+			"expected string message after THROW errnum, got %q", msgTok.val))
+	}
+	if err := p.expect(tokenComma); err != nil {
+		return nil, err
+	}
+	stateTok := p.lex.next()
+	if stateTok.typ != tokenInt {
+		return nil, p.error(fmt.Sprintf(
+			"expected state integer in THROW, got %q", stateTok.val))
+	}
+	state, err := strconv.Atoi(stateTok.val)
+	if err != nil {
+		return nil, p.error(fmt.Sprintf("invalid THROW state: %s", stateTok.val))
+	}
+	return &ThrowStmt{ErrNum: errNum, Message: msgTok.val, State: state}, nil
+}
+
+// parseReturn parses: RETURN [<value>]
+func (p *parser) parseReturn() (*ReturnStmt, error) {
+	p.lex.next() // consume RETURN
+	stmt := &ReturnStmt{}
+	if p.lex.peek().typ == tokenInt {
+		tok := p.lex.next()
+		n, err := strconv.Atoi(tok.val)
+		if err != nil {
+			return nil, p.error(fmt.Sprintf("invalid RETURN value: %s", tok.val))
+		}
+		stmt.Value = &n
+	}
+	return stmt, nil
+}
+
+// parseGoto parses: GOTO <label>
+// The label is an identifier. Any following "label:" definitions in the
+// batch are consumed by parseBatch as labels but not tracked.
+func (p *parser) parseGoto() (*GotoStmt, error) {
+	p.lex.next() // consume GOTO
+	label, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return &GotoStmt{Label: label}, nil
+}
+
+// parseWaitfor parses: WAITFOR DELAY|TIME '<time_string>'
+func (p *parser) parseWaitfor() (*WaitforStmt, error) {
+	p.lex.next() // consume WAITFOR
+	tok := p.lex.peek()
+	var isDelay bool
+	if tok.typ == tokenDELAY {
+		isDelay = true
+		p.lex.next()
+	} else if tok.typ == tokenIdent && strings.EqualFold(tok.val, "TIME") {
+		p.lex.next()
+	} else {
+		return nil, p.error(fmt.Sprintf(
+			"expected DELAY or TIME after WAITFOR, got %q", tok.val))
+	}
+	timeTok := p.lex.next()
+	if timeTok.typ != tokenString {
+		return nil, p.error(fmt.Sprintf(
+			"expected time string after WAITFOR DELAY/TIME, got %q", timeTok.val))
+	}
+	return &WaitforStmt{IsDelay: isDelay, Time: timeTok.val}, nil
+}
+
+// parseBeginTryCatch parses: TRY <stmts> END TRY BEGIN CATCH <stmts> END CATCH
+// (BEGIN was already consumed; TRY is the next token).
+func (p *parser) parseBeginTryCatch() (*BeginTryCatchStmt, error) {
+	p.lex.next() // consume TRY
+	stmt := &BeginTryCatchStmt{}
+	// Parse TRY body until END TRY.
+	for {
+		for p.lex.peek().typ == tokenSemicolon {
+			p.lex.next()
+		}
+		if p.lex.peek().typ == tokenEND {
+			p.lex.next() // consume END
+			if p.lex.peek().typ != tokenTRY {
+				return nil, p.error("expected TRY after END in BEGIN TRY block")
+			}
+			p.lex.next() // consume TRY
+			break
+		}
+		if p.lex.peek().typ == tokenEOF {
+			return nil, p.error("unterminated BEGIN TRY block")
+		}
+		s, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TryBody = append(stmt.TryBody, s)
+	}
+	// Expect BEGIN CATCH.
+	if err := p.expect(tokenBEGIN); err != nil {
+		return nil, err
+	}
+	if p.lex.peek().typ != tokenCATCH {
+		return nil, p.error("expected CATCH after BEGIN in TRY/CATCH block")
+	}
+	p.lex.next() // consume CATCH
+	// Parse CATCH body until END CATCH.
+	for {
+		for p.lex.peek().typ == tokenSemicolon {
+			p.lex.next()
+		}
+		if p.lex.peek().typ == tokenEND {
+			p.lex.next() // consume END
+			if p.lex.peek().typ != tokenCATCH {
+				return nil, p.error("expected CATCH after END in BEGIN CATCH block")
+			}
+			p.lex.next() // consume CATCH
+			break
+		}
+		if p.lex.peek().typ == tokenEOF {
+			return nil, p.error("unterminated BEGIN CATCH block")
+		}
+		s, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		stmt.CatchBody = append(stmt.CatchBody, s)
+	}
+	return stmt, nil
+}
+
+// parsePivot parses: PIVOT (agg_func(col) FOR pivot_col IN (v1, v2, ...)) alias
+// The source table ref has already been parsed and is passed in.
+func (p *parser) parsePivot(source TableRef) (TableRef, error) {
+	p.lex.next() // consume PIVOT
+	if err := p.expect(tokenLParen); err != nil {
+		return TableRef{}, err
+	}
+	// Parse aggregate: func_name(col)
+	aggName, err := p.expectIdent()
+	if err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenLParen); err != nil {
+		return TableRef{}, err
+	}
+	aggCol, err := p.parseExpr()
+	if err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return TableRef{}, err
+	}
+	// FOR pivot_col IN (...)
+	if err := p.expect(tokenFOR); err != nil {
+		return TableRef{}, err
+	}
+	forCol, err := p.expectIdent()
+	if err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenIN); err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenLParen); err != nil {
+		return TableRef{}, err
+	}
+	var inValues []Expr
+	for {
+		val, err := p.parseExpr()
+		if err != nil {
+			return TableRef{}, err
+		}
+		inValues = append(inValues, val)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next()
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return TableRef{}, err
+	}
+	// Close outer paren.
+	if err := p.expect(tokenRParen); err != nil {
+		return TableRef{}, err
+	}
+	// Parse optional alias.
+	var alias string
+	if p.lex.peek().typ == tokenAS {
+		p.lex.next()
+	}
+	if p.lex.peek().typ == tokenIdent {
+		alias = p.lex.next().val
+	}
+	pivot := &PivotClause{
+		AggFunc:  aggName,
+		AggCol:   aggCol,
+		ForCol:   forCol,
+		InValues: inValues,
+	}
+	return TableRef{
+		Subquery: source.Subquery,
+		Name:     source.Name,
+		Alias:    alias,
+		Pivot:    pivot,
+	}, nil
+}
+
+// parseUnpivot parses: UNPIVOT (value_col FOR label_col IN (col1, col2, ...)) alias
+func (p *parser) parseUnpivot(source TableRef) (TableRef, error) {
+	p.lex.next() // consume UNPIVOT
+	if err := p.expect(tokenLParen); err != nil {
+		return TableRef{}, err
+	}
+	valueCol, err := p.expectIdent()
+	if err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenFOR); err != nil {
+		return TableRef{}, err
+	}
+	forCol, err := p.expectIdent()
+	if err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenIN); err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenLParen); err != nil {
+		return TableRef{}, err
+	}
+	var inCols []string
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return TableRef{}, err
+		}
+		inCols = append(inCols, col)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next()
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return TableRef{}, err
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return TableRef{}, err
+	}
+	var alias string
+	if p.lex.peek().typ == tokenAS {
+		p.lex.next()
+	}
+	if p.lex.peek().typ == tokenIdent {
+		alias = p.lex.next().val
+	}
+	unpivot := &UnpivotClause{
+		ValueCol: valueCol,
+		ForCol:   forCol,
+		InCols:   inCols,
+	}
+	return TableRef{
+		Subquery: source.Subquery,
+		Name:     source.Name,
+		Alias:    alias,
+		Unpivot:  unpivot,
+	}, nil
 }

@@ -109,6 +109,9 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.InsertStmt:
 		return translateInsert(s)
 	case *parser.SelectStmt:
+		if err := checkUnsupportedTableOps(s.From); err != nil {
+			return "", err
+		}
 		if len(s.Compute) > 0 {
 			return translateSelectWithCompute(s)
 		}
@@ -180,6 +183,16 @@ func Statement(stmt parser.Statement) (string, error) {
 		return "", fmt.Errorf(
 			"unsupported: stored procedure '%s' is not available in CockroachDB TDS",
 			s.Procedure)
+	case *parser.ThrowStmt:
+		return "", nil
+	case *parser.GotoStmt:
+		return "", nil
+	case *parser.ReturnStmt:
+		return "", nil
+	case *parser.WaitforStmt:
+		return "", nil
+	case *parser.BeginTryCatchStmt:
+		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -332,13 +345,7 @@ func translateSelect(s *parser.SelectStmt) string {
 			b.WriteString(translateTableRef(ref))
 		}
 		for _, j := range s.Joins {
-			fmt.Fprintf(&b, " %s %s", j.Type, quoteIdent(j.Table.Name))
-			if j.Table.Alias != "" {
-				fmt.Fprintf(&b, " %s", quoteIdent(j.Table.Alias))
-			}
-			if j.Condition != nil {
-				fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
-			}
+			b.WriteString(translateJoinClause(j))
 		}
 	}
 	if s.Where != nil {
@@ -436,13 +443,7 @@ func TranslateComputeQueries(s *parser.SelectStmt) []string {
 				b.WriteString(translateTableRef(ref))
 			}
 			for _, j := range s.Joins {
-				fmt.Fprintf(&b, " %s %s", j.Type, quoteIdent(j.Table.Name))
-				if j.Table.Alias != "" {
-					fmt.Fprintf(&b, " %s", quoteIdent(j.Table.Alias))
-				}
-				if j.Condition != nil {
-					fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
-				}
+				b.WriteString(translateJoinClause(j))
 			}
 		}
 
@@ -477,6 +478,38 @@ func TranslateComputeQueries(s *parser.SelectStmt) []string {
 		queries = append(queries, b.String())
 	}
 	return queries
+}
+
+// checkUnsupportedTableOps checks if any table reference in the FROM clause
+// uses PIVOT or UNPIVOT, which are not yet translatable to CockroachDB SQL.
+func checkUnsupportedTableOps(refs []parser.TableRef) error {
+	for _, ref := range refs {
+		if ref.Pivot != nil {
+			return fmt.Errorf("unsupported: PIVOT is not available in CockroachDB TDS")
+		}
+		if ref.Unpivot != nil {
+			return fmt.Errorf("unsupported: UNPIVOT is not available in CockroachDB TDS")
+		}
+	}
+	return nil
+}
+
+// translateJoinClause converts a single JoinClause to CRDB SQL.
+// CROSS APPLY → CROSS JOIN LATERAL, OUTER APPLY → LEFT JOIN LATERAL ... ON true.
+func translateJoinClause(j parser.JoinClause) string {
+	var b strings.Builder
+	switch j.Type {
+	case parser.CrossApplyJoin:
+		fmt.Fprintf(&b, " CROSS JOIN LATERAL %s", translateTableRef(j.Table))
+	case parser.OuterApplyJoin:
+		fmt.Fprintf(&b, " LEFT JOIN LATERAL %s ON true", translateTableRef(j.Table))
+	default:
+		fmt.Fprintf(&b, " %s %s", j.Type, translateTableRef(j.Table))
+		if j.Condition != nil {
+			fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
+		}
+	}
+	return b.String()
 }
 
 // translateTableRef converts a table reference. Derived tables (subqueries in
@@ -647,11 +680,7 @@ func translateUpdate(s *parser.UpdateStmt) string {
 			b.WriteString(translateTableRef(ref))
 		}
 		for _, j := range s.Joins {
-			fmt.Fprintf(&b, " %s %s", j.Type,
-				translateTableRef(j.Table))
-			if j.Condition != nil {
-				fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
-			}
+			b.WriteString(translateJoinClause(j))
 		}
 	}
 	if s.Where != nil {
