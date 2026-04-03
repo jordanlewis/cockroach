@@ -39,10 +39,8 @@ SELECT LOWER('WORLD')
 ----
 world
 
-# LEN is T-SQL; CockroachDB uses length(). The TDS frontend
-# does not yet translate LEN→length, so this is expected to fail.
-# TODO(tds): add LEN translation.
-# query
-# SELECT LEN('test')
-# ----
-# 4
+# LEN is T-SQL; translated to length() by the TDS frontend.
+query
+SELECT LEN('test')
+----
+4
