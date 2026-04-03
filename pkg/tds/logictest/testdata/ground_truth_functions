@@ -1,0 +1,230 @@
+# Ground-truth function and expression tests from open-source Sybase
+# ASE drivers.
+#
+# These test cases document REAL Sybase function usage patterns and
+# type conversion behavior used by production drivers.
+#
+# Sources:
+#   - thda/tds (BSD-3-Clause, github.com/thda/tds)
+#     Copyright (c) 2019 The Go Authors
+#     File: stmt_test.go (TestSelect)
+#   - jamdb_sybase (MIT, github.com/erlangbureau/jamdb_sybase)
+#     Copyright (c) 2013 Sergiy Kostyushkin
+#     File: test/sql_query_SUITE.erl
+
+# ============================================================
+# CONVERT function with various types
+# Source: thda/tds TestSelect — "cast(X as TYPE)" patterns
+# Note: T-SQL CONVERT(type, expr) is equivalent to CAST(expr AS type).
+# ============================================================
+
+# Integer conversions.
+query
+SELECT CONVERT(INT, 42)
+----
+42
+
+query
+SELECT CONVERT(INT, -42)
+----
+-42
+
+query
+SELECT CONVERT(BIGINT, 9223372036854775807)
+----
+9223372036854775807
+
+# -9223372036854775808 (min int64) cannot be parsed: the T-SQL parser
+# treats it as unary minus applied to 9223372036854775808, which
+# overflows int64.
+query error=(invalid integer)
+SELECT CONVERT(BIGINT, -9223372036854775808)
+----
+
+query
+SELECT CONVERT(SMALLINT, 32767)
+----
+32767
+
+query
+SELECT CONVERT(SMALLINT, -32768)
+----
+-32768
+
+query
+SELECT CONVERT(TINYINT, 0)
+----
+0
+
+query
+SELECT CONVERT(TINYINT, 255)
+----
+255
+
+# Float conversions.
+# thda/tds: "cast(0.5 as float)" => float64(0.5).
+query
+SELECT CONVERT(FLOAT, 0.5)
+----
+0.5
+
+# thda/tds: "cast(0.5 as real)" => float32(0.5).
+query
+SELECT CONVERT(REAL, 0.5)
+----
+0.5
+
+# Decimal conversions.
+# thda/tds: "cast(0.5 as decimal(18,1))" => 0.5.
+query
+SELECT CONVERT(DECIMAL(18,1), 0.5)
+----
+0.5
+
+query
+SELECT CONVERT(DECIMAL(18,1), -0.5)
+----
+-0.5
+
+# thda/tds: "cast(-0.5 as numeric(18,1))".
+query
+SELECT CONVERT(NUMERIC(18,1), -0.5)
+----
+-0.5
+
+# thda/tds: "cast(-0.5 as numeric(18,2))".
+query
+SELECT CONVERT(NUMERIC(18,2), -0.5)
+----
+-0.5
+
+# thda/tds: "cast(4294967296 as numeric(20,0))".
+query
+SELECT CONVERT(NUMERIC(20,0), 4294967296)
+----
+4294967296
+
+# Money conversions.
+# thda/tds: "cast(1.2345 as money)".
+query
+SELECT CONVERT(MONEY, 1.2345)
+----
+1.2345
+
+# thda/tds: "cast(-1.2345 as money)".
+query
+SELECT CONVERT(MONEY, -1.2345)
+----
+-1.2345
+
+# thda/tds: "cast(1.2345 as smallmoney)".
+query
+SELECT CONVERT(SMALLMONEY, 1.2345)
+----
+1.2345
+
+# thda/tds: "cast(-1.2345 as smallmoney)".
+query
+SELECT CONVERT(SMALLMONEY, -1.2345)
+----
+-1.2345
+
+# String conversions.
+query
+SELECT CONVERT(VARCHAR(10), 'hello')
+----
+hello
+
+query
+SELECT CONVERT(CHAR(5), 'world')
+----
+world
+
+# BIT conversions.
+# thda/tds: "cast(1 as bit)" => true, "cast(0 as bit)" => false.
+query
+SELECT CONVERT(BIT, 1)
+----
+1
+
+query
+SELECT CONVERT(BIT, 0)
+----
+0
+
+# NULL conversions.
+query
+SELECT CONVERT(INT, NULL)
+----
+NULL
+
+query
+SELECT CONVERT(VARCHAR(10), NULL)
+----
+NULL
+
+query
+SELECT CONVERT(FLOAT, NULL)
+----
+NULL
+
+query
+SELECT CONVERT(DECIMAL(10,2), NULL)
+----
+NULL
+
+# ============================================================
+# Arithmetic expressions
+# Source: jamdb_sybase select() — "select 1 one, 2 two, 3 three"
+# Basic arithmetic that all drivers rely on.
+# ============================================================
+
+query
+SELECT 1 + 2
+----
+3
+
+query
+SELECT 10 - 3
+----
+7
+
+query
+SELECT 4 * 5
+----
+20
+
+query
+SELECT 10 / 3
+----
+3
+
+# ============================================================
+# String to integer conversion via CONVERT
+# Source: common T-SQL pattern used by all Sybase drivers
+# ============================================================
+
+query
+SELECT CONVERT(INT, '12345')
+----
+12345
+
+query
+SELECT CONVERT(VARCHAR, 54321)
+----
+54321
+
+# ============================================================
+# ISNULL function (Sybase equivalent of COALESCE for 2 args)
+# Source: common Sybase pattern
+# ============================================================
+
+query
+SELECT ISNULL(NULL, 42)
+----
+42
+
+query
+SELECT ISNULL(10, 42)
+----
+10

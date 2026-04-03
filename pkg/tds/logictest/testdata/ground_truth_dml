@@ -1,0 +1,298 @@
+# Ground-truth DML tests extracted from open-source Sybase ASE drivers.
+#
+# These test cases document REAL Sybase DML patterns used by production
+# drivers, including INSERT, SELECT, UPDATE, DELETE, and multi-statement
+# batches.
+#
+# Sources:
+#   - jamdb_sybase (MIT, github.com/erlangbureau/jamdb_sybase)
+#     Copyright (c) 2013 Sergiy Kostyushkin
+#     File: test/sql_query_SUITE.erl
+#   - thda/tds (BSD-3-Clause, github.com/thda/tds)
+#     Copyright (c) 2019 The Go Authors
+#     File: stmt_test.go
+
+# ============================================================
+# Basic SELECT expressions
+# Source: jamdb_sybase select() — "select 1 one, 2 two, 3 three"
+# Source: thda/tds TestSingleValue() — "select 1"
+# Source: thda/tds TestSelect() — various expressions
+# ============================================================
+
+# jamdb_sybase: "select 1 one, 2 two, 3 three" => [1, 2, 3].
+query colnames
+SELECT 1 AS one, 2 AS two, 3 AS three
+----
+one  two  three
+1  2  3
+
+# thda/tds: "select 1" => int64(1).
+query
+SELECT 1
+----
+1
+
+# thda/tds: select with negative integers.
+query
+SELECT -1
+----
+-1
+
+# ============================================================
+# SELECT with ORDER BY
+# Source: jamdb_sybase select_with_order_by()
+# ============================================================
+
+exec
+CREATE TABLE gt_order_test (val INT)
+----
+
+exec
+INSERT INTO gt_order_test VALUES (3)
+----
+
+exec
+INSERT INTO gt_order_test VALUES (1)
+----
+
+exec
+INSERT INTO gt_order_test VALUES (2)
+----
+
+query
+SELECT val FROM gt_order_test ORDER BY val
+----
+1
+2
+3
+
+exec
+DROP TABLE gt_order_test
+----
+
+# ============================================================
+# INSERT, UPDATE, DELETE cycle
+# Source: thda/tds TestAffectedRows() — full CRUD cycle
+# ============================================================
+
+exec
+CREATE TABLE gt_crud (bar INT)
+----
+
+# Empty table select.
+query
+SELECT COUNT(*) FROM gt_crud
+----
+0
+
+# Insert first row.
+exec
+INSERT INTO gt_crud (bar) VALUES (1)
+----
+
+query
+SELECT bar FROM gt_crud
+----
+1
+
+# Insert second row.
+exec
+INSERT INTO gt_crud (bar) VALUES (2)
+----
+
+query
+SELECT bar FROM gt_crud ORDER BY bar
+----
+1
+2
+
+# Update all rows.
+exec
+UPDATE gt_crud SET bar = 2
+----
+
+query
+SELECT bar FROM gt_crud ORDER BY bar
+----
+2
+2
+
+# Delete all rows.
+exec
+DELETE FROM gt_crud
+----
+
+query
+SELECT COUNT(*) FROM gt_crud
+----
+0
+
+exec
+DROP TABLE gt_crud
+----
+
+# ============================================================
+# Multi-result SELECT (multiple statements in one batch)
+# Source: jamdb_sybase multi_select()
+# "select 1 one, 2 two, 3 three select 1 one, 2 two, 3 three"
+# returns two identical result sets.
+#
+# Note: Our logictest framework processes one query directive at a
+# time, so we test the individual queries that would make up the batch.
+# ============================================================
+
+query colnames
+SELECT 1 AS one, 2 AS two, 3 AS three
+----
+one  two  three
+1  2  3
+
+query colnames
+SELECT 1 AS one, 2 AS two, 3 AS three
+----
+one  two  three
+1  2  3
+
+# ============================================================
+# SELECT with type casting (CONVERT)
+# Source: thda/tds TestSelect scan into interface{} — 50+ expressions
+# ============================================================
+
+# Integer casts.
+query
+SELECT CONVERT(INT, 1)
+----
+1
+
+query
+SELECT CONVERT(INT, -1)
+----
+-1
+
+query
+SELECT CONVERT(TINYINT, 1)
+----
+1
+
+query
+SELECT CONVERT(TINYINT, 255)
+----
+255
+
+query
+SELECT CONVERT(SMALLINT, 1)
+----
+1
+
+query
+SELECT CONVERT(SMALLINT, -1)
+----
+-1
+
+query
+SELECT CONVERT(BIGINT, 1)
+----
+1
+
+query
+SELECT CONVERT(BIGINT, -1)
+----
+-1
+
+# String casts.
+query
+SELECT CONVERT(VARCHAR(3), 'abc')
+----
+abc
+
+query
+SELECT CONVERT(CHAR(3), 'abc')
+----
+abc
+
+# ============================================================
+# NULL SELECT patterns
+# Source: thda/tds TestSelect — "cast(null as varchar(3))" => nil
+# Source: thda/tds TestQueryManyNullsRow — 8 nulls in one row
+# ============================================================
+
+query
+SELECT NULL
+----
+NULL
+
+query
+SELECT CONVERT(VARCHAR(3), NULL)
+----
+NULL
+
+# ============================================================
+# INSERT with IDENTITY and retrieval
+# Source: thda/tds TestIdentity()
+# Tests that IDENTITY auto-increments correctly.
+# ============================================================
+
+exec
+CREATE TABLE gt_identity_dml (bar INT IDENTITY(1,1) NOT NULL, baz INT)
+----
+
+exec
+INSERT INTO gt_identity_dml (baz) VALUES (10)
+----
+
+exec
+INSERT INTO gt_identity_dml (baz) VALUES (20)
+----
+
+query colnames
+SELECT bar, baz FROM gt_identity_dml ORDER BY bar
+----
+bar  baz
+1  10
+2  20
+
+exec
+DROP TABLE gt_identity_dml
+----
+
+# ============================================================
+# Multiple inserts into same table
+# Source: thda/tds TestMultipleInserts() — 5 inserts with values 0-4
+# ============================================================
+
+exec
+CREATE TABLE gt_multi_insert (val INT NULL)
+----
+
+exec
+INSERT INTO gt_multi_insert (val) VALUES (0)
+----
+
+exec
+INSERT INTO gt_multi_insert (val) VALUES (1)
+----
+
+exec
+INSERT INTO gt_multi_insert (val) VALUES (2)
+----
+
+exec
+INSERT INTO gt_multi_insert (val) VALUES (3)
+----
+
+exec
+INSERT INTO gt_multi_insert (val) VALUES (4)
+----
+
+query
+SELECT val FROM gt_multi_insert ORDER BY val
+----
+0
+1
+2
+3
+4
+
+exec
+DROP TABLE gt_multi_insert
+----
