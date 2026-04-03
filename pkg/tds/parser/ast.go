@@ -78,14 +78,18 @@ func (s *CreateDatabaseStmt) String() string {
 	return fmt.Sprintf("CREATE DATABASE %s", formatIdent(s.Database))
 }
 
-// DropTableStmt represents DROP TABLE <name>.
+// DropTableStmt represents DROP TABLE [IF EXISTS] <name>.
 type DropTableStmt struct {
-	Table string
+	Table    string
+	IfExists bool
 }
 
 func (*DropTableStmt) statementNode() {}
 
 func (s *DropTableStmt) String() string {
+	if s.IfExists {
+		return fmt.Sprintf("DROP TABLE IF EXISTS %s", formatIdent(s.Table))
+	}
 	return fmt.Sprintf("DROP TABLE %s", formatIdent(s.Table))
 }
 
@@ -551,6 +555,252 @@ func (e *CaseExpr) String() string {
 	}
 	b.WriteString(" END")
 	return b.String()
+}
+
+// AlterTableStmt represents ALTER TABLE <name> <cmd>.
+type AlterTableStmt struct {
+	Table string
+	Cmd   AlterTableCmd
+}
+
+func (*AlterTableStmt) statementNode() {}
+
+func (s *AlterTableStmt) String() string {
+	return fmt.Sprintf("ALTER TABLE %s %s", formatIdent(s.Table), s.Cmd)
+}
+
+// AlterTableCmd is the interface for ALTER TABLE sub-commands.
+type AlterTableCmd interface {
+	fmt.Stringer
+	alterTableCmd()
+}
+
+// AddColumnCmd represents ALTER TABLE ... ADD <column>.
+type AddColumnCmd struct {
+	Column ColumnDef
+}
+
+func (*AddColumnCmd) alterTableCmd() {}
+
+func (c *AddColumnCmd) String() string {
+	return fmt.Sprintf("ADD %s", c.Column.String())
+}
+
+// DropColumnCmd represents ALTER TABLE ... DROP COLUMN <name>.
+type DropColumnCmd struct {
+	Name string
+}
+
+func (*DropColumnCmd) alterTableCmd() {}
+
+func (c *DropColumnCmd) String() string {
+	return fmt.Sprintf("DROP COLUMN %s", formatIdent(c.Name))
+}
+
+// AlterColumnCmd represents ALTER TABLE ... ALTER COLUMN <name> <type>.
+type AlterColumnCmd struct {
+	Name     string
+	DataType string
+}
+
+func (*AlterColumnCmd) alterTableCmd() {}
+
+func (c *AlterColumnCmd) String() string {
+	return fmt.Sprintf("ALTER COLUMN %s %s", formatIdent(c.Name), c.DataType)
+}
+
+// ConstraintType identifies the kind of table constraint.
+type ConstraintType int
+
+const (
+	PrimaryKeyConstraint ConstraintType = iota + 1
+	ForeignKeyConstraint
+	UniqueConstraint
+	CheckConstraint
+)
+
+// AddConstraintCmd represents ALTER TABLE ... ADD CONSTRAINT <name> <def>.
+type AddConstraintCmd struct {
+	Name       string
+	Type       ConstraintType
+	Columns    []string
+	RefTable   string // FOREIGN KEY only
+	RefColumns []string
+	CheckExpr  Expr // CHECK only
+}
+
+func (*AddConstraintCmd) alterTableCmd() {}
+
+func (c *AddConstraintCmd) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ADD CONSTRAINT %s ", formatIdent(c.Name))
+	switch c.Type {
+	case PrimaryKeyConstraint:
+		b.WriteString("PRIMARY KEY (")
+		b.WriteString(strings.Join(c.Columns, ", "))
+		b.WriteString(")")
+	case ForeignKeyConstraint:
+		fmt.Fprintf(&b, "FOREIGN KEY (%s) REFERENCES %s (%s)",
+			strings.Join(c.Columns, ", "),
+			formatIdent(c.RefTable),
+			strings.Join(c.RefColumns, ", "))
+	case UniqueConstraint:
+		b.WriteString("UNIQUE (")
+		b.WriteString(strings.Join(c.Columns, ", "))
+		b.WriteString(")")
+	case CheckConstraint:
+		fmt.Fprintf(&b, "CHECK %s", c.CheckExpr)
+	}
+	return b.String()
+}
+
+// DropConstraintCmd represents ALTER TABLE ... DROP CONSTRAINT <name>.
+type DropConstraintCmd struct {
+	Name string
+}
+
+func (*DropConstraintCmd) alterTableCmd() {}
+
+func (c *DropConstraintCmd) String() string {
+	return fmt.Sprintf("DROP CONSTRAINT %s", formatIdent(c.Name))
+}
+
+// CreateIndexStmt represents CREATE [UNIQUE] INDEX <name> ON <table> (<cols>)
+// [INCLUDE (<cols>)].
+type CreateIndexStmt struct {
+	Unique  bool
+	Name    string
+	Table   string
+	Columns []string
+	Include []string
+}
+
+func (*CreateIndexStmt) statementNode() {}
+
+func (s *CreateIndexStmt) String() string {
+	var b strings.Builder
+	b.WriteString("CREATE ")
+	if s.Unique {
+		b.WriteString("UNIQUE ")
+	}
+	fmt.Fprintf(&b, "INDEX %s ON %s (%s)",
+		formatIdent(s.Name), formatIdent(s.Table),
+		strings.Join(s.Columns, ", "))
+	if len(s.Include) > 0 {
+		fmt.Fprintf(&b, " INCLUDE (%s)", strings.Join(s.Include, ", "))
+	}
+	return b.String()
+}
+
+// CreateViewStmt represents CREATE VIEW <name> AS <select>.
+type CreateViewStmt struct {
+	Name   string
+	Select *SelectStmt
+}
+
+func (*CreateViewStmt) statementNode() {}
+
+func (s *CreateViewStmt) String() string {
+	return fmt.Sprintf("CREATE VIEW %s AS %s", formatIdent(s.Name), s.Select)
+}
+
+// DropViewStmt represents DROP VIEW [IF EXISTS] <name>.
+type DropViewStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (*DropViewStmt) statementNode() {}
+
+func (s *DropViewStmt) String() string {
+	if s.IfExists {
+		return fmt.Sprintf("DROP VIEW IF EXISTS %s", formatIdent(s.Name))
+	}
+	return fmt.Sprintf("DROP VIEW %s", formatIdent(s.Name))
+}
+
+// DropIndexStmt represents DROP INDEX [IF EXISTS] <name> [ON <table>].
+type DropIndexStmt struct {
+	Name     string
+	Table    string
+	IfExists bool
+}
+
+func (*DropIndexStmt) statementNode() {}
+
+func (s *DropIndexStmt) String() string {
+	var b strings.Builder
+	b.WriteString("DROP INDEX ")
+	if s.IfExists {
+		b.WriteString("IF EXISTS ")
+	}
+	b.WriteString(formatIdent(s.Name))
+	if s.Table != "" {
+		fmt.Fprintf(&b, " ON %s", formatIdent(s.Table))
+	}
+	return b.String()
+}
+
+// DropProcedureStmt represents DROP PROCEDURE [IF EXISTS] <name>.
+type DropProcedureStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (*DropProcedureStmt) statementNode() {}
+
+func (s *DropProcedureStmt) String() string {
+	if s.IfExists {
+		return fmt.Sprintf("DROP PROCEDURE IF EXISTS %s", formatIdent(s.Name))
+	}
+	return fmt.Sprintf("DROP PROCEDURE %s", formatIdent(s.Name))
+}
+
+// TruncateTableStmt represents TRUNCATE TABLE <name>.
+type TruncateTableStmt struct {
+	Table string
+}
+
+func (*TruncateTableStmt) statementNode() {}
+
+func (s *TruncateTableStmt) String() string {
+	return fmt.Sprintf("TRUNCATE TABLE %s", formatIdent(s.Table))
+}
+
+// CreateProcedureStmt represents CREATE PROCEDURE <name> (body consumed but
+// not translated — CockroachDB TDS rejects these gracefully).
+type CreateProcedureStmt struct {
+	Name string
+}
+
+func (*CreateProcedureStmt) statementNode() {}
+
+func (s *CreateProcedureStmt) String() string {
+	return fmt.Sprintf("CREATE PROCEDURE %s ...", formatIdent(s.Name))
+}
+
+// CreateFunctionStmt represents CREATE FUNCTION <name> (body consumed but
+// not translated).
+type CreateFunctionStmt struct {
+	Name string
+}
+
+func (*CreateFunctionStmt) statementNode() {}
+
+func (s *CreateFunctionStmt) String() string {
+	return fmt.Sprintf("CREATE FUNCTION %s ...", formatIdent(s.Name))
+}
+
+// CreateTriggerStmt represents CREATE TRIGGER <name> (body consumed but
+// not translated).
+type CreateTriggerStmt struct {
+	Name string
+}
+
+func (*CreateTriggerStmt) statementNode() {}
+
+func (s *CreateTriggerStmt) String() string {
+	return fmt.Sprintf("CREATE TRIGGER %s ...", formatIdent(s.Name))
 }
 
 // formatIdent returns an identifier, quoting it with brackets if it contains

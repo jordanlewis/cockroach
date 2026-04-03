@@ -166,6 +166,33 @@ func (e *Executor) executeStatement(
 	case *parser.CreateTableStmt:
 		return e.executeDDL(ctx, crdbSQL, tw)
 
+	case *parser.DropTableStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.DropDatabaseStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.AlterTableStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.CreateIndexStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.CreateViewStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.DropViewStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.DropIndexStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.DropProcedureStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
+	case *parser.TruncateTableStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
 	case *parser.InsertStmt:
 		return e.executeDML(ctx, crdbSQL, tw)
 

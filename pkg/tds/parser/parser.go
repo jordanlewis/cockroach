@@ -64,6 +64,10 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseCreate()
 	case tokenDROP:
 		return p.parseDrop()
+	case tokenALTER:
+		return p.parseAlter()
+	case tokenTRUNCATE:
+		return p.parseTruncate()
 	case tokenINSERT:
 		return p.parseInsert()
 	case tokenDELETE:
@@ -87,7 +91,8 @@ func (p *parser) parseUse() (*UseStmt, error) {
 	return &UseStmt{Database: name}, nil
 }
 
-// parseCreate dispatches CREATE TABLE or CREATE DATABASE.
+// parseCreate dispatches CREATE TABLE, DATABASE, INDEX, VIEW, PROCEDURE,
+// FUNCTION, or TRIGGER.
 func (p *parser) parseCreate() (Statement, error) {
 	p.lex.next() // consume CREATE
 	switch p.lex.peek().typ {
@@ -97,24 +102,47 @@ func (p *parser) parseCreate() (Statement, error) {
 	case tokenDATABASE:
 		p.lex.next() // consume DATABASE
 		return p.parseCreateDatabase()
+	case tokenINDEX:
+		p.lex.next() // consume INDEX
+		return p.parseCreateIndex(false)
+	case tokenUNIQUE:
+		p.lex.next() // consume UNIQUE
+		if err := p.expect(tokenINDEX); err != nil {
+			return nil, err
+		}
+		return p.parseCreateIndex(true)
+	case tokenVIEW:
+		p.lex.next() // consume VIEW
+		return p.parseCreateView()
+	case tokenPROCEDURE:
+		p.lex.next() // consume PROCEDURE/PROC
+		return p.parseCreateProcedure()
+	case tokenFUNCTION:
+		p.lex.next() // consume FUNCTION
+		return p.parseCreateFunction()
+	case tokenTRIGGER:
+		p.lex.next() // consume TRIGGER
+		return p.parseCreateTrigger()
 	default:
 		return nil, p.error(fmt.Sprintf(
-			"expected TABLE or DATABASE after CREATE, got %q at position %d",
+			"expected TABLE, DATABASE, INDEX, VIEW, PROCEDURE, FUNCTION, or TRIGGER after CREATE, got %q at position %d",
 			p.lex.peek().val, p.lex.peek().pos))
 	}
 }
 
-// parseDrop dispatches DROP TABLE or DROP DATABASE.
+// parseDrop dispatches DROP TABLE, DATABASE, VIEW, INDEX, or PROCEDURE.
+// All support the optional IF EXISTS clause.
 func (p *parser) parseDrop() (Statement, error) {
 	p.lex.next() // consume DROP
 	switch p.lex.peek().typ {
 	case tokenTABLE:
 		p.lex.next() // consume TABLE
+		ifExists := p.tryIfExists()
 		name, err := p.parseTableName()
 		if err != nil {
 			return nil, err
 		}
-		return &DropTableStmt{Table: name}, nil
+		return &DropTableStmt{Table: name, IfExists: ifExists}, nil
 	case tokenDATABASE:
 		p.lex.next() // consume DATABASE
 		name, err := p.expectIdent()
@@ -122,11 +150,57 @@ func (p *parser) parseDrop() (Statement, error) {
 			return nil, err
 		}
 		return &DropDatabaseStmt{Database: name}, nil
+	case tokenVIEW:
+		p.lex.next() // consume VIEW
+		ifExists := p.tryIfExists()
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		return &DropViewStmt{Name: name, IfExists: ifExists}, nil
+	case tokenINDEX:
+		p.lex.next() // consume INDEX
+		ifExists := p.tryIfExists()
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt := &DropIndexStmt{Name: name, IfExists: ifExists}
+		if p.lex.peek().typ == tokenON {
+			p.lex.next() // consume ON
+			table, err := p.parseTableName()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Table = table
+		}
+		return stmt, nil
+	case tokenPROCEDURE:
+		p.lex.next() // consume PROCEDURE/PROC
+		ifExists := p.tryIfExists()
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		return &DropProcedureStmt{Name: name, IfExists: ifExists}, nil
 	default:
 		return nil, p.error(fmt.Sprintf(
-			"expected TABLE or DATABASE after DROP, got %q at position %d",
+			"expected TABLE, DATABASE, VIEW, INDEX, or PROCEDURE after DROP, got %q at position %d",
 			p.lex.peek().val, p.lex.peek().pos))
 	}
+}
+
+// tryIfExists consumes IF EXISTS if present and returns true, else false.
+func (p *parser) tryIfExists() bool {
+	if p.lex.peek().typ == tokenIF {
+		p.lex.next() // consume IF
+		// Best-effort: expect EXISTS but don't fail the whole parse.
+		if p.lex.peek().typ == tokenEXISTS {
+			p.lex.next()
+		}
+		return true
+	}
+	return false
 }
 
 // parseCreateDatabase parses: CREATE DATABASE <name>
@@ -1149,6 +1223,285 @@ func (p *parser) parseIdentOrFunc() (Expr, error) {
 	return &IdentExpr{Parts: parts}, nil
 }
 
+// parseAlter dispatches ALTER TABLE.
+func (p *parser) parseAlter() (Statement, error) {
+	p.lex.next() // consume ALTER
+	if p.lex.peek().typ == tokenTABLE {
+		p.lex.next() // consume TABLE
+		return p.parseAlterTable()
+	}
+	return nil, p.error(fmt.Sprintf(
+		"expected TABLE after ALTER, got %q at position %d",
+		p.lex.peek().val, p.lex.peek().pos))
+}
+
+// parseAlterTable parses ALTER TABLE <name> (ADD|DROP|ALTER) ...
+func (p *parser) parseAlterTable() (*AlterTableStmt, error) {
+	table, err := p.parseTableName()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &AlterTableStmt{Table: table}
+
+	switch p.lex.peek().typ {
+	case tokenADD:
+		p.lex.next() // consume ADD
+		if p.lex.peek().typ == tokenCONSTRAINT {
+			cmd, err := p.parseAddConstraint()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Cmd = cmd
+		} else {
+			col, err := p.parseColumnDef()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Cmd = &AddColumnCmd{Column: col}
+		}
+	case tokenDROP:
+		p.lex.next() // consume DROP
+		switch p.lex.peek().typ {
+		case tokenCOLUMN:
+			p.lex.next() // consume COLUMN
+			name, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Cmd = &DropColumnCmd{Name: name}
+		case tokenCONSTRAINT:
+			p.lex.next() // consume CONSTRAINT
+			name, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Cmd = &DropConstraintCmd{Name: name}
+		default:
+			return nil, p.error("expected COLUMN or CONSTRAINT after ALTER TABLE ... DROP")
+		}
+	case tokenALTER:
+		p.lex.next() // consume ALTER
+		if err := p.expect(tokenCOLUMN); err != nil {
+			return nil, err
+		}
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		dataType, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Cmd = &AlterColumnCmd{Name: name, DataType: dataType}
+	default:
+		return nil, p.error("expected ADD, DROP, or ALTER after ALTER TABLE <name>")
+	}
+
+	return stmt, nil
+}
+
+// parseAddConstraint parses ADD CONSTRAINT <name> (PRIMARY KEY|FOREIGN KEY|UNIQUE|CHECK).
+func (p *parser) parseAddConstraint() (*AddConstraintCmd, error) {
+	p.lex.next() // consume CONSTRAINT
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+
+	switch p.lex.peek().typ {
+	case tokenPRIMARY:
+		p.lex.next() // consume PRIMARY
+		if err := p.expect(tokenKEY); err != nil {
+			return nil, err
+		}
+		cols, err := p.parseColumnList()
+		if err != nil {
+			return nil, err
+		}
+		return &AddConstraintCmd{
+			Name: name, Type: PrimaryKeyConstraint, Columns: cols,
+		}, nil
+
+	case tokenFOREIGN:
+		p.lex.next() // consume FOREIGN
+		if err := p.expect(tokenKEY); err != nil {
+			return nil, err
+		}
+		cols, err := p.parseColumnList()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenREFERENCES); err != nil {
+			return nil, err
+		}
+		refTable, err := p.parseTableName()
+		if err != nil {
+			return nil, err
+		}
+		refCols, err := p.parseColumnList()
+		if err != nil {
+			return nil, err
+		}
+		return &AddConstraintCmd{
+			Name: name, Type: ForeignKeyConstraint,
+			Columns: cols, RefTable: refTable, RefColumns: refCols,
+		}, nil
+
+	case tokenUNIQUE:
+		p.lex.next() // consume UNIQUE
+		cols, err := p.parseColumnList()
+		if err != nil {
+			return nil, err
+		}
+		return &AddConstraintCmd{
+			Name: name, Type: UniqueConstraint, Columns: cols,
+		}, nil
+
+	case tokenCHECK:
+		p.lex.next() // consume CHECK
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &AddConstraintCmd{
+			Name: name, Type: CheckConstraint, CheckExpr: expr,
+		}, nil
+
+	default:
+		return nil, p.error("expected PRIMARY, FOREIGN, UNIQUE, or CHECK after CONSTRAINT <name>")
+	}
+}
+
+// parseColumnList parses a parenthesized, comma-separated list of column names:
+// (col1, col2, ...).
+func (p *parser) parseColumnList() ([]string, error) {
+	if err := p.expect(tokenLParen); err != nil {
+		return nil, err
+	}
+	var cols []string
+	for {
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, name)
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return nil, err
+	}
+	return cols, nil
+}
+
+// parseCreateIndex parses: [UNIQUE] INDEX <name> ON <table> (<cols>)
+// [INCLUDE (<cols>)]. The UNIQUE keyword is already consumed by parseCreate.
+func (p *parser) parseCreateIndex(unique bool) (*CreateIndexStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenON); err != nil {
+		return nil, err
+	}
+	table, err := p.parseTableName()
+	if err != nil {
+		return nil, err
+	}
+	cols, err := p.parseColumnList()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &CreateIndexStmt{
+		Unique: unique, Name: name, Table: table, Columns: cols,
+	}
+	if p.lex.peek().typ == tokenINCLUDE {
+		p.lex.next() // consume INCLUDE
+		stmt.Include, err = p.parseColumnList()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return stmt, nil
+}
+
+// parseCreateView parses: VIEW <name> AS SELECT ...
+func (p *parser) parseCreateView() (*CreateViewStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenAS); err != nil {
+		return nil, err
+	}
+	sel, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	return &CreateViewStmt{Name: name, Select: sel}, nil
+}
+
+// parseCreateProcedure parses CREATE PROCEDURE <name> and consumes the rest
+// of the body. CockroachDB TDS does not support stored procedures.
+func (p *parser) parseCreateProcedure() (*CreateProcedureStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	p.skipToEndOfStatement()
+	return &CreateProcedureStmt{Name: name}, nil
+}
+
+// parseCreateFunction parses CREATE FUNCTION <name> and consumes the rest
+// of the body. CockroachDB TDS does not support T-SQL functions.
+func (p *parser) parseCreateFunction() (*CreateFunctionStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	p.skipToEndOfStatement()
+	return &CreateFunctionStmt{Name: name}, nil
+}
+
+// parseCreateTrigger parses CREATE TRIGGER <name> and consumes the rest
+// of the body. CockroachDB TDS does not support triggers.
+func (p *parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	p.skipToEndOfStatement()
+	return &CreateTriggerStmt{Name: name}, nil
+}
+
+// skipToEndOfStatement consumes tokens until a statement terminator
+// (semicolon, GO, or EOF) is reached. Used to skip procedure/function/trigger
+// bodies that we parse but don't translate.
+func (p *parser) skipToEndOfStatement() {
+	for {
+		tok := p.lex.peek()
+		if tok.typ == tokenEOF || tok.typ == tokenSemicolon || tok.typ == tokenGO {
+			break
+		}
+		p.lex.next()
+	}
+}
+
+// parseTruncate parses: TRUNCATE TABLE <name>
+func (p *parser) parseTruncate() (*TruncateTableStmt, error) {
+	p.lex.next() // consume TRUNCATE
+	if err := p.expect(tokenTABLE); err != nil {
+		return nil, err
+	}
+	name, err := p.parseTableName()
+	if err != nil {
+		return nil, err
+	}
+	return &TruncateTableStmt{Table: name}, nil
+}
+
 // expect consumes the next token and returns an error if it doesn't match the
 // expected type.
 func (p *parser) expect(typ tokenType) error {
@@ -1190,7 +1543,12 @@ func isKeywordToken(typ tokenType) bool {
 		tokenCASE, tokenWHEN, tokenTHEN, tokenELSE, tokenEND,
 		tokenISNULL, tokenCONVERT, tokenGETDATE,
 		tokenJOIN, tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL,
-		tokenOUTER, tokenCROSS, tokenON:
+		tokenOUTER, tokenCROSS, tokenON,
+		tokenALTER, tokenCOLUMN, tokenCONSTRAINT, tokenINDEX,
+		tokenVIEW, tokenPROCEDURE, tokenFUNCTION, tokenTRIGGER,
+		tokenTRUNCATE, tokenIF, tokenEXISTS, tokenUNIQUE,
+		tokenINCLUDE, tokenREFERENCES, tokenPRIMARY, tokenKEY,
+		tokenFOREIGN, tokenCHECK, tokenADD:
 		return true
 	}
 	return false
@@ -1230,6 +1588,20 @@ func tokenName(typ tokenType) string {
 		return "BY"
 	case tokenVALUES:
 		return "VALUES"
+	case tokenAS:
+		return "AS"
+	case tokenCOLUMN:
+		return "COLUMN"
+	case tokenKEY:
+		return "KEY"
+	case tokenINDEX:
+		return "INDEX"
+	case tokenON:
+		return "ON"
+	case tokenEXISTS:
+		return "EXISTS"
+	case tokenREFERENCES:
+		return "REFERENCES"
 	default:
 		return fmt.Sprintf("token(%d)", typ)
 	}

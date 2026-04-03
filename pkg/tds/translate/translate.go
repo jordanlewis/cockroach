@@ -53,6 +53,9 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.CreateDatabaseStmt:
 		return translateCreateDatabase(s), nil
 	case *parser.DropTableStmt:
+		if s.IfExists {
+			return fmt.Sprintf("DROP TABLE IF EXISTS %s", quoteIdent(s.Table)), nil
+		}
 		return fmt.Sprintf("DROP TABLE %s", quoteIdent(s.Table)), nil
 	case *parser.DropDatabaseStmt:
 		return fmt.Sprintf("DROP DATABASE %s", quoteIdent(s.Database)), nil
@@ -66,6 +69,32 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateDelete(s), nil
 	case *parser.UpdateStmt:
 		return translateUpdate(s), nil
+	case *parser.AlterTableStmt:
+		return translateAlterTable(s), nil
+	case *parser.CreateIndexStmt:
+		return translateCreateIndex(s), nil
+	case *parser.CreateViewStmt:
+		return translateCreateView(s), nil
+	case *parser.TruncateTableStmt:
+		return fmt.Sprintf("TRUNCATE TABLE %s", quoteIdent(s.Table)), nil
+	case *parser.DropViewStmt:
+		if s.IfExists {
+			return fmt.Sprintf("DROP VIEW IF EXISTS %s", quoteIdent(s.Name)), nil
+		}
+		return fmt.Sprintf("DROP VIEW %s", quoteIdent(s.Name)), nil
+	case *parser.DropIndexStmt:
+		return translateDropIndex(s), nil
+	case *parser.DropProcedureStmt:
+		if s.IfExists {
+			return fmt.Sprintf("DROP PROCEDURE IF EXISTS %s", quoteIdent(s.Name)), nil
+		}
+		return fmt.Sprintf("DROP PROCEDURE %s", quoteIdent(s.Name)), nil
+	case *parser.CreateProcedureStmt:
+		return "", fmt.Errorf("unsupported: CREATE PROCEDURE is not available in CockroachDB TDS")
+	case *parser.CreateFunctionStmt:
+		return "", fmt.Errorf("unsupported: CREATE FUNCTION is not available in CockroachDB TDS")
+	case *parser.CreateTriggerStmt:
+		return "", fmt.Errorf("unsupported: CREATE TRIGGER is not available in CockroachDB TDS")
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -852,6 +881,114 @@ func translateBetween(e *parser.BetweenExpr) string {
 		op = "NOT BETWEEN"
 	}
 	return fmt.Sprintf("%s %s %s AND %s", expr, op, low, high)
+}
+
+// translateAlterTable converts a T-SQL ALTER TABLE to CRDB syntax. Key
+// differences: ADD column requires the COLUMN keyword in CRDB, and ALTER
+// COLUMN requires SET DATA TYPE.
+func translateAlterTable(s *parser.AlterTableStmt) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ALTER TABLE %s ", quoteIdent(s.Table))
+
+	switch cmd := s.Cmd.(type) {
+	case *parser.AddColumnCmd:
+		fmt.Fprintf(&b, "ADD COLUMN %s %s",
+			quoteIdent(cmd.Column.Name), mapDataType(cmd.Column.DataType))
+		if cmd.Column.Nullable != nil {
+			if *cmd.Column.Nullable {
+				b.WriteString(" NULL")
+			} else {
+				b.WriteString(" NOT NULL")
+			}
+		} else {
+			b.WriteString(" NULL") // Sybase default
+		}
+	case *parser.DropColumnCmd:
+		fmt.Fprintf(&b, "DROP COLUMN %s", quoteIdent(cmd.Name))
+	case *parser.AlterColumnCmd:
+		fmt.Fprintf(&b, "ALTER COLUMN %s SET DATA TYPE %s",
+			quoteIdent(cmd.Name), mapDataType(cmd.DataType))
+	case *parser.AddConstraintCmd:
+		translateAddConstraint(&b, cmd)
+	case *parser.DropConstraintCmd:
+		fmt.Fprintf(&b, "DROP CONSTRAINT %s", quoteIdent(cmd.Name))
+	}
+
+	return b.String()
+}
+
+// translateAddConstraint appends a constraint definition to the builder.
+func translateAddConstraint(b *strings.Builder, cmd *parser.AddConstraintCmd) {
+	fmt.Fprintf(b, "ADD CONSTRAINT %s ", quoteIdent(cmd.Name))
+	switch cmd.Type {
+	case parser.PrimaryKeyConstraint:
+		b.WriteString("PRIMARY KEY (")
+		writeQuotedColumns(b, cmd.Columns)
+		b.WriteString(")")
+	case parser.ForeignKeyConstraint:
+		b.WriteString("FOREIGN KEY (")
+		writeQuotedColumns(b, cmd.Columns)
+		fmt.Fprintf(b, ") REFERENCES %s (", quoteIdent(cmd.RefTable))
+		writeQuotedColumns(b, cmd.RefColumns)
+		b.WriteString(")")
+	case parser.UniqueConstraint:
+		b.WriteString("UNIQUE (")
+		writeQuotedColumns(b, cmd.Columns)
+		b.WriteString(")")
+	case parser.CheckConstraint:
+		fmt.Fprintf(b, "CHECK %s", translateExpr(cmd.CheckExpr))
+	}
+}
+
+func writeQuotedColumns(b *strings.Builder, cols []string) {
+	for i, col := range cols {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(quoteIdent(col))
+	}
+}
+
+// translateCreateIndex converts CREATE [UNIQUE] INDEX to CRDB syntax.
+// T-SQL INCLUDE is mapped to CockroachDB's STORING clause.
+func translateCreateIndex(s *parser.CreateIndexStmt) string {
+	var b strings.Builder
+	b.WriteString("CREATE ")
+	if s.Unique {
+		b.WriteString("UNIQUE ")
+	}
+	fmt.Fprintf(&b, "INDEX %s ON %s (",
+		quoteIdent(s.Name), quoteIdent(s.Table))
+	writeQuotedColumns(&b, s.Columns)
+	b.WriteString(")")
+	if len(s.Include) > 0 {
+		b.WriteString(" STORING (")
+		writeQuotedColumns(&b, s.Include)
+		b.WriteString(")")
+	}
+	return b.String()
+}
+
+// translateCreateView converts CREATE VIEW ... AS SELECT to CRDB syntax.
+func translateCreateView(s *parser.CreateViewStmt) string {
+	return fmt.Sprintf("CREATE VIEW %s AS %s",
+		quoteIdent(s.Name), translateSelect(s.Select))
+}
+
+// translateDropIndex converts T-SQL DROP INDEX to CRDB syntax.
+// T-SQL: DROP INDEX idx ON tbl → CRDB: DROP INDEX tbl@idx
+func translateDropIndex(s *parser.DropIndexStmt) string {
+	var b strings.Builder
+	b.WriteString("DROP INDEX ")
+	if s.IfExists {
+		b.WriteString("IF EXISTS ")
+	}
+	if s.Table != "" {
+		fmt.Fprintf(&b, "%s@%s", quoteIdent(s.Table), quoteIdent(s.Name))
+	} else {
+		b.WriteString(quoteIdent(s.Name))
+	}
+	return b.String()
 }
 
 // translateArgs translates a slice of expressions.

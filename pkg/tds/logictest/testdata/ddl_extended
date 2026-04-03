@@ -2,103 +2,121 @@
 # Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
 # These test T-SQL DDL statements beyond basic CREATE/DROP TABLE.
 
+# Setup: create tables needed for DDL tests.
+exec
+CREATE TABLE test_tbl (id INT NOT NULL, name VARCHAR(100) NULL, email VARCHAR(200) NULL, old_col INT NULL, col1 VARCHAR(100) NULL, amount INT NULL, ref_id INT NULL)
+----
+
+exec
+CREATE TABLE other_tbl (id INT NOT NULL)
+----
+
+exec
+CREATE TABLE users (id INT NOT NULL, name VARCHAR(100) NULL, active INT NULL)
+----
+
 # --- ALTER TABLE ---
 
-# ALTER TABLE ADD column (not yet supported by parser).
-exec error=(parse error)
+# ALTER TABLE ADD column.
+exec
 ALTER TABLE test_tbl ADD new_col INT
 ----
 
 # ALTER TABLE DROP column.
-exec error=(parse error)
+exec
 ALTER TABLE test_tbl DROP COLUMN old_col
 ----
 
 # ALTER TABLE ALTER COLUMN (change type).
-exec error=(parse error)
+exec
 ALTER TABLE test_tbl ALTER COLUMN col1 VARCHAR(200)
 ----
 
-# ALTER TABLE ADD CONSTRAINT (primary key).
-exec error=(parse error)
-ALTER TABLE test_tbl ADD CONSTRAINT pk_test PRIMARY KEY (id)
-----
-
-# ALTER TABLE ADD CONSTRAINT (foreign key).
-exec error=(parse error)
-ALTER TABLE test_tbl ADD CONSTRAINT fk_ref FOREIGN KEY (ref_id) REFERENCES other_tbl(id)
-----
-
-# ALTER TABLE ADD CONSTRAINT (unique).
-exec error=(parse error)
-ALTER TABLE test_tbl ADD CONSTRAINT uq_name UNIQUE (name)
-----
-
-# ALTER TABLE ADD CONSTRAINT (check).
-exec error=(parse error)
+# ALTER TABLE ADD CONSTRAINT (check) — added early so DROP CONSTRAINT can test it.
+exec
 ALTER TABLE test_tbl ADD CONSTRAINT ck_positive CHECK (amount > 0)
 ----
 
 # ALTER TABLE DROP CONSTRAINT.
-exec error=(parse error)
-ALTER TABLE test_tbl DROP CONSTRAINT pk_test
+exec
+ALTER TABLE test_tbl DROP CONSTRAINT ck_positive
+----
+
+# ALTER TABLE ADD CONSTRAINT (primary key).
+exec
+ALTER TABLE test_tbl ADD CONSTRAINT pk_test PRIMARY KEY (id)
+----
+
+# Set up PK on referenced table for foreign key test.
+exec
+ALTER TABLE other_tbl ADD CONSTRAINT pk_other PRIMARY KEY (id)
+----
+
+# ALTER TABLE ADD CONSTRAINT (foreign key).
+exec
+ALTER TABLE test_tbl ADD CONSTRAINT fk_ref FOREIGN KEY (ref_id) REFERENCES other_tbl(id)
+----
+
+# ALTER TABLE ADD CONSTRAINT (unique).
+exec
+ALTER TABLE test_tbl ADD CONSTRAINT uq_name UNIQUE (name)
 ----
 
 # --- CREATE INDEX ---
 
-# CREATE INDEX (not yet supported by parser).
-exec error=(parse error)
+# CREATE INDEX.
+exec
 CREATE INDEX idx_name ON test_tbl (name)
 ----
 
 # CREATE UNIQUE INDEX.
-exec error=(parse error)
+exec
 CREATE UNIQUE INDEX idx_email ON test_tbl (email)
 ----
 
-# CREATE INDEX with INCLUDE (covering index).
-exec error=(parse error)
+# CREATE INDEX with INCLUDE (covering index, translated to STORING in CRDB).
+exec
 CREATE INDEX idx_cover ON test_tbl (id) INCLUDE (name, email)
 ----
 
 # --- CREATE VIEW ---
 
-# CREATE VIEW (not yet supported by parser).
-exec error=(parse error)
+# CREATE VIEW.
+exec
 CREATE VIEW v_users AS SELECT id, name FROM users WHERE active = 1
 ----
 
 # --- CREATE PROCEDURE ---
 
-# CREATE PROCEDURE (not yet supported by parser).
-exec error=(parse error)
+# CREATE PROCEDURE (parsed but unsupported for execution).
+exec error=(unsupported)
 CREATE PROCEDURE sp_get_user @user_id INT AS SELECT * FROM users WHERE id = @user_id
 ----
 
 # --- CREATE FUNCTION ---
 
-# CREATE FUNCTION (scalar, not yet supported by parser).
-exec error=(parse error)
+# CREATE FUNCTION (parsed but unsupported for execution).
+exec error=(unsupported)
 CREATE FUNCTION fn_double(@val INT) RETURNS INT AS BEGIN RETURN @val * 2 END
 ----
 
 # --- CREATE TRIGGER ---
 
-# CREATE TRIGGER (not yet supported by parser).
-exec error=(parse error)
+# CREATE TRIGGER (parsed but unsupported for execution).
+exec error=(unsupported)
 CREATE TRIGGER tr_audit ON users AFTER INSERT AS INSERT INTO audit_log SELECT * FROM inserted
 ----
 
 # --- IF EXISTS variants ---
 
-# DROP TABLE IF EXISTS (not yet supported by parser).
-exec error=(parse error)
+# DROP TABLE IF EXISTS.
+exec
 DROP TABLE IF EXISTS nonexistent_table
 ----
 
 # --- TRUNCATE TABLE ---
 
-# TRUNCATE TABLE (not yet supported by parser).
-exec error=(parse error)
+# TRUNCATE TABLE.
+exec
 TRUNCATE TABLE test_tbl
 ----

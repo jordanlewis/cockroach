@@ -95,6 +95,27 @@ const (
 	tokenOUTER
 	tokenCROSS
 	tokenON
+
+	// Extended DDL keywords.
+	tokenALTER
+	tokenCOLUMN
+	tokenCONSTRAINT
+	tokenINDEX
+	tokenVIEW
+	tokenPROCEDURE
+	tokenFUNCTION
+	tokenTRIGGER
+	tokenTRUNCATE
+	tokenIF
+	tokenEXISTS
+	tokenUNIQUE
+	tokenINCLUDE
+	tokenREFERENCES
+	tokenPRIMARY
+	tokenKEY
+	tokenFOREIGN
+	tokenCHECK
+	tokenADD
 )
 
 var keywords = map[string]tokenType{
@@ -146,6 +167,28 @@ var keywords = map[string]tokenType{
 	"OUTER":    tokenOUTER,
 	"CROSS":    tokenCROSS,
 	"ON":       tokenON,
+
+	// Extended DDL keywords.
+	"ALTER":      tokenALTER,
+	"COLUMN":     tokenCOLUMN,
+	"CONSTRAINT": tokenCONSTRAINT,
+	"INDEX":      tokenINDEX,
+	"VIEW":       tokenVIEW,
+	"PROCEDURE":  tokenPROCEDURE,
+	"PROC":       tokenPROCEDURE, // T-SQL alias
+	"FUNCTION":   tokenFUNCTION,
+	"TRIGGER":    tokenTRIGGER,
+	"TRUNCATE":   tokenTRUNCATE,
+	"IF":         tokenIF,
+	"EXISTS":     tokenEXISTS,
+	"UNIQUE":     tokenUNIQUE,
+	"INCLUDE":    tokenINCLUDE,
+	"REFERENCES": tokenREFERENCES,
+	"PRIMARY":    tokenPRIMARY,
+	"KEY":        tokenKEY,
+	"FOREIGN":    tokenFOREIGN,
+	"CHECK":      tokenCHECK,
+	"ADD":        tokenADD,
 }
 
 // token represents a single lexical token from T-SQL input.
