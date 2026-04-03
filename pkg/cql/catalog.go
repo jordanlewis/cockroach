@@ -278,18 +278,56 @@ var systemVirtualSchemaTables = map[string]systemSchemaTable{
 	}},
 }
 
+// isSelectStar returns true when the column list represents SELECT *
+// (either empty or a single star selector).
+func isSelectStar(columns []parser.Selector) bool {
+	return len(columns) == 0 ||
+		(len(columns) == 1 && columns[0].Column == "*" && columns[0].Expr == nil)
+}
+
+// systemTableFromSQL returns a SQL FROM subquery for the given system
+// table. For system.local this provides a single-row subquery with all
+// column values; for peers tables it provides a zero-row subquery.
+// Returns ("", false) for unknown or unsupported system tables.
+func systemTableFromSQL(keyspace, table string) (string, bool) {
+	ks := strings.ToLower(keyspace)
+	tbl := strings.ToLower(table)
+	if ks != "system" {
+		return "", false
+	}
+	switch tbl {
+	case "local":
+		return systemLocalFromSQL(), true
+	case "peers", "peers_v2":
+		return systemPeersFromSQL(), true
+	default:
+		return "", false
+	}
+}
+
 // handleSystemSelect checks whether the SELECT targets a table in the
 // system, system_schema, or system_virtual_schema keyspace. If so, it
 // returns a synthetic result. Returns (result, true) when handled, or
 // (ExecuteResult{}, false) when the query should proceed through the
-// normal path. The db parameter is used to query CRDB for real
-// database names when populating system_schema.keyspaces. The where
-// parameter carries any WHERE clause filters from the parsed SELECT;
-// the cassandra-driver uses filtered queries like
-// "WHERE keyspace_name = 'ks' AND table_name = 'tbl'" during targeted
-// schema refreshes.
+// normal path.
+//
+// For SELECT * queries, full synthetic results are returned with all
+// columns. For non-star queries on system.local/peers tables,
+// handleSystemSelect returns false so the executor can translate the
+// query with a synthetic FROM subquery and apply proper column
+// projection and expression evaluation via the SQL engine.
+//
+// The db parameter is used to query CRDB for real database names when
+// populating system_schema.keyspaces. The where parameter carries any
+// WHERE clause filters from the parsed SELECT; the cassandra-driver
+// uses filtered queries like "WHERE keyspace_name = 'ks' AND
+// table_name = 'tbl'" during targeted schema refreshes.
 func handleSystemSelect(
-	ctx context.Context, db isql.DB, keyspace, table string, where []parser.WhereClause,
+	ctx context.Context,
+	db isql.DB,
+	keyspace, table string,
+	where []parser.WhereClause,
+	columns []parser.Selector,
 ) (ExecuteResult, bool) {
 	ks := strings.ToLower(keyspace)
 	tbl := strings.ToLower(table)
@@ -340,6 +378,12 @@ func handleSystemSelect(
 		return ExecuteResult{Body: body}, true
 
 	case "system":
+		// For non-star selects on system tables, let the executor
+		// handle projection via a SQL subquery rather than returning
+		// the full synthetic result with all columns.
+		if !isSelectStar(columns) {
+			return ExecuteResult{}, false
+		}
 		switch tbl {
 		case "local":
 			body, err := buildSystemLocalBody()
@@ -836,6 +880,41 @@ var fixedSchemaVersion = [16]byte{
 	0x00, 0x00, 0x40, 0x00, // version 4
 	0x80, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+}
+
+// systemLocalFromSQL returns a SQL FROM subquery that provides the
+// same single-row result as buildSystemLocalBody. This allows the SQL
+// executor to handle column projection and expression evaluation for
+// non-star SELECTs against system.local. The tokens column uses
+// NULL::STRING since CQL set<varchar> has no SQL equivalent; this is
+// acceptable because tokens is rarely projected individually.
+func systemLocalFromSQL() string {
+	return `(SELECT ` +
+		`'local' AS "key", ` +
+		`'COMPLETED' AS "bootstrapped", ` +
+		`'127.0.0.1'::INET AS "broadcast_address", ` +
+		`'cockroachdb' AS "cluster_name", ` +
+		`'3.4.5' AS "cql_version", ` +
+		`'datacenter1' AS "data_center", ` +
+		`'00000000-0000-4000-8000-000000000001'::UUID AS "host_id", ` +
+		`'127.0.0.1'::INET AS "listen_address", ` +
+		`'4' AS "native_protocol_version", ` +
+		`'org.apache.cassandra.dht.Murmur3Partitioner' AS "partitioner", ` +
+		`'rack1' AS "rack", ` +
+		`'4.0.0' AS "release_version", ` +
+		`'127.0.0.1'::INET AS "rpc_address", ` +
+		`'00000000-0000-4000-8000-000000000002'::UUID AS "schema_version", ` +
+		`NULL::STRING AS "tokens"` +
+		`) AS "local"`
+}
+
+// systemPeersFromSQL returns a SQL FROM subquery for system.peers that
+// produces zero rows. Peers tables always return empty results in this
+// CQL compatibility layer; the false WHERE clause ensures the SQL
+// executor returns no rows while still allowing column references to
+// resolve for projected SELECTs.
+func systemPeersFromSQL() string {
+	return `(SELECT 1 WHERE false) AS "peers"`
 }
 
 // buildSystemLocalBody builds a CQL RESULT Rows frame body for

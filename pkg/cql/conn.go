@@ -218,7 +218,7 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 		if stmt, parseErr := parser.Parse(query); parseErr == nil {
 			if sel, ok := stmt.(*parser.SelectStatement); ok {
 				if result, handled := handleSystemSelect(
-					ctx, nil, sel.Keyspace, sel.Table, sel.Where,
+					ctx, nil, sel.Keyspace, sel.Table, sel.Where, sel.Columns,
 				); handled {
 					if result.NewKeyspace != "" {
 						c.keyspace = result.NewKeyspace
@@ -361,7 +361,7 @@ func (c *conn) handleExecute(ctx context.Context, s *Server, frame cqlwire.Frame
 		if parsedStmt, parseErr := parser.Parse(query); parseErr == nil {
 			if sel, selOK := parsedStmt.(*parser.SelectStatement); selOK {
 				if result, handled := handleSystemSelect(
-					ctx, nil, sel.Keyspace, sel.Table, sel.Where,
+					ctx, nil, sel.Keyspace, sel.Table, sel.Where, sel.Columns,
 				); handled {
 					if result.NewKeyspace != "" {
 						c.keyspace = result.NewKeyspace

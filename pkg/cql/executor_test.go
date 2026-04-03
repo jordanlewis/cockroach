@@ -475,3 +475,105 @@ func TestExecutorSelectWithNulls(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, val)
 }
+
+func TestExecutorSystemLocalNonStarSelect(t *testing.T) {
+	// SELECT now() FROM system.local should go through the SQL executor
+	// rather than returning all synthetic columns.
+	mock := &mockExecutor{
+		queryCols: colinfo.ResultColumns{
+			{Name: "system.now()", Typ: types.String},
+		},
+		queryRows: []tree.Datums{
+			{tree.NewDString("2024-01-01T00:00:00Z")},
+		},
+	}
+	db := &mockDB{exec: mock}
+	exec := NewExecutor(db)
+	ctx := context.Background()
+
+	result := exec.ExecuteQuery(ctx,
+		"SELECT now() FROM system.local", "", username.RootUserName())
+	require.False(t, result.IsError)
+	require.NotEmpty(t, mock.execSQL,
+		"non-star system.local query should reach SQL executor")
+	require.Contains(t, mock.execSQL, "system.now()")
+
+	r := bytes.NewReader(result.Body)
+	kind, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), colCount,
+		"SELECT now() FROM system.local should return 1 column, not all")
+}
+
+func TestExecutorSystemLocalColumnProjection(t *testing.T) {
+	// SELECT cluster_name FROM system.local should project only that
+	// column, not all 15+ columns.
+	mock := &mockExecutor{
+		queryCols: colinfo.ResultColumns{
+			{Name: "cluster_name", Typ: types.String},
+		},
+		queryRows: []tree.Datums{
+			{tree.NewDString("cockroachdb")},
+		},
+	}
+	db := &mockDB{exec: mock}
+	exec := NewExecutor(db)
+	ctx := context.Background()
+
+	result := exec.ExecuteQuery(ctx,
+		"SELECT cluster_name FROM system.local", "", username.RootUserName())
+	require.False(t, result.IsError)
+	require.NotEmpty(t, mock.execSQL,
+		"projected system.local query should reach SQL executor")
+	require.Contains(t, mock.execSQL, `"cluster_name"`)
+	require.Contains(t, mock.execSQL, "cockroachdb")
+
+	r := bytes.NewReader(result.Body)
+	kind, _ := cqlwire.ReadInt(r)
+	require.Equal(t, resultKindRows, kind)
+
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	require.Equal(t, int32(1), colCount)
+}
+
+func TestExecutorSystemPeersNonStarSelect(t *testing.T) {
+	// SELECT now() FROM system.peers should return 0 rows
+	// (peers always empty in this CQL layer).
+	mock := &mockExecutor{
+		queryCols: colinfo.ResultColumns{},
+		queryRows: nil,
+	}
+	db := &mockDB{exec: mock}
+	exec := NewExecutor(db)
+	ctx := context.Background()
+
+	result := exec.ExecuteQuery(ctx,
+		"SELECT now() FROM system.peers", "", username.RootUserName())
+	require.False(t, result.IsError)
+	require.NotEmpty(t, mock.execSQL,
+		"non-star system.peers query should reach SQL executor")
+}
+
+func TestExecutorSystemLocalStarStillSynthetic(t *testing.T) {
+	// SELECT * FROM system.local should still use the synthetic path
+	// (not reach the SQL executor).
+	mock := &mockExecutor{}
+	db := &mockDB{exec: mock}
+	exec := NewExecutor(db)
+	ctx := context.Background()
+
+	result := exec.ExecuteQuery(ctx,
+		"SELECT * FROM system.local", "", username.RootUserName())
+	require.False(t, result.IsError)
+	require.Empty(t, mock.execSQL,
+		"SELECT * FROM system.local should not reach SQL executor")
+
+	kind := readResultKind(t, result.Body)
+	require.Equal(t, resultKindRows, kind)
+}

@@ -605,27 +605,27 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "toTimestamp",
 			cql:  "SELECT toTimestamp(uid) FROM t",
-			want: `SELECT now()::TIMESTAMPTZ FROM "t"`,
+			want: `SELECT now()::TIMESTAMPTZ AS "system.totimestamp(uid)" FROM "t"`,
 		},
 		{
 			name: "toDate",
 			cql:  "SELECT toDate(ts) FROM t",
-			want: `SELECT CAST(CAST("ts" AS DATE) AS TIMESTAMPTZ) FROM "t"`,
+			want: `SELECT CAST(CAST("ts" AS DATE) AS TIMESTAMPTZ) AS "system.todate(ts)" FROM "t"`,
 		},
 		{
 			name: "toUnixTimestamp",
 			cql:  "SELECT toUnixTimestamp(ts) FROM t",
-			want: `SELECT CAST(extract(epoch FROM "ts") AS INT8) FROM "t"`,
+			want: `SELECT CAST(extract(epoch FROM "ts") AS INT8) AS "system.tounixtimestamp(ts)" FROM "t"`,
 		},
 		{
 			name: "dateOf",
 			cql:  "SELECT dateOf(uid) FROM t",
-			want: `SELECT now()::TIMESTAMPTZ FROM "t"`,
+			want: `SELECT now()::TIMESTAMPTZ AS "system.dateof(uid)" FROM "t"`,
 		},
 		{
 			name: "unixTimestampOf",
 			cql:  "SELECT unixTimestampOf(uid) FROM t",
-			want: `SELECT CAST(extract(epoch FROM now()) AS INT8) FROM "t"`,
+			want: `SELECT CAST(extract(epoch FROM now()) AS INT8) AS "system.unixtimestampof(uid)" FROM "t"`,
 		},
 		{
 			name: "minTimeuuid",
@@ -640,7 +640,7 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "token single key",
 			cql:  "SELECT token(pk) FROM t",
-			want: `SELECT fnv32a(CAST(CAST("pk" AS STRING) AS BYTES)) FROM "t"`,
+			want: `SELECT fnv32a(CAST(CAST("pk" AS STRING) AS BYTES)) AS "system.token(pk)" FROM "t"`,
 		},
 		{
 			name: "token in where",
@@ -650,37 +650,37 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "writetime",
 			cql:  "SELECT writetime(val) FROM t",
-			want: `SELECT 0::INT8 FROM "t"`,
+			want: `SELECT 0::INT8 AS "system.writetime(val)" FROM "t"`,
 		},
 		{
 			name: "ttl",
 			cql:  "SELECT ttl(val) FROM t",
-			want: `SELECT NULL::INT4 FROM "t"`,
+			want: `SELECT NULL::INT4 AS "system.ttl(val)" FROM "t"`,
 		},
 		{
 			name: "textAsBlob",
 			cql:  "SELECT textAsBlob(val) FROM t",
-			want: `SELECT CAST(CAST("val" AS STRING) AS BYTES) FROM "t"`,
+			want: `SELECT CAST(CAST("val" AS STRING) AS BYTES) AS "system.textasblob(val)" FROM "t"`,
 		},
 		{
 			name: "blobAsText",
 			cql:  "SELECT blobAsText(val) FROM t",
-			want: `SELECT CAST("val" AS STRING) FROM "t"`,
+			want: `SELECT CAST("val" AS STRING) AS "system.blobastext(val)" FROM "t"`,
 		},
 		{
 			name: "intAsBlob",
 			cql:  "SELECT intAsBlob(pk) FROM t",
-			want: `SELECT CAST(CAST("pk" AS STRING) AS BYTES) FROM "t"`,
+			want: `SELECT CAST(CAST("pk" AS STRING) AS BYTES) AS "system.intasblob(pk)" FROM "t"`,
 		},
 		{
 			name: "blobAsInt",
 			cql:  "SELECT blobAsInt(val) FROM t",
-			want: `SELECT CAST("val" AS INT4) FROM "t"`,
+			want: `SELECT CAST("val" AS INT4) AS "system.blobasint(val)" FROM "t"`,
 		},
 		{
 			name: "fromJson",
 			cql:  "SELECT fromJson(val) FROM t",
-			want: `SELECT CAST("val" AS JSONB) FROM "t"`,
+			want: `SELECT CAST("val" AS JSONB) AS "system.fromjson(val)" FROM "t"`,
 		},
 	}
 	for _, tt := range tests {
@@ -857,6 +857,87 @@ func TestTranslateUpdateStaticPropagation(t *testing.T) {
 	}
 }
 
+func TestTranslateSelectWithFrom(t *testing.T) {
+	tests := []struct {
+		name       string
+		cql        string
+		fromClause string
+		want       string
+	}{
+		{
+			name:       "function with no from",
+			cql:        "SELECT now() FROM system.local",
+			fromClause: "",
+			want:       `SELECT now() AS "system.now()"`,
+		},
+		{
+			name:       "function with from subquery",
+			cql:        "SELECT now() FROM system.local",
+			fromClause: `(SELECT 1) AS "local"`,
+			want:       `SELECT now() AS "system.now()" FROM (SELECT 1) AS "local"`,
+		},
+		{
+			name:       "column with from subquery",
+			cql:        "SELECT cluster_name FROM system.local",
+			fromClause: `(SELECT 'cockroachdb' AS "cluster_name") AS "local"`,
+			want:       `SELECT "cluster_name" FROM (SELECT 'cockroachdb' AS "cluster_name") AS "local"`,
+		},
+		{
+			name:       "mixed function and column",
+			cql:        "SELECT key, now() FROM system.local",
+			fromClause: `(SELECT 'local' AS "key") AS "local"`,
+			want:       `SELECT "key", now() AS "system.now()" FROM (SELECT 'local' AS "key") AS "local"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			sel := stmt.(*parser.SelectStatement)
+			result, err := TranslateSelectWithFrom(sel.Columns, tt.fromClause)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestCqlFuncAlias(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "now no args",
+			cql:  "SELECT now() FROM t",
+			want: "system.now()",
+		},
+		{
+			name: "single arg",
+			cql:  "SELECT min(age) FROM t",
+			want: "system.min(age)",
+		},
+		{
+			name: "multiple args",
+			cql:  "SELECT token(id, name) FROM t",
+			want: "system.token(id, name)",
+		},
+		{
+			name: "count star",
+			cql:  "SELECT count(*) FROM t",
+			want: "system.count(*)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			sel := stmt.(*parser.SelectStatement)
+			fc := sel.Columns[0].Expr.(*parser.FunctionCall)
+			require.Equal(t, tt.want, cqlFuncAlias(fc))
+		})
+	}
+}
 func TestTranslateRoundTrip(t *testing.T) {
 	// Verify that parsing a CQL statement and translating it produces valid SQL.
 	cqlStatements := []string{

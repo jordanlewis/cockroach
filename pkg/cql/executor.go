@@ -86,15 +86,39 @@ func (e *Executor) ExecuteQuery(
 		}
 	}
 
+	// Compute override early so it is available for projected system
+	// table queries that need to execute SQL.
+	override := sessiondata.InternalExecutorOverride{
+		User: user,
+	}
+	if keyspace != "" {
+		override.Database = keyspace
+	}
+
 	// Intercept system and system_schema queries. cqlsh and other CQL
 	// drivers query system.local, system.peers, and system_schema.*
 	// tables during startup. We return synthetic results for these
 	// since CRDB does not have Cassandra system tables.
+	//
+	// For non-star SELECTs on system.local/peers, handleSystemSelect
+	// returns false so we can translate the query with a synthetic
+	// FROM subquery and execute it through the SQL engine, giving us
+	// proper column projection and expression evaluation.
 	if sel, ok := stmt.(*parser.SelectStatement); ok {
 		if res, handled := handleSystemSelect(
-			ctx, e.db, sel.Keyspace, sel.Table, sel.Where,
+			ctx, e.db, sel.Keyspace, sel.Table, sel.Where, sel.Columns,
 		); handled {
 			return res
+		}
+		// Non-star select on a system table: translate the SELECT
+		// list with a FROM subquery that provides the synthetic row
+		// data, then execute through the SQL engine.
+		if fromSQL, ok := systemTableFromSQL(sel.Keyspace, sel.Table); ok {
+			result, err := translate.TranslateSelectWithFrom(sel.Columns, fromSQL)
+			if err != nil {
+				return errorResult(errCodeInvalid, err.Error())
+			}
+			return e.executeSelect(ctx, result, override)
 		}
 	}
 
@@ -102,13 +126,6 @@ func (e *Executor) ExecuteQuery(
 	result, err := translate.TranslateWithSchema(stmt, e.schema)
 	if err != nil {
 		return errorResult(errCodeInvalid, err.Error())
-	}
-
-	override := sessiondata.InternalExecutorOverride{
-		User: user,
-	}
-	if keyspace != "" {
-		override.Database = keyspace
 	}
 
 	switch s := stmt.(type) {

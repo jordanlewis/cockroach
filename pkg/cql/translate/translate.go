@@ -618,6 +618,10 @@ func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, 
 
 // writeSelectColumns writes the column list from a SELECT statement's
 // selectors. Shared by translateSelect and translateSelectPPL.
+//
+// Function call selectors without an explicit alias get an automatic
+// Cassandra-style alias of the form "system.<func>(<args>)" (W8). This
+// matches real Cassandra's column naming convention for function results.
 func writeSelectColumns(
 	sb *strings.Builder, columns []parser.Selector, params *[]interface{}, paramIdx *int,
 ) error {
@@ -634,6 +638,12 @@ func writeSelectColumns(
 			if sel.Alias != "" {
 				sb.WriteString(" AS ")
 				sb.WriteString(quoteIdent(sel.Alias))
+			} else if fc, ok := sel.Expr.(*parser.FunctionCall); ok {
+				// Cassandra names function result columns as
+				// "system.<func>(<args>)" when no explicit alias is given.
+				sb.WriteString(` AS "`)
+				sb.WriteString(cqlFuncAlias(fc))
+				sb.WriteString(`"`)
 			}
 			if p != nil {
 				*params = append(*params, p)
@@ -649,6 +659,57 @@ func writeSelectColumns(
 		}
 	}
 	return nil
+}
+
+// cqlFuncAlias generates a Cassandra-style column name for a function
+// call result. Cassandra names unaliased function result columns as
+// "system.<func>(<args>)" where func is the original CQL function name
+// (not the translated SQL name) and args are the original CQL argument
+// expressions.
+func cqlFuncAlias(fc *parser.FunctionCall) string {
+	var sb strings.Builder
+	sb.WriteString("system.")
+	sb.WriteString(strings.ToLower(fc.Name))
+	sb.WriteByte('(')
+	for i, arg := range fc.Args {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		switch a := arg.(type) {
+		case *parser.ColumnRef:
+			sb.WriteString(a.Name)
+		case *parser.StarExpr:
+			sb.WriteByte('*')
+		case *parser.FunctionCall:
+			sb.WriteString(cqlFuncAlias(a))
+		default:
+			sb.WriteByte('?')
+		}
+	}
+	sb.WriteByte(')')
+	return sb.String()
+}
+
+// TranslateSelectWithFrom translates a CQL SELECT column list and
+// appends the given fromClause instead of deriving one from a table
+// reference. If fromClause is empty, no FROM is emitted, producing a
+// standalone SELECT expression (e.g. "SELECT now()"). This is used
+// for projected system table queries where the real table does not
+// exist in CRDB.
+func TranslateSelectWithFrom(columns []parser.Selector, fromClause string) (Result, error) {
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("SELECT ")
+	if err := writeSelectColumns(&sb, columns, &params, &paramIdx); err != nil {
+		return Result{}, err
+	}
+	if fromClause != "" {
+		sb.WriteString(" FROM ")
+		sb.WriteString(fromClause)
+	}
+	return Result{SQL: sb.String(), Params: params}, nil
 }
 
 // writeWhereClauses writes WHERE conditions to sb, handling both plain column
