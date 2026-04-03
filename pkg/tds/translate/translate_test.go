@@ -713,3 +713,316 @@ func TestSplitTypeArgs(t *testing.T) {
 		})
 	}
 }
+
+// Phase 2 translate tests: subqueries, UNION, CTE, window functions, OFFSET-FETCH.
+
+func TestTranslateSubquery(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "scalar subquery in SELECT",
+			input:    "SELECT (SELECT MAX(id) FROM orders) AS max_id",
+			expected: "SELECT (SELECT MAX(id) FROM orders) AS max_id",
+		},
+		{
+			name:     "subquery in WHERE",
+			input:    "SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users)",
+			expected: "SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateExists(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "exists",
+			input:    "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+			expected: "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+		},
+		{
+			name:     "not exists",
+			input:    "SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+			expected: "SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateINSubquery(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "in subquery",
+			input:    "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)",
+			expected: "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)",
+		},
+		{
+			name:     "not in subquery",
+			input:    "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM banned)",
+			expected: "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM banned)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateDerivedTable(t *testing.T) {
+	batch, err := parser.Parse("SELECT sub.name FROM (SELECT name FROM users WHERE age > 21) sub")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "SELECT sub.name FROM (SELECT name FROM users WHERE age > 21) sub", results[0])
+}
+
+func TestTranslateAnyAll(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "any",
+			input:    "SELECT * FROM t WHERE x > ANY (SELECT y FROM t2)",
+			expected: "SELECT * FROM t WHERE x > ANY (SELECT y FROM t2)",
+		},
+		{
+			name:     "all",
+			input:    "SELECT * FROM t WHERE x = ALL (SELECT y FROM t2)",
+			expected: "SELECT * FROM t WHERE x = ALL (SELECT y FROM t2)",
+		},
+		{
+			name:     "some translated to any",
+			input:    "SELECT * FROM t WHERE x < SOME (SELECT y FROM t2)",
+			expected: "SELECT * FROM t WHERE x < ANY (SELECT y FROM t2)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateUnion(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "union",
+			input:    "SELECT name FROM users UNION SELECT name FROM admins",
+			expected: "SELECT name FROM users UNION SELECT name FROM admins",
+		},
+		{
+			name:     "union all",
+			input:    "SELECT name FROM users UNION ALL SELECT name FROM admins",
+			expected: "SELECT name FROM users UNION ALL SELECT name FROM admins",
+		},
+		{
+			name:     "intersect",
+			input:    "SELECT id FROM users INTERSECT SELECT id FROM admins",
+			expected: "SELECT id FROM users INTERSECT SELECT id FROM admins",
+		},
+		{
+			name:     "except",
+			input:    "SELECT id FROM users EXCEPT SELECT id FROM banned",
+			expected: "SELECT id FROM users EXCEPT SELECT id FROM banned",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateCompoundWithOrderBy(t *testing.T) {
+	batch, err := parser.Parse("SELECT a FROM t1 UNION ALL SELECT b FROM t2 ORDER BY 1 ASC")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "SELECT a FROM t1 UNION ALL SELECT b FROM t2 ORDER BY 1 ASC", results[0])
+}
+
+func TestTranslateCTE(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "simple cte",
+			input:    "WITH active AS (SELECT * FROM users WHERE active = 1) SELECT * FROM active",
+			expected: "WITH active AS (SELECT * FROM users WHERE active = 1) SELECT * FROM active",
+		},
+		{
+			name: "multiple ctes",
+			input: `WITH
+				a AS (SELECT 1 AS x),
+				b AS (SELECT 2 AS y)
+				SELECT * FROM a, b`,
+			expected: "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS y) SELECT * FROM a, b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateWindowFunction(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "row_number",
+			input:    "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM users",
+			expected: "SELECT ROW_NUMBER() OVER (ORDER BY id ASC) AS rn FROM users",
+		},
+		{
+			name:     "rank with partition",
+			input:    "SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM emp",
+			expected: "SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM emp",
+		},
+		{
+			name:     "dense_rank",
+			input:    "SELECT DENSE_RANK() OVER (ORDER BY score DESC) FROM students",
+			expected: "SELECT DENSE_RANK() OVER (ORDER BY score DESC) FROM students",
+		},
+		{
+			name:     "ntile",
+			input:    "SELECT NTILE(4) OVER (ORDER BY revenue) FROM sales",
+			expected: "SELECT NTILE(4) OVER (ORDER BY revenue ASC) FROM sales",
+		},
+		{
+			name:     "count window",
+			input:    "SELECT COUNT(*) OVER (PARTITION BY dept) FROM emp",
+			expected: "SELECT COUNT(*) OVER (PARTITION BY dept) FROM emp",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateOffsetFetch(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "offset fetch",
+			input:    "SELECT * FROM users ORDER BY id OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY",
+			expected: "SELECT * FROM users ORDER BY id ASC LIMIT 5 OFFSET 10",
+		},
+		{
+			name:     "offset only",
+			input:    "SELECT * FROM users ORDER BY id OFFSET 20 ROWS",
+			expected: "SELECT * FROM users ORDER BY id ASC OFFSET 20",
+		},
+		{
+			name:     "offset fetch first",
+			input:    "SELECT * FROM users ORDER BY id OFFSET 0 ROW FETCH FIRST 10 ROW ONLY",
+			expected: "SELECT * FROM users ORDER BY id ASC LIMIT 10 OFFSET 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateTopVsFetch(t *testing.T) {
+	// When FETCH is present, it takes precedence over TOP for LIMIT.
+	batch, err := parser.Parse("SELECT TOP 100 * FROM users ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	// FETCH → LIMIT 10, TOP is ignored.
+	require.Contains(t, results[0], "LIMIT 10")
+	require.NotContains(t, results[0], "LIMIT 100")
+}
+
+func TestTranslateISNULLInSubquery(t *testing.T) {
+	// Verify that ISNULL inside a subquery is still translated to COALESCE.
+	batch, err := parser.Parse("SELECT * FROM users WHERE id IN (SELECT ISNULL(uid, 0) FROM orders)")
+	require.NoError(t, err)
+	results, err := Batch(batch)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Contains(t, results[0], "COALESCE(uid, 0)")
+	require.NotContains(t, results[0], "ISNULL")
+}

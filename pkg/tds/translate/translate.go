@@ -13,6 +13,7 @@
 //     default-nullable semantics (columns are nullable unless explicitly
 //     declared NOT NULL).
 //   - SELECT TOP N → LIMIT N
+//   - OFFSET-FETCH → LIMIT/OFFSET
 //   - Bracket-quoted identifiers [name] → double-quoted identifiers "name"
 //   - ISNULL(a,b) → COALESCE(a,b)
 //   - CONVERT(type, expr) → CAST(expr AS type)
@@ -21,6 +22,11 @@
 //   - @@ROWCOUNT → crdb_internal.num_rows_affected (placeholder)
 //   - @@IDENTITY → lastval()
 //   - @@VERSION → version()
+//   - UNION/INTERSECT/EXCEPT → pass-through
+//   - WITH (CTEs) → pass-through
+//   - Subqueries, EXISTS, ANY/ALL → pass-through
+//   - Window functions (OVER) → pass-through
+//   - SOME → ANY (T-SQL synonym)
 package translate
 
 import (
@@ -95,6 +101,10 @@ func Statement(stmt parser.Statement) (string, error) {
 		return "", fmt.Errorf("unsupported: CREATE FUNCTION is not available in CockroachDB TDS")
 	case *parser.CreateTriggerStmt:
 		return "", fmt.Errorf("unsupported: CREATE TRIGGER is not available in CockroachDB TDS")
+	case *parser.CompoundSelectStmt:
+		return translateCompoundSelect(s)
+	case *parser.WithStmt:
+		return translateWith(s)
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -174,8 +184,9 @@ func translateInsert(s *parser.InsertStmt) string {
 	return b.String()
 }
 
-// translateSelect converts a T-SQL SELECT (with TOP, WHERE, ORDER BY) to CRDB
-// syntax. TOP N is moved to a trailing LIMIT N clause.
+// translateSelect converts a T-SQL SELECT (with TOP, WHERE, ORDER BY,
+// OFFSET-FETCH) to CRDB syntax. TOP N is moved to a trailing LIMIT N clause.
+// OFFSET-FETCH is translated to LIMIT/OFFSET.
 func translateSelect(s *parser.SelectStmt) string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
@@ -197,10 +208,7 @@ func translateSelect(s *parser.SelectStmt) string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(quoteIdent(ref.Name))
-			if ref.Alias != "" {
-				fmt.Fprintf(&b, " %s", quoteIdent(ref.Alias))
-			}
+			b.WriteString(translateTableRef(ref))
 		}
 		for _, j := range s.Joins {
 			fmt.Fprintf(&b, " %s %s", j.Type, quoteIdent(j.Table.Name))
@@ -241,11 +249,99 @@ func translateSelect(s *parser.SelectStmt) string {
 			}
 		}
 	}
-	// TOP N → LIMIT N (placed after ORDER BY, per SQL standard).
-	if s.Top != nil {
+	// LIMIT: either from TOP or FETCH (FETCH takes precedence).
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Fetch)
+	} else if s.Top != nil {
 		fmt.Fprintf(&b, " LIMIT %d", *s.Top)
 	}
+	// OFFSET from OFFSET-FETCH.
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+	}
 	return b.String()
+}
+
+// translateTableRef converts a table reference. Derived tables (subqueries in
+// FROM) are translated recursively.
+func translateTableRef(ref parser.TableRef) string {
+	if ref.Subquery != nil {
+		sub, err := Statement(ref.Subquery)
+		if err != nil {
+			// Fallback to AST String() if translation fails.
+			sub = ref.Subquery.String()
+		}
+		if ref.Alias != "" {
+			return fmt.Sprintf("(%s) %s", sub, quoteIdent(ref.Alias))
+		}
+		return fmt.Sprintf("(%s)", sub)
+	}
+	result := quoteIdent(ref.Name)
+	if ref.Alias != "" {
+		result += " " + quoteIdent(ref.Alias)
+	}
+	return result
+}
+
+// translateCompoundSelect converts a compound SELECT (UNION/INTERSECT/EXCEPT)
+// to CRDB syntax. CockroachDB supports all standard set operations natively.
+func translateCompoundSelect(s *parser.CompoundSelectStmt) (string, error) {
+	left, err := Statement(s.Left)
+	if err != nil {
+		return "", err
+	}
+	right, err := Statement(s.Right)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString(left)
+	fmt.Fprintf(&b, " %s ", s.Op)
+	b.WriteString(right)
+	if len(s.OrderBy) > 0 {
+		b.WriteString(" ORDER BY ")
+		for i, ob := range s.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(ob.Expr))
+			if ob.Desc {
+				b.WriteString(" DESC")
+			} else {
+				b.WriteString(" ASC")
+			}
+		}
+	}
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Fetch)
+	}
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+	}
+	return b.String(), nil
+}
+
+// translateWith converts a WITH (CTE) statement. CockroachDB supports CTEs
+// natively with identical syntax.
+func translateWith(s *parser.WithStmt) (string, error) {
+	var b strings.Builder
+	b.WriteString("WITH ")
+	for i, cte := range s.CTEs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		cteSql, err := Statement(cte.Select)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "%s AS (%s)", quoteIdent(cte.Name), cteSql)
+	}
+	body, err := Statement(s.Body)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, " %s", body)
+	return b.String(), nil
 }
 
 // translateDelete converts a T-SQL DELETE to CRDB syntax.
@@ -321,10 +417,96 @@ func translateExpr(expr parser.Expr) string {
 	case *parser.BetweenExpr:
 		return translateBetween(e)
 
+	case *parser.SubqueryExpr:
+		return translateSubquery(e)
+
+	case *parser.ExistsExpr:
+		return translateExists(e)
+
+	case *parser.AnyAllExpr:
+		return translateAnyAll(e)
+
+	case *parser.WindowExpr:
+		return translateWindow(e)
+
 	default:
 		// Fallback: use the AST node's own String() method.
 		return expr.String()
 	}
+}
+
+// translateSubquery converts a scalar subquery expression. CockroachDB
+// supports scalar subqueries with identical syntax.
+func translateSubquery(e *parser.SubqueryExpr) string {
+	sql, err := Statement(e.Select)
+	if err != nil {
+		return e.String()
+	}
+	return fmt.Sprintf("(%s)", sql)
+}
+
+// translateExists converts [NOT] EXISTS (SELECT ...). CockroachDB supports
+// EXISTS with identical syntax.
+func translateExists(e *parser.ExistsExpr) string {
+	sql, err := Statement(e.Select)
+	if err != nil {
+		return e.String()
+	}
+	if e.Not {
+		return fmt.Sprintf("NOT EXISTS (%s)", sql)
+	}
+	return fmt.Sprintf("EXISTS (%s)", sql)
+}
+
+// translateAnyAll converts expr op ANY/ALL/SOME (SELECT ...). SOME is
+// translated to ANY since CockroachDB uses the standard SQL ANY keyword.
+func translateAnyAll(e *parser.AnyAllExpr) string {
+	left := translateExpr(e.Expr)
+	sql, err := Statement(e.Select)
+	if err != nil {
+		return e.String()
+	}
+	kind := e.Kind
+	if kind == "SOME" {
+		kind = "ANY"
+	}
+	return fmt.Sprintf("%s %s %s (%s)", left, e.Op, kind, sql)
+}
+
+// translateWindow converts a window function expression. CockroachDB supports
+// window functions with identical syntax.
+func translateWindow(e *parser.WindowExpr) string {
+	var b strings.Builder
+	b.WriteString(translateFuncCall(e.Func))
+	b.WriteString(" OVER (")
+	if len(e.PartitionBy) > 0 {
+		b.WriteString("PARTITION BY ")
+		for i, p := range e.PartitionBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(p))
+		}
+		if len(e.OrderBy) > 0 {
+			b.WriteString(" ")
+		}
+	}
+	if len(e.OrderBy) > 0 {
+		b.WriteString("ORDER BY ")
+		for i, o := range e.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(o.Expr))
+			if o.Desc {
+				b.WriteString(" DESC")
+			} else {
+				b.WriteString(" ASC")
+			}
+		}
+	}
+	b.WriteString(")")
+	return b.String()
 }
 
 // translateIdent converts T-SQL identifiers. Bracket-quoted identifiers are
@@ -859,14 +1041,22 @@ func translateCase(e *parser.CaseExpr) string {
 	return b.String()
 }
 
-// translateIn converts an IN expression. The syntax is the same in CRDB.
+// translateIn converts an IN expression. Supports both value lists and
+// subqueries.
 func translateIn(e *parser.InExpr) string {
 	expr := translateExpr(e.Expr)
-	vals := translateArgs(e.Values)
 	op := "IN"
 	if e.Not {
 		op = "NOT IN"
 	}
+	if e.Subquery != nil {
+		sql, err := Statement(e.Subquery)
+		if err != nil {
+			return e.String()
+		}
+		return fmt.Sprintf("%s %s (%s)", expr, op, sql)
+	}
+	vals := translateArgs(e.Values)
 	return fmt.Sprintf("%s %s (%s)", expr, op, strings.Join(vals, ", "))
 }
 

@@ -116,6 +116,25 @@ const (
 	tokenFOREIGN
 	tokenCHECK
 	tokenADD
+
+	// Phase 2 keywords: set operations, subqueries, CTEs, window functions,
+	// OFFSET-FETCH pagination.
+	tokenUNION
+	tokenINTERSECT
+	tokenEXCEPT
+	tokenALL
+	tokenWITH
+	tokenANY
+	tokenSOME
+	tokenOVER
+	tokenPARTITION
+	tokenOFFSET
+	tokenFETCH
+	tokenNEXT
+	tokenFIRST
+	tokenONLY
+	tokenROWS
+	tokenROW
 )
 
 var keywords = map[string]tokenType{
@@ -189,6 +208,24 @@ var keywords = map[string]tokenType{
 	"FOREIGN":    tokenFOREIGN,
 	"CHECK":      tokenCHECK,
 	"ADD":        tokenADD,
+
+	// Phase 2 keywords.
+	"UNION":     tokenUNION,
+	"INTERSECT": tokenINTERSECT,
+	"EXCEPT":    tokenEXCEPT,
+	"ALL":       tokenALL,
+	"WITH":      tokenWITH,
+	"ANY":       tokenANY,
+	"SOME":      tokenSOME,
+	"OVER":      tokenOVER,
+	"PARTITION": tokenPARTITION,
+	"OFFSET":    tokenOFFSET,
+	"FETCH":     tokenFETCH,
+	"NEXT":      tokenNEXT,
+	"FIRST":     tokenFIRST,
+	"ONLY":      tokenONLY,
+	"ROWS":      tokenROWS,
+	"ROW":       tokenROW,
 }
 
 // token represents a single lexical token from T-SQL input.
@@ -210,7 +247,7 @@ func (t token) String() string {
 }
 
 // lexer tokenizes T-SQL input. It handles case-insensitive keywords, bracket-
-// quoted identifiers ([name]), single-quoted strings with ” escaping, and the
+// quoted identifiers ([name]), single-quoted strings with " escaping, and the
 // standard T-SQL punctuation.
 type lexer struct {
 	input string
@@ -329,7 +366,7 @@ func (l *lexer) scan() token {
 	}
 }
 
-// scanString scans a single-quoted string literal. T-SQL uses ” to escape
+// scanString scans a single-quoted string literal. T-SQL uses " to escape
 // embedded single quotes.
 func (l *lexer) scanString() token {
 	start := l.pos

@@ -248,7 +248,7 @@ func (j *JoinClause) String() string {
 
 // SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
 // [JOIN ...] [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>]
-// [ORDER BY <exprs>].
+// [ORDER BY <exprs>] [OFFSET n ROWS [FETCH NEXT m ROWS ONLY]].
 type SelectStmt struct {
 	Distinct bool
 	Top      *int
@@ -259,6 +259,8 @@ type SelectStmt struct {
 	GroupBy  []Expr
 	Having   Expr
 	OrderBy  []OrderByExpr
+	Offset   *int // OFFSET n ROWS
+	Fetch    *int // FETCH NEXT m ROWS ONLY
 }
 
 func (*SelectStmt) statementNode() {}
@@ -314,6 +316,12 @@ func (s *SelectStmt) String() string {
 			b.WriteString(o.String())
 		}
 	}
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
+	}
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+	}
 	return b.String()
 }
 
@@ -331,12 +339,20 @@ func (c *SelectColumn) String() string {
 }
 
 // TableRef represents a table reference in a FROM clause, optionally aliased.
+// When Subquery is non-nil, this is a derived table (inline view).
 type TableRef struct {
-	Name  string
-	Alias string
+	Name     string
+	Alias    string
+	Subquery Statement // non-nil for derived tables: (SELECT ...) alias
 }
 
 func (t *TableRef) String() string {
+	if t.Subquery != nil {
+		if t.Alias != "" {
+			return fmt.Sprintf("(%s) %s", t.Subquery, formatIdent(t.Alias))
+		}
+		return fmt.Sprintf("(%s)", t.Subquery)
+	}
 	if t.Alias != "" {
 		return fmt.Sprintf("%s %s", formatIdent(t.Name), formatIdent(t.Alias))
 	}
@@ -354,6 +370,71 @@ func (o *OrderByExpr) String() string {
 		return fmt.Sprintf("%s DESC", o.Expr)
 	}
 	return fmt.Sprintf("%s ASC", o.Expr)
+}
+
+// CompoundSelectStmt represents two SELECT-like statements joined by a set
+// operation (UNION, UNION ALL, INTERSECT, EXCEPT). ORDER BY and OFFSET-FETCH
+// apply to the compound result when present.
+type CompoundSelectStmt struct {
+	Left    Statement // *SelectStmt or *CompoundSelectStmt
+	Op      string    // "UNION", "UNION ALL", "INTERSECT", "EXCEPT"
+	Right   Statement // *SelectStmt
+	OrderBy []OrderByExpr
+	Offset  *int
+	Fetch   *int
+}
+
+func (*CompoundSelectStmt) statementNode() {}
+
+func (s *CompoundSelectStmt) String() string {
+	var b strings.Builder
+	b.WriteString(s.Left.String())
+	fmt.Fprintf(&b, " %s ", s.Op)
+	b.WriteString(s.Right.String())
+	if len(s.OrderBy) > 0 {
+		b.WriteString(" ORDER BY ")
+		for i, o := range s.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(o.String())
+		}
+	}
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
+	}
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+	}
+	return b.String()
+}
+
+// WithStmt represents WITH <cte_defs> <body> where body is a SELECT or
+// compound SELECT.
+type WithStmt struct {
+	CTEs []CTEDef
+	Body Statement
+}
+
+func (*WithStmt) statementNode() {}
+
+func (s *WithStmt) String() string {
+	var b strings.Builder
+	b.WriteString("WITH ")
+	for i, cte := range s.CTEs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s AS (%s)", formatIdent(cte.Name), cte.Select)
+	}
+	fmt.Fprintf(&b, " %s", s.Body)
+	return b.String()
+}
+
+// CTEDef represents a single common table expression: name AS (SELECT ...).
+type CTEDef struct {
+	Name   string
+	Select Statement
 }
 
 // IdentExpr represents an identifier (column name, table name, etc.).
@@ -488,24 +569,29 @@ func (e *ParenExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Expr)
 }
 
-// InExpr represents <expr> [NOT] IN (<values>).
+// InExpr represents <expr> [NOT] IN (<values>) or <expr> [NOT] IN (<subquery>).
 type InExpr struct {
-	Expr   Expr
-	Values []Expr
-	Not    bool
+	Expr     Expr
+	Values   []Expr    // non-nil for value lists: IN (1, 2, 3)
+	Subquery Statement // non-nil for subqueries: IN (SELECT ...)
+	Not      bool
 }
 
 func (*InExpr) exprNode() {}
 
 func (e *InExpr) String() string {
+	op := "IN"
+	if e.Not {
+		op = "NOT IN"
+	}
+	if e.Subquery != nil {
+		return fmt.Sprintf("%s %s (%s)", e.Expr, op, e.Subquery)
+	}
 	var vals []string
 	for _, v := range e.Values {
 		vals = append(vals, v.String())
 	}
-	if e.Not {
-		return fmt.Sprintf("%s NOT IN (%s)", e.Expr, strings.Join(vals, ", "))
-	}
-	return fmt.Sprintf("%s IN (%s)", e.Expr, strings.Join(vals, ", "))
+	return fmt.Sprintf("%s %s (%s)", e.Expr, op, strings.Join(vals, ", "))
 }
 
 // BetweenExpr represents <expr> [NOT] BETWEEN <low> AND <high>.
@@ -801,6 +887,85 @@ func (*CreateTriggerStmt) statementNode() {}
 
 func (s *CreateTriggerStmt) String() string {
 	return fmt.Sprintf("CREATE TRIGGER %s ...", formatIdent(s.Name))
+}
+
+// SubqueryExpr represents a scalar subquery used as an expression: (SELECT ...).
+type SubqueryExpr struct {
+	Select Statement
+}
+
+func (*SubqueryExpr) exprNode() {}
+
+func (e *SubqueryExpr) String() string {
+	return fmt.Sprintf("(%s)", e.Select)
+}
+
+// ExistsExpr represents [NOT] EXISTS (SELECT ...).
+type ExistsExpr struct {
+	Select Statement
+	Not    bool
+}
+
+func (*ExistsExpr) exprNode() {}
+
+func (e *ExistsExpr) String() string {
+	if e.Not {
+		return fmt.Sprintf("NOT EXISTS (%s)", e.Select)
+	}
+	return fmt.Sprintf("EXISTS (%s)", e.Select)
+}
+
+// AnyAllExpr represents <expr> <op> ANY|ALL|SOME (SELECT ...).
+type AnyAllExpr struct {
+	Expr   Expr
+	Op     string // comparison operator: =, <>, <, >, <=, >=
+	Kind   string // "ANY", "ALL", or "SOME"
+	Select Statement
+}
+
+func (*AnyAllExpr) exprNode() {}
+
+func (e *AnyAllExpr) String() string {
+	return fmt.Sprintf("%s %s %s (%s)", e.Expr, e.Op, e.Kind, e.Select)
+}
+
+// WindowExpr represents a window function call:
+// <func>(<args>) OVER ([PARTITION BY <exprs>] [ORDER BY <exprs>]).
+type WindowExpr struct {
+	Func        *FuncCallExpr
+	PartitionBy []Expr
+	OrderBy     []OrderByExpr
+}
+
+func (*WindowExpr) exprNode() {}
+
+func (e *WindowExpr) String() string {
+	var b strings.Builder
+	b.WriteString(e.Func.String())
+	b.WriteString(" OVER (")
+	if len(e.PartitionBy) > 0 {
+		b.WriteString("PARTITION BY ")
+		for i, p := range e.PartitionBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(p.String())
+		}
+		if len(e.OrderBy) > 0 {
+			b.WriteString(" ")
+		}
+	}
+	if len(e.OrderBy) > 0 {
+		b.WriteString("ORDER BY ")
+		for i, o := range e.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(o.String())
+		}
+	}
+	b.WriteString(")")
+	return b.String()
 }
 
 // formatIdent returns an identifier, quoting it with brackets if it contains

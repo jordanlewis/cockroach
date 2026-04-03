@@ -4,10 +4,11 @@
 // included in the /LICENSE file.
 
 // Package parser implements a recursive descent parser for a subset of the
-// T-SQL / Sybase SQL dialect. Phase 1 covers USE, CREATE TABLE, INSERT INTO,
-// SELECT (with WHERE, ORDER BY, TOP), GO batch separators, and basic
-// expressions including Sybase-specific constructs like bracket-quoted
-// identifiers, ISNULL(), CONVERT(), and GETDATE().
+// T-SQL / Sybase SQL dialect. It covers USE, CREATE/DROP TABLE/DATABASE,
+// INSERT, DELETE, UPDATE, SELECT (with WHERE, ORDER BY, TOP, GROUP BY,
+// HAVING), subqueries (scalar, EXISTS, IN, ANY/ALL), set operations
+// (UNION/INTERSECT/EXCEPT), CTEs (WITH), window functions (OVER), and
+// OFFSET-FETCH pagination.
 //
 // T-SQL is case-insensitive for keywords; the lexer normalizes keywords
 // to upper case for matching but preserves original casing in identifiers.
@@ -75,10 +76,98 @@ func (p *parser) parseStatement() (Statement, error) {
 	case tokenUPDATE:
 		return p.parseUpdate()
 	case tokenSELECT:
-		return p.parseSelect()
+		return p.parseSelectOrCompound()
+	case tokenWITH:
+		return p.parseWith()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
+}
+
+// parseWith parses: WITH <name> AS (<select>)[, ...] <select_or_compound>
+func (p *parser) parseWith() (*WithStmt, error) {
+	p.lex.next() // consume WITH
+	stmt := &WithStmt{}
+	for {
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenAS); err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenLParen); err != nil {
+			return nil, err
+		}
+		sel, err := p.parseSelectOrCompound()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tokenRParen); err != nil {
+			return nil, err
+		}
+		stmt.CTEs = append(stmt.CTEs, CTEDef{Name: name, Select: sel})
+		if p.lex.peek().typ != tokenComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	body, err := p.parseSelectOrCompound()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Body = body
+	return stmt, nil
+}
+
+// parseSelectOrCompound parses a SELECT statement optionally followed by set
+// operations (UNION, UNION ALL, INTERSECT, EXCEPT). When set operations are
+// present, ORDER BY and OFFSET-FETCH from the rightmost SELECT are lifted to
+// the compound level since they apply to the combined result.
+func (p *parser) parseSelectOrCompound() (Statement, error) {
+	left, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+
+	if !isSetOpToken(p.lex.peek().typ) {
+		return left, nil
+	}
+
+	var result Statement = left
+	for isSetOpToken(p.lex.peek().typ) {
+		op := strings.ToUpper(p.lex.next().val)
+		if op == "UNION" && p.lex.peek().typ == tokenALL {
+			p.lex.next()
+			op = "UNION ALL"
+		}
+		right, err := p.parseSelect()
+		if err != nil {
+			return nil, err
+		}
+		result = &CompoundSelectStmt{Left: result, Op: op, Right: right}
+	}
+
+	// Lift ORDER BY, OFFSET, and FETCH from the rightmost SELECT to the
+	// compound level. In T-SQL, these clauses apply to the entire compound
+	// result, not the individual SELECT.
+	if cs, ok := result.(*CompoundSelectStmt); ok {
+		if rightSel, ok := cs.Right.(*SelectStmt); ok {
+			if len(rightSel.OrderBy) > 0 || rightSel.Offset != nil || rightSel.Fetch != nil {
+				cs.OrderBy = rightSel.OrderBy
+				rightSel.OrderBy = nil
+				cs.Offset = rightSel.Offset
+				rightSel.Offset = nil
+				cs.Fetch = rightSel.Fetch
+				rightSel.Fetch = nil
+			}
+		}
+	}
+	return result, nil
+}
+
+func isSetOpToken(typ tokenType) bool {
+	return typ == tokenUNION || typ == tokenINTERSECT || typ == tokenEXCEPT
 }
 
 // parseUse parses: USE <database>
@@ -435,8 +524,8 @@ func (p *parser) parseUpdate() (*UpdateStmt, error) {
 	return stmt, nil
 }
 
-// parseSelect parses: SELECT [TOP n] <columns> [FROM <tables>]
-// [WHERE <expr>] [ORDER BY <order_exprs>]
+// parseSelect parses a single SELECT statement (without trailing set
+// operations). Set operations are handled by parseSelectOrCompound.
 func (p *parser) parseSelect() (*SelectStmt, error) {
 	p.lex.next() // consume SELECT
 	stmt := &SelectStmt{}
@@ -562,6 +651,50 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		}
 	}
 
+	// Optional OFFSET-FETCH (T-SQL pagination).
+	if p.lex.peek().typ == tokenOFFSET {
+		p.lex.next()
+		tok := p.lex.next()
+		if tok.typ != tokenInt {
+			return nil, p.error(fmt.Sprintf("expected integer after OFFSET, got %q", tok.val))
+		}
+		n, err := strconv.Atoi(tok.val)
+		if err != nil {
+			return nil, p.error(fmt.Sprintf("invalid OFFSET value: %s", tok.val))
+		}
+		stmt.Offset = &n
+		// Consume optional ROW/ROWS keyword.
+		if p.lex.peek().typ == tokenROW || p.lex.peek().typ == tokenROWS {
+			p.lex.next()
+		}
+
+		// Optional FETCH NEXT/FIRST n ROWS ONLY.
+		if p.lex.peek().typ == tokenFETCH {
+			p.lex.next()
+			// NEXT or FIRST (both accepted).
+			if p.lex.peek().typ == tokenNEXT || p.lex.peek().typ == tokenFIRST {
+				p.lex.next()
+			}
+			tok = p.lex.next()
+			if tok.typ != tokenInt {
+				return nil, p.error(fmt.Sprintf("expected integer after FETCH, got %q", tok.val))
+			}
+			m, err := strconv.Atoi(tok.val)
+			if err != nil {
+				return nil, p.error(fmt.Sprintf("invalid FETCH value: %s", tok.val))
+			}
+			stmt.Fetch = &m
+			// Consume optional ROW/ROWS keyword.
+			if p.lex.peek().typ == tokenROW || p.lex.peek().typ == tokenROWS {
+				p.lex.next()
+			}
+			// Consume optional ONLY keyword.
+			if p.lex.peek().typ == tokenONLY {
+				p.lex.next()
+			}
+		}
+	}
+
 	return stmt, nil
 }
 
@@ -653,8 +786,30 @@ func (p *parser) parseJoinClause() (JoinClause, error) {
 	return join, nil
 }
 
-// parseTableRef parses a table reference: <name> [<alias>]
+// parseTableRef parses a table reference: <name> [<alias>] or (<subquery>) <alias>.
 func (p *parser) parseTableRef() (TableRef, error) {
+	// Check for derived table: (SELECT ...) [AS] alias.
+	if p.lex.peek().typ == tokenLParen {
+		p.lex.next() // consume (
+		sel, err := p.parseSelectOrCompound()
+		if err != nil {
+			return TableRef{}, err
+		}
+		if err := p.expect(tokenRParen); err != nil {
+			return TableRef{}, err
+		}
+		ref := TableRef{Subquery: sel}
+		if p.lex.peek().typ == tokenAS {
+			p.lex.next()
+		}
+		alias, err := p.expectIdent()
+		if err != nil {
+			return TableRef{}, err
+		}
+		ref.Alias = alias
+		return ref, nil
+	}
+
 	name, err := p.parseTableName()
 	if err != nil {
 		return TableRef{}, err
@@ -711,14 +866,15 @@ func (p *parser) parseOrderByExpr() (OrderByExpr, error) {
 // Expression parsing with precedence climbing.
 //
 // Precedence (lowest to highest):
-//   1. OR
-//   2. AND
-//   3. NOT (unary)
-//   4. Comparison: =, <>, !=, <, >, <=, >=, IS [NOT] NULL, IN, BETWEEN, LIKE
-//   5. Addition: +, -
-//   6. Multiplication: *, /, %
-//   7. Unary: -, NOT
-//   8. Primary: literals, identifiers, function calls, parenthesized exprs
+//  1. OR
+//  2. AND
+//  3. NOT (unary)
+//  4. Comparison: =, <>, !=, <, >, <=, >=, IS [NOT] NULL, IN, BETWEEN, LIKE
+//  5. Addition: +, -
+//  6. Multiplication: *, /, %
+//  7. Unary: -, NOT
+//  8. Primary: literals, identifiers, function calls, parenthesized exprs,
+//     subqueries, EXISTS
 
 // parseExpr parses an expression starting at the lowest precedence (OR).
 func (p *parser) parseExpr() (Expr, error) {
@@ -760,6 +916,15 @@ func (p *parser) parseAnd() (Expr, error) {
 func (p *parser) parseNot() (Expr, error) {
 	if p.lex.peek().typ == tokenNOT {
 		p.lex.next()
+		// NOT EXISTS (SELECT ...) is a special construct.
+		if p.lex.peek().typ == tokenEXISTS {
+			p.lex.next()
+			sel, err := p.parseSubqueryParens()
+			if err != nil {
+				return nil, err
+			}
+			return &ExistsExpr{Select: sel, Not: true}, nil
+		}
 		expr, err := p.parseNot()
 		if err != nil {
 			return nil, err
@@ -778,46 +943,22 @@ func (p *parser) parseComparison() (Expr, error) {
 	switch p.lex.peek().typ {
 	case tokenEq:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: "=", Right: right}, nil
+		return p.parseComparisonRHS(left, "=")
 	case tokenNeq:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: "<>", Right: right}, nil
+		return p.parseComparisonRHS(left, "<>")
 	case tokenLT:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: "<", Right: right}, nil
+		return p.parseComparisonRHS(left, "<")
 	case tokenGT:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: ">", Right: right}, nil
+		return p.parseComparisonRHS(left, ">")
 	case tokenLTE:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: "<=", Right: right}, nil
+		return p.parseComparisonRHS(left, "<=")
 	case tokenGTE:
 		p.lex.next()
-		right, err := p.parseAddition()
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Left: left, Op: ">=", Right: right}, nil
+		return p.parseComparisonRHS(left, ">=")
 	case tokenIS:
 		p.lex.next()
 		if p.lex.peek().typ == tokenNOT {
@@ -840,11 +981,11 @@ func (p *parser) parseComparison() (Expr, error) {
 		return &BinaryExpr{Left: left, Op: "LIKE", Right: right}, nil
 	case tokenIN:
 		p.lex.next()
-		values, err := p.parseInList()
+		values, subquery, err := p.parseInList()
 		if err != nil {
 			return nil, err
 		}
-		return &InExpr{Expr: left, Values: values, Not: false}, nil
+		return &InExpr{Expr: left, Values: values, Subquery: subquery, Not: false}, nil
 	case tokenBETWEEN:
 		p.lex.next()
 		low, err := p.parseAddition()
@@ -872,11 +1013,11 @@ func (p *parser) parseComparison() (Expr, error) {
 			return &BinaryExpr{Left: left, Op: "NOT LIKE", Right: right}, nil
 		case tokenIN:
 			p.lex.next()
-			values, err := p.parseInList()
+			values, subquery, err := p.parseInList()
 			if err != nil {
 				return nil, err
 			}
-			return &InExpr{Expr: left, Values: values, Not: true}, nil
+			return &InExpr{Expr: left, Values: values, Subquery: subquery, Not: true}, nil
 		case tokenBETWEEN:
 			p.lex.next()
 			low, err := p.parseAddition()
@@ -898,17 +1039,66 @@ func (p *parser) parseComparison() (Expr, error) {
 	return left, nil
 }
 
-// parseInList parses a parenthesized, comma-separated list of expressions
-// for use with the IN operator: (expr, expr, ...).
-func (p *parser) parseInList() ([]Expr, error) {
+// parseComparisonRHS parses the right-hand side of a comparison operator. If
+// the next token is ANY, ALL, or SOME, it parses a quantified comparison
+// subquery (e.g. x > ANY (SELECT ...)). Otherwise it parses a regular
+// arithmetic expression.
+func (p *parser) parseComparisonRHS(left Expr, op string) (Expr, error) {
+	if p.lex.peek().typ == tokenANY || p.lex.peek().typ == tokenALL || p.lex.peek().typ == tokenSOME {
+		kind := strings.ToUpper(p.lex.next().val)
+		sel, err := p.parseSubqueryParens()
+		if err != nil {
+			return nil, err
+		}
+		return &AnyAllExpr{Expr: left, Op: op, Kind: kind, Select: sel}, nil
+	}
+	right, err := p.parseAddition()
+	if err != nil {
+		return nil, err
+	}
+	return &BinaryExpr{Left: left, Op: op, Right: right}, nil
+}
+
+// parseSubqueryParens parses: (SELECT ...) — a parenthesized SELECT used in
+// EXISTS, ANY/ALL, and other subquery contexts.
+func (p *parser) parseSubqueryParens() (Statement, error) {
 	if err := p.expect(tokenLParen); err != nil {
 		return nil, err
 	}
+	sel, err := p.parseSelectOrCompound()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return nil, err
+	}
+	return sel, nil
+}
+
+// parseInList parses a parenthesized list for IN: either a value list
+// (1, 2, 3) or a subquery (SELECT ...). It returns (values, nil) for value
+// lists and (nil, subquery) for subqueries.
+func (p *parser) parseInList() ([]Expr, Statement, error) {
+	if err := p.expect(tokenLParen); err != nil {
+		return nil, nil, err
+	}
+	// Check for subquery: IN (SELECT ...)
+	if p.lex.peek().typ == tokenSELECT {
+		sel, err := p.parseSelectOrCompound()
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := p.expect(tokenRParen); err != nil {
+			return nil, nil, err
+		}
+		return nil, sel, nil
+	}
+	// Parse expression list.
 	var values []Expr
 	for {
 		val, err := p.parseAddition()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		values = append(values, val)
 		if p.lex.peek().typ != tokenComma {
@@ -917,9 +1107,9 @@ func (p *parser) parseInList() ([]Expr, error) {
 		p.lex.next() // consume comma
 	}
 	if err := p.expect(tokenRParen); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return values, nil
+	return values, nil, nil
 }
 
 func (p *parser) parseAddition() (Expr, error) {
@@ -967,7 +1157,7 @@ func (p *parser) parseUnary() (Expr, error) {
 }
 
 // parsePrimary parses primary expressions: literals, identifiers, function
-// calls, and parenthesized expressions.
+// calls, parenthesized expressions, subqueries, and EXISTS.
 func (p *parser) parsePrimary() (Expr, error) {
 	tok := p.lex.peek()
 
@@ -1001,7 +1191,19 @@ func (p *parser) parsePrimary() (Expr, error) {
 		return &StarExpr{}, nil
 
 	case tokenLParen:
-		p.lex.next()
+		p.lex.next() // consume (
+		// Check for subquery: (SELECT ...)
+		if p.lex.peek().typ == tokenSELECT {
+			sel, err := p.parseSelectOrCompound()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(tokenRParen); err != nil {
+				return nil, err
+			}
+			return &SubqueryExpr{Select: sel}, nil
+		}
+		// Regular parenthesized expression.
 		expr, err := p.parseExpr()
 		if err != nil {
 			return nil, err
@@ -1039,6 +1241,14 @@ func (p *parser) parsePrimary() (Expr, error) {
 		}
 		return nil, p.error(fmt.Sprintf(
 			"unexpected token %q at position %d", tok.val, tok.pos))
+
+	case tokenEXISTS:
+		p.lex.next()
+		sel, err := p.parseSubqueryParens()
+		if err != nil {
+			return nil, err
+		}
+		return &ExistsExpr{Select: sel, Not: false}, nil
 
 	case tokenCASE:
 		return p.parseCASE()
@@ -1176,7 +1386,8 @@ func (p *parser) parseCASE() (Expr, error) {
 }
 
 // parseIdentOrFunc parses an identifier, a dotted identifier (a.b.c), or a
-// function call (func(args)).
+// function call (func(args)). If a function call is followed by OVER, it is
+// parsed as a window function expression.
 func (p *parser) parseIdentOrFunc() (Expr, error) {
 	tok := p.lex.next()
 	name := tok.val
@@ -1201,7 +1412,12 @@ func (p *parser) parseIdentOrFunc() (Expr, error) {
 		if err := p.expect(tokenRParen); err != nil {
 			return nil, err
 		}
-		return &FuncCallExpr{Name: name, Args: args}, nil
+		fc := &FuncCallExpr{Name: name, Args: args}
+		// Check for window function: func(...) OVER (...)
+		if p.lex.peek().typ == tokenOVER {
+			return p.parseWindowOver(fc)
+		}
+		return fc, nil
 	}
 
 	// Parse dotted identifier (e.g., dbo.users.name).
@@ -1502,6 +1718,59 @@ func (p *parser) parseTruncate() (*TruncateTableStmt, error) {
 	return &TruncateTableStmt{Table: name}, nil
 }
 
+// parseWindowOver parses the OVER clause of a window function:
+// OVER ([PARTITION BY <exprs>] [ORDER BY <exprs>])
+func (p *parser) parseWindowOver(fn *FuncCallExpr) (Expr, error) {
+	p.lex.next() // consume OVER
+	if err := p.expect(tokenLParen); err != nil {
+		return nil, err
+	}
+	w := &WindowExpr{Func: fn}
+
+	// Optional PARTITION BY.
+	if p.lex.peek().typ == tokenPARTITION {
+		p.lex.next()
+		if err := p.expect(tokenBY); err != nil {
+			return nil, err
+		}
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			w.PartitionBy = append(w.PartitionBy, expr)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next()
+		}
+	}
+
+	// Optional ORDER BY.
+	if p.lex.peek().typ == tokenORDER {
+		p.lex.next()
+		if err := p.expect(tokenBY); err != nil {
+			return nil, err
+		}
+		for {
+			ob, err := p.parseOrderByExpr()
+			if err != nil {
+				return nil, err
+			}
+			w.OrderBy = append(w.OrderBy, ob)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next()
+		}
+	}
+
+	if err := p.expect(tokenRParen); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
 // expect consumes the next token and returns an error if it doesn't match the
 // expected type.
 func (p *parser) expect(typ tokenType) error {
@@ -1548,7 +1817,12 @@ func isKeywordToken(typ tokenType) bool {
 		tokenVIEW, tokenPROCEDURE, tokenFUNCTION, tokenTRIGGER,
 		tokenTRUNCATE, tokenIF, tokenEXISTS, tokenUNIQUE,
 		tokenINCLUDE, tokenREFERENCES, tokenPRIMARY, tokenKEY,
-		tokenFOREIGN, tokenCHECK, tokenADD:
+		tokenFOREIGN, tokenCHECK, tokenADD,
+		tokenUNION, tokenINTERSECT, tokenEXCEPT, tokenALL,
+		tokenWITH, tokenANY, tokenSOME,
+		tokenOVER, tokenPARTITION,
+		tokenOFFSET, tokenFETCH, tokenNEXT, tokenFIRST,
+		tokenONLY, tokenROWS, tokenROW:
 		return true
 	}
 	return false

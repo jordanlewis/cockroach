@@ -798,4 +798,434 @@ func TestParseNotBETWEEN(t *testing.T) {
 	}
 }
 
+// Phase 2 tests: subqueries, UNION, CTE, window functions, OFFSET-FETCH.
+
+func TestParseScalarSubquery(t *testing.T) {
+	sql := `SELECT (SELECT MAX(id) FROM orders) AS max_id FROM users`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	sub, ok := sel.Columns[0].Expr.(*SubqueryExpr)
+	if !ok {
+		t.Fatalf("expected *SubqueryExpr, got %T", sel.Columns[0].Expr)
+	}
+	innerSel, ok := sub.Select.(*SelectStmt)
+	if !ok {
+		t.Fatalf("expected inner *SelectStmt, got %T", sub.Select)
+	}
+	if len(innerSel.Columns) != 1 {
+		t.Errorf("expected 1 inner column, got %d", len(innerSel.Columns))
+	}
+}
+
+func TestParseSubqueryInWhere(t *testing.T) {
+	sql := `SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	bin, ok := sel.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr, got %T", sel.Where)
+	}
+	if bin.Op != ">" {
+		t.Errorf("expected op '>', got %s", bin.Op)
+	}
+	_, ok = bin.Right.(*SubqueryExpr)
+	if !ok {
+		t.Fatalf("expected *SubqueryExpr on RHS, got %T", bin.Right)
+	}
+}
+
+func TestParseExists(t *testing.T) {
+	sql := `SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	exists, ok := sel.Where.(*ExistsExpr)
+	if !ok {
+		t.Fatalf("expected *ExistsExpr, got %T", sel.Where)
+	}
+	if exists.Not {
+		t.Error("expected Not=false")
+	}
+}
+
+func TestParseNotExists(t *testing.T) {
+	sql := `SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	exists, ok := sel.Where.(*ExistsExpr)
+	if !ok {
+		t.Fatalf("expected *ExistsExpr, got %T", sel.Where)
+	}
+	if !exists.Not {
+		t.Error("expected Not=true")
+	}
+}
+
+func TestParseINSubquery(t *testing.T) {
+	sql := `SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	in, ok := sel.Where.(*InExpr)
+	if !ok {
+		t.Fatalf("expected *InExpr, got %T", sel.Where)
+	}
+	if in.Subquery == nil {
+		t.Fatal("expected subquery in IN expression")
+	}
+	if in.Values != nil {
+		t.Error("expected nil values for subquery IN")
+	}
+	if in.Not {
+		t.Error("expected Not=false")
+	}
+}
+
+func TestParseNotINSubquery(t *testing.T) {
+	sql := `SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	in := sel.Where.(*InExpr)
+	if in.Subquery == nil {
+		t.Fatal("expected subquery in NOT IN expression")
+	}
+	if !in.Not {
+		t.Error("expected Not=true")
+	}
+}
+
+func TestParseDerivedTable(t *testing.T) {
+	sql := `SELECT sub.name FROM (SELECT name FROM users WHERE age > 21) sub`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if len(sel.From) != 1 {
+		t.Fatalf("expected 1 FROM ref, got %d", len(sel.From))
+	}
+	ref := sel.From[0]
+	if ref.Subquery == nil {
+		t.Fatal("expected subquery in FROM")
+	}
+	if ref.Alias != "sub" {
+		t.Errorf("expected alias=sub, got %s", ref.Alias)
+	}
+}
+
+func TestParseAnyAll(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		op   string
+		kind string
+	}{
+		{"any", "SELECT * FROM t WHERE x > ANY (SELECT y FROM t2)", ">", "ANY"},
+		{"all", "SELECT * FROM t WHERE x = ALL (SELECT y FROM t2)", "=", "ALL"},
+		{"some", "SELECT * FROM t WHERE x < SOME (SELECT y FROM t2)", "<", "SOME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := Parse(tt.sql)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sel := batch.Stmts[0].(*SelectStmt)
+			aa, ok := sel.Where.(*AnyAllExpr)
+			if !ok {
+				t.Fatalf("expected *AnyAllExpr, got %T", sel.Where)
+			}
+			if aa.Op != tt.op {
+				t.Errorf("expected op=%s, got %s", tt.op, aa.Op)
+			}
+			if aa.Kind != tt.kind {
+				t.Errorf("expected kind=%s, got %s", tt.kind, aa.Kind)
+			}
+		})
+	}
+}
+
+func TestParseUNION(t *testing.T) {
+	sql := `SELECT name FROM users UNION SELECT name FROM admins`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, ok := batch.Stmts[0].(*CompoundSelectStmt)
+	if !ok {
+		t.Fatalf("expected *CompoundSelectStmt, got %T", batch.Stmts[0])
+	}
+	if cs.Op != "UNION" {
+		t.Errorf("expected op=UNION, got %s", cs.Op)
+	}
+}
+
+func TestParseUNIONALL(t *testing.T) {
+	sql := `SELECT name FROM users UNION ALL SELECT name FROM admins`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := batch.Stmts[0].(*CompoundSelectStmt)
+	if cs.Op != "UNION ALL" {
+		t.Errorf("expected op='UNION ALL', got %s", cs.Op)
+	}
+}
+
+func TestParseINTERSECT(t *testing.T) {
+	sql := `SELECT id FROM users INTERSECT SELECT id FROM admins`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := batch.Stmts[0].(*CompoundSelectStmt)
+	if cs.Op != "INTERSECT" {
+		t.Errorf("expected op=INTERSECT, got %s", cs.Op)
+	}
+}
+
+func TestParseEXCEPT(t *testing.T) {
+	sql := `SELECT id FROM users EXCEPT SELECT id FROM banned`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := batch.Stmts[0].(*CompoundSelectStmt)
+	if cs.Op != "EXCEPT" {
+		t.Errorf("expected op=EXCEPT, got %s", cs.Op)
+	}
+}
+
+func TestParseCompoundWithOrderBy(t *testing.T) {
+	sql := `SELECT name FROM users UNION ALL SELECT name FROM admins ORDER BY name ASC`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := batch.Stmts[0].(*CompoundSelectStmt)
+	if len(cs.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY on compound, got %d", len(cs.OrderBy))
+	}
+	// The right SELECT should NOT have ORDER BY (it was lifted).
+	rightSel := cs.Right.(*SelectStmt)
+	if len(rightSel.OrderBy) != 0 {
+		t.Error("expected ORDER BY to be lifted from right SELECT")
+	}
+}
+
+func TestParseChainedUnion(t *testing.T) {
+	sql := `SELECT a FROM t1 UNION SELECT b FROM t2 UNION ALL SELECT c FROM t3`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := batch.Stmts[0].(*CompoundSelectStmt)
+	if cs.Op != "UNION ALL" {
+		t.Errorf("expected outer op='UNION ALL', got %s", cs.Op)
+	}
+	inner, ok := cs.Left.(*CompoundSelectStmt)
+	if !ok {
+		t.Fatalf("expected inner *CompoundSelectStmt, got %T", cs.Left)
+	}
+	if inner.Op != "UNION" {
+		t.Errorf("expected inner op=UNION, got %s", inner.Op)
+	}
+}
+
+func TestParseCTE(t *testing.T) {
+	sql := `WITH active_users AS (SELECT * FROM users WHERE active = 1)
+		SELECT * FROM active_users`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, ok := batch.Stmts[0].(*WithStmt)
+	if !ok {
+		t.Fatalf("expected *WithStmt, got %T", batch.Stmts[0])
+	}
+	if len(with.CTEs) != 1 {
+		t.Fatalf("expected 1 CTE, got %d", len(with.CTEs))
+	}
+	if with.CTEs[0].Name != "active_users" {
+		t.Errorf("expected CTE name=active_users, got %s", with.CTEs[0].Name)
+	}
+}
+
+func TestParseMultipleCTEs(t *testing.T) {
+	sql := `WITH
+		a AS (SELECT 1 AS x),
+		b AS (SELECT 2 AS y)
+		SELECT * FROM a, b`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	with := batch.Stmts[0].(*WithStmt)
+	if len(with.CTEs) != 2 {
+		t.Fatalf("expected 2 CTEs, got %d", len(with.CTEs))
+	}
+	if with.CTEs[0].Name != "a" {
+		t.Errorf("expected CTE 0 name=a, got %s", with.CTEs[0].Name)
+	}
+	if with.CTEs[1].Name != "b" {
+		t.Errorf("expected CTE 1 name=b, got %s", with.CTEs[1].Name)
+	}
+}
+
+func TestParseWindowFunction(t *testing.T) {
+	sql := `SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM users`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	w, ok := sel.Columns[0].Expr.(*WindowExpr)
+	if !ok {
+		t.Fatalf("expected *WindowExpr, got %T", sel.Columns[0].Expr)
+	}
+	if strings.ToUpper(w.Func.Name) != "ROW_NUMBER" {
+		t.Errorf("expected ROW_NUMBER, got %s", w.Func.Name)
+	}
+	if len(w.OrderBy) != 1 {
+		t.Errorf("expected 1 ORDER BY in window, got %d", len(w.OrderBy))
+	}
+	if len(w.PartitionBy) != 0 {
+		t.Errorf("expected 0 PARTITION BY, got %d", len(w.PartitionBy))
+	}
+}
+
+func TestParseWindowFunctionWithPartition(t *testing.T) {
+	sql := `SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM emp`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	w := sel.Columns[0].Expr.(*WindowExpr)
+	if strings.ToUpper(w.Func.Name) != "RANK" {
+		t.Errorf("expected RANK, got %s", w.Func.Name)
+	}
+	if len(w.PartitionBy) != 1 {
+		t.Fatalf("expected 1 PARTITION BY, got %d", len(w.PartitionBy))
+	}
+	if len(w.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY, got %d", len(w.OrderBy))
+	}
+	if !w.OrderBy[0].Desc {
+		t.Error("expected DESC order")
+	}
+}
+
+func TestParseWindowNTILE(t *testing.T) {
+	sql := `SELECT NTILE(4) OVER (PARTITION BY region ORDER BY revenue DESC) FROM sales`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	w := sel.Columns[0].Expr.(*WindowExpr)
+	if strings.ToUpper(w.Func.Name) != "NTILE" {
+		t.Errorf("expected NTILE, got %s", w.Func.Name)
+	}
+	if len(w.Func.Args) != 1 {
+		t.Errorf("expected 1 arg to NTILE, got %d", len(w.Func.Args))
+	}
+}
+
+func TestParseOffsetFetch(t *testing.T) {
+	sql := `SELECT * FROM users ORDER BY id OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if sel.Offset == nil || *sel.Offset != 10 {
+		t.Errorf("expected OFFSET 10, got %v", sel.Offset)
+	}
+	if sel.Fetch == nil || *sel.Fetch != 5 {
+		t.Errorf("expected FETCH 5, got %v", sel.Fetch)
+	}
+}
+
+func TestParseOffsetOnly(t *testing.T) {
+	sql := `SELECT * FROM users ORDER BY id OFFSET 20 ROWS`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if sel.Offset == nil || *sel.Offset != 20 {
+		t.Errorf("expected OFFSET 20, got %v", sel.Offset)
+	}
+	if sel.Fetch != nil {
+		t.Errorf("expected no FETCH, got %v", sel.Fetch)
+	}
+}
+
+func TestParseOffsetFetchFirst(t *testing.T) {
+	// FETCH FIRST is a synonym for FETCH NEXT.
+	sql := `SELECT * FROM users ORDER BY id OFFSET 0 ROW FETCH FIRST 10 ROW ONLY`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if sel.Offset == nil || *sel.Offset != 0 {
+		t.Errorf("expected OFFSET 0, got %v", sel.Offset)
+	}
+	if sel.Fetch == nil || *sel.Fetch != 10 {
+		t.Errorf("expected FETCH 10, got %v", sel.Fetch)
+	}
+}
+
+func TestParseUnionInSubquery(t *testing.T) {
+	sql := `SELECT * FROM users WHERE id IN (SELECT id FROM admins UNION SELECT id FROM mods)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	in := sel.Where.(*InExpr)
+	if in.Subquery == nil {
+		t.Fatal("expected subquery in IN")
+	}
+	_, ok := in.Subquery.(*CompoundSelectStmt)
+	if !ok {
+		t.Fatalf("expected *CompoundSelectStmt in IN subquery, got %T", in.Subquery)
+	}
+}
+
+func TestParseDerivedTableWithUnion(t *testing.T) {
+	sql := `SELECT * FROM (SELECT a FROM t1 UNION SELECT b FROM t2) sub`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	ref := sel.From[0]
+	if ref.Subquery == nil {
+		t.Fatal("expected subquery in FROM")
+	}
+	_, ok := ref.Subquery.(*CompoundSelectStmt)
+	if !ok {
+		t.Fatalf("expected *CompoundSelectStmt in derived table, got %T", ref.Subquery)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
