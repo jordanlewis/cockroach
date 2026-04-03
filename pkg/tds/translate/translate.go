@@ -105,6 +105,14 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateCompoundSelect(s)
 	case *parser.WithStmt:
 		return translateWith(s)
+	case *parser.BeginTranStmt:
+		return translateBeginTran(s), nil
+	case *parser.CommitTranStmt:
+		return "COMMIT", nil
+	case *parser.RollbackTranStmt:
+		return translateRollbackTran(s), nil
+	case *parser.SaveTranStmt:
+		return fmt.Sprintf("SAVEPOINT %s", quoteIdent(s.Name)), nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -368,6 +376,21 @@ func translateUpdate(s *parser.UpdateStmt) string {
 		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
 	}
 	return b.String()
+}
+
+// translateBeginTran converts BEGIN TRAN[SACTION] [name] to CRDB BEGIN.
+// T-SQL transaction names have no equivalent in CRDB; they are ignored.
+func translateBeginTran(s *parser.BeginTranStmt) string {
+	return "BEGIN"
+}
+
+// translateRollbackTran converts ROLLBACK [TRAN[SACTION]] [name].
+// If a name is specified, it's treated as a savepoint rollback.
+func translateRollbackTran(s *parser.RollbackTranStmt) string {
+	if s.Name != "" {
+		return fmt.Sprintf("ROLLBACK TO SAVEPOINT %s", quoteIdent(s.Name))
+	}
+	return "ROLLBACK"
 }
 
 // translateExpr recursively translates a T-SQL expression into a
@@ -1199,6 +1222,11 @@ func translateSystemVariable(name string) string {
 		return "lastval()"
 	case "@@VERSION":
 		return "version()"
+	case "@@TRANCOUNT":
+		// T-SQL @@TRANCOUNT tracks transaction nesting depth. CRDB doesn't
+		// support nested transactions. The executor tracks this state and
+		// substitutes the value before execution.
+		return "@@TRANCOUNT"
 	default:
 		// Return as a comment for unsupported variables.
 		return fmt.Sprintf("NULL /* unsupported: %s */", name)

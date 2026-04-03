@@ -135,6 +135,14 @@ const (
 	tokenONLY
 	tokenROWS
 	tokenROW
+
+	// Transaction-related keywords.
+	tokenBEGIN
+	tokenTRAN
+	tokenTRANSACTION
+	tokenCOMMIT
+	tokenROLLBACK
+	tokenSAVE
 )
 
 var keywords = map[string]tokenType{
@@ -226,6 +234,14 @@ var keywords = map[string]tokenType{
 	"ONLY":      tokenONLY,
 	"ROWS":      tokenROWS,
 	"ROW":       tokenROW,
+
+	// Transaction-related keywords.
+	"BEGIN":       tokenBEGIN,
+	"TRAN":        tokenTRAN,
+	"TRANSACTION": tokenTRANSACTION,
+	"COMMIT":      tokenCOMMIT,
+	"ROLLBACK":    tokenROLLBACK,
+	"SAVE":        tokenSAVE,
 }
 
 // token represents a single lexical token from T-SQL input.

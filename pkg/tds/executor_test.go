@@ -455,7 +455,7 @@ func TestExecutorCatalogQueryDetection(t *testing.T) {
 	// by executor.go in this package.
 
 	tests := []struct {
-		sql      string
+		sql       string
 		isCatalog bool
 	}{
 		{"SELECT @@VERSION", true},
@@ -642,14 +642,14 @@ func TestExecutorMultipleSetCommands(t *testing.T) {
 
 func TestExecutorParseError(t *testing.T) {
 	// This tests that a T-SQL parse error produces an ERROR token.
-	// We use a SQL string that the parser can't handle.
+	// We use a SQL string that the parser genuinely can't handle.
 	e := &Executor{currentDatabase: "master"}
 	var buf bytes.Buffer
 	tw := tdswire.NewTokenWriter(&buf)
 
-	// "DELETE FROM t" is not supported by the parser (only SELECT, INSERT,
-	// CREATE TABLE, USE are supported). This should produce an error token.
-	if err := e.ExecuteBatch(context.Background(), "DELETE FROM t", tw); err != nil {
+	// "GRANT ALL TO user" starts with an unrecognized keyword and produces
+	// a parse error.
+	if err := e.ExecuteBatch(context.Background(), "GRANT ALL TO user", tw); err != nil {
 		t.Fatalf("ExecuteBatch: %v", err)
 	}
 

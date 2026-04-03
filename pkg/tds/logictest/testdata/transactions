@@ -1,71 +1,82 @@
 # Transaction control tests: BEGIN TRAN, COMMIT, ROLLBACK, SAVE TRAN.
 # Sources: T-SQL reference documentation, go-mssqldb tests (BSD-3-Clause).
-# None of the transaction keywords are recognized by the parser.
 
 # --- BEGIN TRANSACTION ---
 
-exec error=(parse error)
+exec
 BEGIN TRANSACTION
 ----
 
 # --- BEGIN TRAN (shorthand) ---
 
-exec error=(parse error)
+exec
 BEGIN TRAN
 ----
 
 # --- COMMIT TRANSACTION ---
 
-exec error=(parse error)
+exec
 COMMIT TRANSACTION
 ----
 
 # --- COMMIT (shorthand) ---
 
-exec error=(parse error)
+exec
 COMMIT
 ----
 
 # --- ROLLBACK TRANSACTION ---
 
-exec error=(parse error)
+exec
 ROLLBACK TRANSACTION
 ----
 
 # --- ROLLBACK (shorthand) ---
 
-exec error=(parse error)
+exec
 ROLLBACK
 ----
 
 # --- Named transactions ---
 
-exec error=(parse error)
+exec
 BEGIN TRAN myTran
 ----
 
 # --- SAVE TRANSACTION (savepoint) ---
 
-exec error=(parse error)
+exec
 SAVE TRANSACTION my_savepoint
 ----
 
 # --- ROLLBACK to savepoint ---
 
-exec error=(parse error)
+exec
 ROLLBACK TRANSACTION my_savepoint
+----
+
+# Create table for multi-statement batch tests.
+
+exec
+CREATE TABLE txn_test_tbl (id INT, name VARCHAR(100))
 ----
 
 # --- Transaction with DML (full scenario) ---
 
-exec error=(parse error)
-BEGIN TRAN; INSERT INTO test_tbl (id, name) VALUES (1, 'test'); COMMIT
+exec
+BEGIN TRAN; INSERT INTO txn_test_tbl (id, name) VALUES (1, 'test'); COMMIT
 ----
 
 # --- Transaction with rollback (full scenario) ---
 
-exec error=(parse error)
-BEGIN TRAN; INSERT INTO test_tbl (id, name) VALUES (1, 'test'); ROLLBACK
+exec
+BEGIN TRAN; INSERT INTO txn_test_tbl (id, name) VALUES (2, 'rollback_test'); ROLLBACK
+----
+
+# Clean up.
+
+exec
+DROP TABLE txn_test_tbl
 ----
 
 # --- SET TRANSACTION ISOLATION LEVEL ---
@@ -83,12 +94,12 @@ exec
 SET TRANSACTION ISOLATION LEVEL SNAPSHOT
 ----
 
-# --- @@TRANCOUNT (unsupported @@var, returns NULL) ---
+# --- @@TRANCOUNT (outside transaction, returns 0) ---
 
 query
 SELECT @@TRANCOUNT
 ----
-NULL
+0
 
 # --- XACT_ABORT (caught by SET catch-all, silently acknowledged) ---
 

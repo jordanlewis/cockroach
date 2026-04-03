@@ -79,6 +79,14 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseSelectOrCompound()
 	case tokenWITH:
 		return p.parseWith()
+	case tokenBEGIN:
+		return p.parseBeginTran()
+	case tokenCOMMIT:
+		return p.parseCommitTran()
+	case tokenROLLBACK:
+		return p.parseRollbackTran()
+	case tokenSAVE:
+		return p.parseSaveTran()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -696,6 +704,69 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 	}
 
 	return stmt, nil
+}
+
+// parseBeginTran parses: BEGIN TRAN[SACTION] [name]
+func (p *parser) parseBeginTran() (*BeginTranStmt, error) {
+	p.lex.next() // consume BEGIN
+	// Expect TRAN or TRANSACTION.
+	if p.lex.peek().typ != tokenTRAN && p.lex.peek().typ != tokenTRANSACTION {
+		return nil, p.error(fmt.Sprintf(
+			"expected TRAN or TRANSACTION after BEGIN, got %q", p.lex.peek().val))
+	}
+	p.lex.next() // consume TRAN/TRANSACTION
+	stmt := &BeginTranStmt{}
+	// Optional transaction name.
+	if p.lex.peek().typ == tokenIdent {
+		stmt.Name = p.lex.next().val
+	}
+	return stmt, nil
+}
+
+// parseCommitTran parses: COMMIT [TRAN[SACTION]] [name]
+func (p *parser) parseCommitTran() (*CommitTranStmt, error) {
+	p.lex.next() // consume COMMIT
+	stmt := &CommitTranStmt{}
+	// Optional TRAN or TRANSACTION keyword.
+	if p.lex.peek().typ == tokenTRAN || p.lex.peek().typ == tokenTRANSACTION {
+		p.lex.next()
+	}
+	// Optional transaction name.
+	if p.lex.peek().typ == tokenIdent {
+		stmt.Name = p.lex.next().val
+	}
+	return stmt, nil
+}
+
+// parseRollbackTran parses: ROLLBACK [TRAN[SACTION]] [name | savepoint]
+func (p *parser) parseRollbackTran() (*RollbackTranStmt, error) {
+	p.lex.next() // consume ROLLBACK
+	stmt := &RollbackTranStmt{}
+	// Optional TRAN or TRANSACTION keyword.
+	if p.lex.peek().typ == tokenTRAN || p.lex.peek().typ == tokenTRANSACTION {
+		p.lex.next()
+	}
+	// Optional transaction or savepoint name.
+	if p.lex.peek().typ == tokenIdent {
+		stmt.Name = p.lex.next().val
+	}
+	return stmt, nil
+}
+
+// parseSaveTran parses: SAVE TRAN[SACTION] name
+func (p *parser) parseSaveTran() (*SaveTranStmt, error) {
+	p.lex.next() // consume SAVE
+	// Expect TRAN or TRANSACTION.
+	if p.lex.peek().typ != tokenTRAN && p.lex.peek().typ != tokenTRANSACTION {
+		return nil, p.error(fmt.Sprintf(
+			"expected TRAN or TRANSACTION after SAVE, got %q", p.lex.peek().val))
+	}
+	p.lex.next() // consume TRAN/TRANSACTION
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return &SaveTranStmt{Name: name}, nil
 }
 
 // parseSelectColumn parses a select column: <expr> [AS <alias>] or *.
@@ -1822,7 +1893,9 @@ func isKeywordToken(typ tokenType) bool {
 		tokenWITH, tokenANY, tokenSOME,
 		tokenOVER, tokenPARTITION,
 		tokenOFFSET, tokenFETCH, tokenNEXT, tokenFIRST,
-		tokenONLY, tokenROWS, tokenROW:
+		tokenONLY, tokenROWS, tokenROW,
+		tokenBEGIN, tokenTRAN, tokenTRANSACTION, tokenCOMMIT,
+		tokenROLLBACK, tokenSAVE:
 		return true
 	}
 	return false

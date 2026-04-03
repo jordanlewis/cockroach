@@ -28,11 +28,11 @@ query error=(unknown function)
 SELECT SCOPE_IDENTITY()
 ----
 
-# @@TRANCOUNT — unsupported @@variable, returns NULL.
+# @@TRANCOUNT — returns the current transaction nesting level.
 query
 SELECT @@TRANCOUNT
 ----
-NULL
+0
 
 # @@SPID — unsupported @@variable, returns NULL.
 query

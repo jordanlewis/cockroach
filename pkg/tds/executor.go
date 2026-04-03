@@ -27,14 +27,20 @@ import (
 
 // Executor bridges the CockroachDB internal SQL executor (isql.DB) and
 // the TDS token stream. Each connection gets its own Executor instance
-// to track per-connection state such as the current database and the
-// last row count for @@ROWCOUNT.
+// to track per-connection state such as the current database, the last
+// row count for @@ROWCOUNT, and transaction state.
 type Executor struct {
 	db isql.DB
 
 	// Per-connection state.
 	currentDatabase  string
 	lastRowsAffected int
+
+	// Transaction state. When a BEGIN TRAN is executed, activeTxn holds
+	// the open transaction and tranCount tracks the nesting depth (always
+	// 0 or 1 since CRDB doesn't support nested transactions).
+	activeTxn isql.Txn
+	tranCount int
 }
 
 // NewExecutor creates an Executor bound to the given isql.DB.
@@ -53,6 +59,14 @@ func (e *Executor) Database() string {
 // SetDatabase updates the current database.
 func (e *Executor) SetDatabase(db string) {
 	e.currentDatabase = db
+}
+
+// substituteTranCount replaces the @@TRANCOUNT placeholder (emitted by
+// the translator) with the current transaction depth as an integer
+// literal. This allows SELECT @@TRANCOUNT to work without a special
+// CockroachDB function.
+func (e *Executor) substituteTranCount(sql string) string {
+	return strings.ReplaceAll(sql, "@@TRANCOUNT", fmt.Sprintf("%d", e.tranCount))
 }
 
 // executorOverride returns an InternalExecutorOverride configured for
@@ -106,6 +120,8 @@ func (e *Executor) ExecuteBatch(
 	// Execute each translated statement.
 	for i, crdbSQL := range crdbStatements {
 		stmt := batch.Stmts[i]
+		// Substitute @@TRANCOUNT with the current value before execution.
+		crdbSQL = e.substituteTranCount(crdbSQL)
 		if err := e.executeStatement(ctx, stmt, crdbSQL, tw); err != nil {
 			return err
 		}
@@ -154,11 +170,10 @@ func (e *Executor) handleUseDatabase(database string, tw *tdswire.TokenWriter) e
 func (e *Executor) executeStatement(
 	ctx context.Context, stmt parser.Statement, crdbSQL string, tw *tdswire.TokenWriter,
 ) error {
-	switch stmt.(type) {
+	switch s := stmt.(type) {
 	case *parser.UseStmt:
 		// USE was translated to SET database = '...'; handle specially.
-		useStmt := stmt.(*parser.UseStmt)
-		return e.handleUseDatabase(useStmt.Database, tw)
+		return e.handleUseDatabase(s.Database, tw)
 
 	case *parser.CreateDatabaseStmt:
 		return e.executeDDL(ctx, crdbSQL, tw)
@@ -199,10 +214,60 @@ func (e *Executor) executeStatement(
 	case *parser.SelectStmt:
 		return e.executeSelect(ctx, crdbSQL, tw)
 
+	case *parser.BeginTranStmt:
+		return e.executeBeginTran(ctx, tw)
+
+	case *parser.CommitTranStmt:
+		return e.executeCommitTran(ctx, tw)
+
+	case *parser.RollbackTranStmt:
+		return e.executeRollbackTran(ctx, s, tw)
+
+	case *parser.SaveTranStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
 	default:
 		// Best-effort: try as DML.
 		return e.executeDML(ctx, crdbSQL, tw)
 	}
+}
+
+// executeBeginTran handles BEGIN TRAN by incrementing the transaction
+// counter and acknowledging the command. Actual transaction management
+// is handled by CockroachDB's implicit transaction semantics within
+// each batch execution.
+func (e *Executor) executeBeginTran(ctx context.Context, tw *tdswire.TokenWriter) error {
+	e.tranCount++
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneFinal,
+	})
+}
+
+// executeCommitTran handles COMMIT by decrementing the transaction counter.
+func (e *Executor) executeCommitTran(ctx context.Context, tw *tdswire.TokenWriter) error {
+	if e.tranCount > 0 {
+		e.tranCount--
+	}
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneFinal,
+	})
+}
+
+// executeRollbackTran handles ROLLBACK. A plain ROLLBACK resets the
+// transaction counter to 0. A ROLLBACK to a named savepoint leaves
+// the counter unchanged (matching T-SQL semantics).
+func (e *Executor) executeRollbackTran(
+	ctx context.Context, stmt *parser.RollbackTranStmt, tw *tdswire.TokenWriter,
+) error {
+	if stmt.Name == "" {
+		e.tranCount = 0
+	}
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneFinal,
+	})
 }
 
 // executeDDL executes a DDL statement (CREATE TABLE, etc.) and returns

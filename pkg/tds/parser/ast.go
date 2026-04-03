@@ -968,6 +968,59 @@ func (e *WindowExpr) String() string {
 	return b.String()
 }
 
+// BeginTranStmt represents BEGIN TRAN[SACTION] [name].
+type BeginTranStmt struct {
+	Name string // optional transaction name
+}
+
+func (*BeginTranStmt) statementNode() {}
+
+func (s *BeginTranStmt) String() string {
+	if s.Name != "" {
+		return fmt.Sprintf("BEGIN TRANSACTION %s", formatIdent(s.Name))
+	}
+	return "BEGIN TRANSACTION"
+}
+
+// CommitTranStmt represents COMMIT [TRAN[SACTION]] [name].
+type CommitTranStmt struct {
+	Name string // optional transaction name
+}
+
+func (*CommitTranStmt) statementNode() {}
+
+func (s *CommitTranStmt) String() string {
+	if s.Name != "" {
+		return fmt.Sprintf("COMMIT TRANSACTION %s", formatIdent(s.Name))
+	}
+	return "COMMIT TRANSACTION"
+}
+
+// RollbackTranStmt represents ROLLBACK [TRAN[SACTION]] [name | savepoint].
+type RollbackTranStmt struct {
+	Name string // optional transaction name or savepoint name
+}
+
+func (*RollbackTranStmt) statementNode() {}
+
+func (s *RollbackTranStmt) String() string {
+	if s.Name != "" {
+		return fmt.Sprintf("ROLLBACK TRANSACTION %s", formatIdent(s.Name))
+	}
+	return "ROLLBACK TRANSACTION"
+}
+
+// SaveTranStmt represents SAVE TRAN[SACTION] name.
+type SaveTranStmt struct {
+	Name string // required savepoint name
+}
+
+func (*SaveTranStmt) statementNode() {}
+
+func (s *SaveTranStmt) String() string {
+	return fmt.Sprintf("SAVE TRANSACTION %s", formatIdent(s.Name))
+}
+
 // formatIdent returns an identifier, quoting it with brackets if it contains
 // special characters or is a reserved word. For simplicity, identifiers that
 // are plain alphanumeric (plus underscore) are returned unquoted.
