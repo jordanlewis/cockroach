@@ -11,24 +11,20 @@ USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# CREATE TYPE (unsupported — User-Defined Types).
-# The parser recognizes CREATE TYPE but the translator rejects it.
+# CREATE TYPE — maps to CRDB composite type.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TYPE jd_type1 (single text)
 ----
-unsupported CQL statement type: *parser.CreateTypeStatement
 
-error
+exec
 CREATE TYPE jd_type2 (first text, second int, third blob, fourth boolean)
 ----
-unsupported CQL statement type: *parser.CreateTypeStatement
 
-error
+exec
 CREATE TYPE IF NOT EXISTS jd_type3 (single text)
 ----
-unsupported CQL statement type: *parser.CreateTypeStatement
 
 # ---------------------------------------------------------------
 # CREATE FUNCTION (unsupported — parser does not recognize).

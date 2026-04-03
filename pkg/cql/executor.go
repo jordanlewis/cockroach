@@ -128,6 +128,18 @@ func (e *Executor) ExecuteQuery(
 			e.recordTableSchema(s, ks)
 		}
 		return ddlResult
+	case *parser.CreateTypeStatement:
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "CREATED", "TYPE", ks, s.TypeName)
+	case *parser.AlterTypeStatement:
+		ks := s.Keyspace
+		if ks == "" {
+			ks = keyspace
+		}
+		return e.executeDDL(ctx, result, override, "UPDATED", "TYPE", ks, s.TypeName)
 	case *parser.InsertStatement:
 		return e.executeDML(ctx, result, override)
 	case *parser.UpdateStatement:

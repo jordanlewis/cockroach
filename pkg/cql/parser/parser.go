@@ -674,7 +674,7 @@ func (p *parser) parseAssignmentValue() (Expr, error) {
 	return left, nil
 }
 
-// parseAlter parses ALTER TABLE and ALTER KEYSPACE statements.
+// parseAlter parses ALTER TABLE, ALTER KEYSPACE, and ALTER TYPE statements.
 func (p *parser) parseAlter() (Statement, error) {
 	p.lex.next() // consume ALTER
 	t := p.lex.peek()
@@ -683,8 +683,10 @@ func (p *parser) parseAlter() (Statement, error) {
 		return p.parseAlterTable()
 	case "KEYSPACE":
 		return p.parseAlterKeyspace()
+	case "TYPE":
+		return p.parseAlterType()
 	default:
-		return nil, p.errorf("expected TABLE or KEYSPACE after ALTER, got %q", t.val)
+		return nil, p.errorf("expected TABLE, KEYSPACE, or TYPE after ALTER, got %q", t.val)
 	}
 }
 
@@ -743,6 +745,71 @@ func (p *parser) parseAlterKeyspace() (*AlterKeyspaceStatement, error) {
 		p.lex.next() // consume AND
 	}
 
+	return stmt, nil
+}
+
+// parseAlterType parses:
+//
+//	ALTER TYPE [<ks>.]<name> ADD <field> <type>
+//	ALTER TYPE [<ks>.]<name> RENAME <old> TO <new>
+func (p *parser) parseAlterType() (*AlterTypeStatement, error) {
+	p.lex.next() // consume TYPE
+	stmt := &AlterTypeStatement{}
+
+	ks, name, err := p.parseQualifiedName()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Keyspace = ks
+	stmt.TypeName = name
+
+	opTok := p.lex.peek()
+	if opTok.kind != tokIdent {
+		return nil, p.errorf("expected ADD or RENAME after type name, got %q", opTok.val)
+	}
+	switch strings.ToUpper(opTok.val) {
+	case "ADD":
+		p.lex.next()
+		field, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		dt, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTypeAddField{Field: field, DataType: dt}
+	case "RENAME":
+		p.lex.next()
+		oldName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectKeyword("TO"); err != nil {
+			return nil, err
+		}
+		newName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTypeRenameField{OldName: oldName, NewName: newName}
+	case "ALTER":
+		p.lex.next()
+		field, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectKeyword("TYPE"); err != nil {
+			return nil, err
+		}
+		dt, err := p.parseDataType()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Op = &AlterTypeAlterField{Field: field, DataType: dt}
+	default:
+		return nil, p.errorf("expected ADD, RENAME, or ALTER after type name, got %q", opTok.val)
+	}
 	return stmt, nil
 }
 
@@ -1592,6 +1659,27 @@ func (p *parser) parseOneSelector() (Selector, error) {
 			alias, aliasErr := p.expectIdent()
 			if aliasErr != nil {
 				return Selector{}, aliasErr
+			}
+			sel.Alias = alias
+		}
+		return sel, nil
+	}
+
+	// Check for field access: col.field (UDT composite field access).
+	if p.lex.peek().kind == tokDot {
+		p.lex.next() // consume dot
+		field, err := p.expectIdent()
+		if err != nil {
+			return Selector{}, err
+		}
+		sel := Selector{
+			Expr: &FieldAccessExpr{Column: name, Field: field},
+		}
+		if isKeyword(p.lex.peek(), "AS") {
+			p.lex.next() // consume AS
+			alias, err := p.expectIdent()
+			if err != nil {
+				return Selector{}, err
 			}
 			sel.Alias = alias
 		}

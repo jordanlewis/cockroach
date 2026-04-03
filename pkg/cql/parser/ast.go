@@ -483,3 +483,50 @@ type CreateTypeStatement struct {
 }
 
 func (*CreateTypeStatement) statementNode() {}
+
+// AlterTypeStatement represents ALTER TYPE for user-defined types.
+type AlterTypeStatement struct {
+	TypeName string
+	Keyspace string
+	Op       AlterTypeOp
+}
+
+func (*AlterTypeStatement) statementNode() {}
+
+// AlterTypeOp is the interface implemented by ALTER TYPE operation types.
+type AlterTypeOp interface {
+	alterTypeOp()
+}
+
+// AlterTypeAddField represents ALTER TYPE ... ADD <field> <type>.
+type AlterTypeAddField struct {
+	Field    string
+	DataType DataType
+}
+
+func (*AlterTypeAddField) alterTypeOp() {}
+
+// AlterTypeRenameField represents ALTER TYPE ... RENAME <old> TO <new>.
+type AlterTypeRenameField struct {
+	OldName string
+	NewName string
+}
+
+func (*AlterTypeRenameField) alterTypeOp() {}
+
+// AlterTypeAlterField represents ALTER TYPE ... ALTER <field> TYPE <type>.
+type AlterTypeAlterField struct {
+	Field    string
+	DataType DataType
+}
+
+func (*AlterTypeAlterField) alterTypeOp() {}
+
+// FieldAccessExpr represents a composite type field access: col.field.
+// In CQL this appears as column.field_name in SELECT lists.
+type FieldAccessExpr struct {
+	Column string
+	Field  string
+}
+
+func (*FieldAccessExpr) exprNode() {}

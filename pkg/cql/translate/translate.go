@@ -209,6 +209,10 @@ func TranslateWithSchema(stmt parser.Statement, schema *SchemaInfo) (Result, err
 		return translateTruncate(s)
 	case *parser.BatchStatement:
 		return translateBatch(s)
+	case *parser.CreateTypeStatement:
+		return translateCreateType(s)
+	case *parser.AlterTypeStatement:
+		return translateAlterType(s)
 	default:
 		return Result{}, errors.Newf("unsupported CQL statement type: %T", stmt)
 	}
@@ -248,8 +252,8 @@ func translateCreateTable(s *parser.CreateTableStatement) (Result, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sqlType, ok := cqlTypeToCRDBSQL[col.DataType.Name]
-		if !ok {
+		sqlType := cqlTypeToSQL(col.DataType)
+		if sqlType == "" {
 			return Result{}, errors.Newf(
 				"unsupported CQL type %q for column %q", col.DataType.Name, col.Name,
 			)
@@ -897,6 +901,9 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		return functionCallToSQL(v, paramIdx)
 	case *parser.CastExpr:
 		return castExprToSQL(v, paramIdx)
+	case *parser.FieldAccessExpr:
+		// CQL col.field → CRDB ("col")."field" for composite type field access.
+		return fmt.Sprintf("(%s).%s", quoteIdent(v.Column), quoteIdent(v.Field)), nil, nil
 	default:
 		return "", nil, errors.Newf("unsupported expression type: %T", e)
 	}
@@ -1255,6 +1262,68 @@ func castExprToSQL(c *parser.CastExpr, paramIdx *int) (string, interface{}, erro
 		return "", nil, err
 	}
 	return fmt.Sprintf("CAST(%s AS %s)", innerSQL, sqlType), nil, nil
+}
+
+// cqlTypeToSQL maps a CQL DataType to its CRDB SQL type string. Known types
+// map through cqlTypeToCRDBSQL; unknown type names without type parameters
+// are treated as user-defined types (UDTs) and returned as quoted identifiers.
+// Parameterized unknown types (like tuple<int, int>) are unsupported.
+func cqlTypeToSQL(dt parser.DataType) string {
+	if sqlType, ok := cqlTypeToCRDBSQL[dt.Name]; ok {
+		return sqlType
+	}
+	if len(dt.Params) > 0 {
+		// Parameterized types must be in the type map; if not, they're
+		// unsupported (e.g. tuple<int, int> without frozen<>).
+		return ""
+	}
+	// Bare identifier: treat as a user-defined composite type reference.
+	return quoteIdent(dt.Name)
+}
+
+// translateCreateType maps CQL CREATE TYPE to CRDB CREATE TYPE AS (...).
+// CQL CREATE TYPE defines a composite (record) type with named fields.
+func translateCreateType(s *parser.CreateTypeStatement) (Result, error) {
+	var sb strings.Builder
+	sb.WriteString("CREATE TYPE ")
+	if s.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	if s.Keyspace != "" {
+		sb.WriteString(quoteIdent(s.Keyspace))
+		sb.WriteByte('.')
+	}
+	sb.WriteString(quoteIdent(s.TypeName))
+	sb.WriteString(" AS (")
+	for i, field := range s.Fields {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(field.Name))
+		sb.WriteByte(' ')
+		sb.WriteString(cqlTypeToSQL(field.DataType))
+	}
+	sb.WriteByte(')')
+	return Result{SQL: sb.String()}, nil
+}
+
+// translateAlterType maps CQL ALTER TYPE operations. CockroachDB does not
+// support ALTER TYPE ADD ATTRIBUTE or RENAME ATTRIBUTE for composite types,
+// so these operations return an error.
+func translateAlterType(s *parser.AlterTypeStatement) (Result, error) {
+	switch s.Op.(type) {
+	case *parser.AlterTypeAddField:
+		return Result{}, errors.Newf(
+			"ALTER TYPE ADD field is not supported for composite types")
+	case *parser.AlterTypeRenameField:
+		return Result{}, errors.Newf(
+			"ALTER TYPE RENAME field is not supported for composite types")
+	case *parser.AlterTypeAlterField:
+		return Result{}, errors.Newf(
+			"ALTER TYPE ALTER field is not supported for composite types")
+	default:
+		return Result{}, errors.Newf("unsupported ALTER TYPE operation: %T", s.Op)
+	}
 }
 
 // quoteIdent quotes a SQL identifier with double quotes. CQL identifiers are

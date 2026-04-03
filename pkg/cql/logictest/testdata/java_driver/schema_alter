@@ -131,23 +131,23 @@ ALTER TABLE jd_alt DROP COMPACT STORAGE
 at position 32: unexpected token "STORAGE" after statement
 
 # ---------------------------------------------------------------
-# ALTER TYPE (unsupported).
+# ALTER TYPE (parsed but unsupported for composite type modifications).
 # ---------------------------------------------------------------
 
 error
 ALTER TYPE jd_alt ALTER x TYPE text
 ----
-at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+ALTER TYPE ALTER field is not supported for composite types
 
 error
 ALTER TYPE jd_alt ADD x text
 ----
-at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+ALTER TYPE ADD field is not supported for composite types
 
 error
 ALTER TYPE jd_alt RENAME x TO y
 ----
-at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+ALTER TYPE RENAME field is not supported for composite types
 
 # ---------------------------------------------------------------
 # ALTER MATERIALIZED VIEW (unsupported).
@@ -156,4 +156,4 @@ at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
 error
 ALTER MATERIALIZED VIEW baz WITH compression={'class':'LZ4Compressor'} AND default_time_to_live=86400
 ----
-at position 6: expected TABLE or KEYSPACE after ALTER, got "MATERIALIZED"
+at position 6: expected TABLE, KEYSPACE, or TYPE after ALTER, got "MATERIALIZED"

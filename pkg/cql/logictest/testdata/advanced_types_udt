@@ -1,32 +1,31 @@
 # User-Defined Types (UDTs): CREATE TYPE, ALTER TYPE, UDT columns,
 # nested UDTs, and field access.
 #
-# The parser accepts CREATE TYPE syntax and recognizes unknown type
-# names as potential UDTs. ALTER TYPE and field access (addr.street)
-# remain unsupported at the parser level. The translator does not
-# yet handle UDT operations. These tests document the expected errors.
+# CREATE TYPE maps to CockroachDB composite types. UDT column types
+# and field access (addr.street → ("addr")."street") are supported.
+# ALTER TYPE ADD/RENAME for composite types is not supported by CRDB.
+# Nested UDTs (composite types referencing other UDTs) are not yet
+# supported by CRDB.
 
 exec
 USE defaultdb
 ----
 
-# CREATE TYPE — parsed but translator rejects.
-error
+# CREATE TYPE — maps to CRDB composite type.
+exec
 CREATE TYPE address (street text, city text, zip text)
 ----
-unsupported CQL statement type: *parser.CreateTypeStatement
 
-# ALTER TYPE is not yet supported (ALTER handles TABLE and KEYSPACE).
+# ALTER TYPE ADD is not supported for composite types in CRDB.
 error
 ALTER TYPE address ADD state text
 ----
-at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+ALTER TYPE ADD field is not supported for composite types
 
-# UDT as a column type — parsed as unknown type, translator rejects.
-error
+# UDT as a column type — uses the composite type directly.
+exec
 CREATE TABLE udt_table (id int PRIMARY KEY, addr address)
 ----
-unsupported CQL type "address" for column "addr"
 
 # Frozen UDT column type — frozen<> maps to JSONB even for UDTs.
 # Table creation succeeds but UDT data operations are not supported.
@@ -34,16 +33,15 @@ exec
 CREATE TABLE frozen_udt_table (id int PRIMARY KEY, addr frozen<address>)
 ----
 
-# Nested UDTs (a UDT containing another UDT).
+# Nested UDTs (a UDT containing another UDT). CRDB does not yet
+# support composite types that reference other user-defined types.
 error
 CREATE TYPE full_address (base address, country text)
 ----
-unsupported CQL statement type: *parser.CreateTypeStatement
+cql-ddl: unimplemented: composite types that reference user-defined types not yet supported
 
 # UDT field access in SELECT (column.field syntax).
-# The parser reads "addr" as a column, then fails on "." when
-# expecting FROM.
-error
+# Translates to ("addr")."street" in CRDB.
+exec
 SELECT addr.street FROM udt_table
 ----
-at position 11: expected FROM, got "."
