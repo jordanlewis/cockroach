@@ -159,11 +159,16 @@ type Assignment struct {
 }
 
 // DeleteStatement represents
-// DELETE FROM [<ks>.]<table> [USING TIMESTAMP ...] WHERE <conds>
+// DELETE [<cols>] FROM [<ks>.]<table> [USING TIMESTAMP ...] WHERE <conds>
 // [IF <conds>|IF EXISTS].
+//
+// When Columns is non-empty, this is a column-level DELETE (Cassandra
+// tombstone semantics): the named columns are set to NULL rather than
+// removing the entire row.
 type DeleteStatement struct {
 	Table    string
 	Keyspace string       // empty when unqualified
+	Columns  []string     // column-level DELETE; empty means whole-row DELETE
 	Using    *UsingClause // USING TIMESTAMP, nil if absent
 	Where    []WhereClause
 	IfExists bool

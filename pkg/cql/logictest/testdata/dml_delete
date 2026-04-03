@@ -2,8 +2,8 @@
 #
 # CQL DELETE removes entire rows by primary key. Column-level DELETE
 # (DELETE col1, col2 FROM table WHERE ...) is a Cassandra feature that
-# sets individual columns to null (tombstones); this syntax is not yet
-# supported by the parser. DELETE IF EXISTS is accepted (SQL DELETE
+# sets individual columns to null (tombstones); this is translated to
+# UPDATE ... SET col = NULL. DELETE IF EXISTS is accepted (SQL DELETE
 # WHERE is already a no-op for missing rows). DELETE with IF conditions
 # translates IF predicates to additional WHERE clauses so the delete
 # only applies when conditions match.
@@ -131,25 +131,44 @@ DELETE FROM dml_del WHERE pk IN (10, 11)
 ----
 
 # ---------------------------------------------------------------
-# DELETE specific columns (tombstones) — unsupported.
+# DELETE specific columns (tombstones).
 #
 # In Cassandra, DELETE col1, col2 FROM table WHERE ... sets those
 # columns to null (tombstones) rather than removing the entire row.
-# Unsupported: parser does not recognize column-level DELETE syntax;
-# would require parser changes to support DELETE <columns> FROM.
+# Translated as UPDATE ... SET col = NULL.
 # ---------------------------------------------------------------
 
-# Unsupported: column-level DELETE (MEDIUM — requires parser changes).
-error
+# Column-level DELETE sets a single column to NULL.
+exec
 DELETE name FROM dml_del WHERE pk = 1 AND ck = 10
 ----
-at position 7: expected FROM, got "name"
 
-# Unsupported: column-level DELETE with multiple columns.
-error
+query
+SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 NULL 100
+
+# Restore for next test.
+exec
+UPDATE dml_del SET name = 'alice' WHERE pk = 1 AND ck = 10
+----
+
+# Column-level DELETE with multiple columns sets all to NULL.
+exec
 DELETE name, val FROM dml_del WHERE pk = 1 AND ck = 10
 ----
-at position 7: expected FROM, got "name"
+
+query
+SELECT pk, ck, name, val FROM dml_del WHERE pk = 1 AND ck = 10
+----
+pk ck name val
+1 10 NULL NULL
+
+# Restore for subsequent tests.
+exec
+UPDATE dml_del SET name = 'alice', val = 100 WHERE pk = 1 AND ck = 10
+----
 
 # ---------------------------------------------------------------
 # DELETE with IF conditions (lightweight transactions).

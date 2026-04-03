@@ -645,6 +645,24 @@ func TestParseDeleteIfExists(t *testing.T) {
 	}
 }
 
+func TestParseDeleteColumns(t *testing.T) {
+	input := `DELETE name, val FROM t WHERE pk = 1`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := stmt.(*DeleteStatement)
+	if len(del.Columns) != 2 || del.Columns[0] != "name" || del.Columns[1] != "val" {
+		t.Errorf("columns = %v, want [name val]", del.Columns)
+	}
+	if del.Table != "t" {
+		t.Errorf("table = %q, want %q", del.Table, "t")
+	}
+	if len(del.Where) != 1 || del.Where[0].Column != "pk" {
+		t.Errorf("where = %+v, want pk = 1", del.Where)
+	}
+}
+
 func TestParseSelectFullSyntax(t *testing.T) {
 	// SELECT with all optional clauses combined.
 	input := `SELECT DISTINCT pk FROM t WHERE pk IN (1, 2) ORDER BY pk DESC LIMIT 10 ALLOW FILTERING`

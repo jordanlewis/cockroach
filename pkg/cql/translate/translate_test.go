@@ -444,6 +444,21 @@ func TestTranslateDelete(t *testing.T) {
 			cql:  "DELETE FROM t WHERE pk = 1 IF name != 'alice'",
 			want: `DELETE FROM "t" WHERE "pk" = 1 AND "name" != 'alice'`,
 		},
+		{
+			name: "column-level delete single",
+			cql:  "DELETE name FROM t WHERE pk = 1",
+			want: `UPDATE "t" SET "name" = NULL WHERE "pk" = 1`,
+		},
+		{
+			name: "column-level delete multiple",
+			cql:  "DELETE name, val FROM t WHERE pk = 1 AND ck = 2",
+			want: `UPDATE "t" SET "name" = NULL, "val" = NULL WHERE "pk" = 1 AND "ck" = 2`,
+		},
+		{
+			name: "column-level delete with keyspace",
+			cql:  "DELETE col FROM ks.t WHERE id = 1",
+			want: `UPDATE "ks"."t" SET "col" = NULL WHERE "id" = 1`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -553,19 +553,41 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 	return Result{SQL: sb.String(), Params: params}, nil
 }
 
-// translateDelete maps CQL DELETE to CRDB SQL DELETE.
+// translateDelete maps CQL DELETE to CRDB SQL.
+//
+// When columns are specified (DELETE col1, col2 FROM ...), the statement is a
+// column-level DELETE (Cassandra tombstone semantics): the named columns are
+// set to NULL. This translates to UPDATE ... SET col1 = NULL, col2 = NULL
+// WHERE ....
+//
+// When no columns are specified, the statement deletes entire rows.
 //
 // CQL DELETE with IF EXISTS or IF conditions is conditional. IF EXISTS is a
 // no-op guard (the SQL DELETE WHERE already handles missing rows). IF conditions
-// are appended as additional WHERE predicates so the DELETE only executes when
-// the conditions are satisfied.
+// are appended as additional WHERE predicates so the statement only executes
+// when the conditions are satisfied.
 func translateDelete(s *parser.DeleteStatement) (Result, error) {
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
 
-	sb.WriteString("DELETE FROM ")
-	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	if len(s.Columns) > 0 {
+		// Column-level DELETE → UPDATE ... SET col = NULL.
+		sb.WriteString("UPDATE ")
+		sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+		sb.WriteString(" SET ")
+		for i, col := range s.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(col))
+			sb.WriteString(" = NULL")
+		}
+	} else {
+		sb.WriteString("DELETE FROM ")
+		sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	}
+
 	sb.WriteString(" WHERE ")
 
 	if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {

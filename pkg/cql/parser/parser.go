@@ -501,14 +501,34 @@ func (p *parser) parseUpdate() (*UpdateStatement, error) {
 
 // parseDelete parses:
 //
-//	DELETE FROM [<ks>.]<table> WHERE <conds> [IF EXISTS | IF <conds>]
+//	DELETE [<col1>, <col2>, ...] FROM [<ks>.]<table> WHERE <conds>
+//	  [IF EXISTS | IF <conds>]
+//
+// When columns are specified between DELETE and FROM, this is a
+// column-level DELETE (Cassandra tombstone semantics).
 func (p *parser) parseDelete() (*DeleteStatement, error) {
 	p.lex.next() // consume DELETE
+
+	stmt := &DeleteStatement{}
+
+	// Optional column list between DELETE and FROM.
+	if !isKeyword(p.lex.peek(), "FROM") {
+		for {
+			col, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Columns = append(stmt.Columns, col)
+			if p.lex.peek().kind != tokComma {
+				break
+			}
+			p.lex.next() // consume comma
+		}
+	}
 
 	if err := p.expectKeyword("FROM"); err != nil {
 		return nil, err
 	}
-	stmt := &DeleteStatement{}
 
 	ks, tbl, err := p.parseQualifiedName()
 	if err != nil {

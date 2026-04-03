@@ -118,7 +118,7 @@ SELECT * FROM jd_del WHERE k = 6
 k v v1 v2
 
 # ---------------------------------------------------------------
-# Column-level DELETE (unsupported — parser expects FROM after DELETE).
+# Column-level DELETE (tombstone semantics — sets column to NULL).
 # ---------------------------------------------------------------
 
 exec
@@ -129,7 +129,12 @@ exec
 INSERT INTO jd_del_col (k, v) VALUES (1, 'hello')
 ----
 
-error
+exec
 DELETE v FROM jd_del_col WHERE k = 1
 ----
-at position 7: expected FROM, got "v"
+
+query
+SELECT k, v FROM jd_del_col WHERE k = 1
+----
+k v
+1 NULL
