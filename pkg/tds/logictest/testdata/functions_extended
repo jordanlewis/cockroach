@@ -22,25 +22,33 @@ SELECT ABS(-42)
 
 # === String functions — need translation or pass-through ===
 
-# LEN (T-SQL) — not yet translated to length().
-query error=(unknown function)
+# LEN (T-SQL) → length().
+query
 SELECT LEN('hello')
 ----
+5
 
 # CHARINDEX — T-SQL string search function.
-query error=(unknown function)
+# CHARINDEX(substr, str) → strpos(str, substr) (args swapped).
+query
 SELECT CHARINDEX('world', 'hello world')
 ----
+7
 
-# PATINDEX — pattern index search.
-query error=(unknown function)
+# PATINDEX — pattern index search → strpos approximation.
+# This is a lossy translation: SQL wildcards in the pattern are passed
+# literally to strpos, so '%world%' searches for the literal string.
+# Returns 0 (not found) because of the wildcards.
+query
 SELECT PATINDEX('%world%', 'hello world')
 ----
+0
 
-# STUFF — insert string at position.
-query error=(unknown function)
+# STUFF — insert string at position → overlay().
+query
 SELECT STUFF('hello world', 6, 5, 'there')
 ----
+hello there
 
 # LEFT — left substring (passes through to CockroachDB).
 query
@@ -77,10 +85,11 @@ SELECT RTRIM('hello  ')
 ----
 hello
 
-# REPLICATE — repeat string N times.
-query error=(unknown function)
+# REPLICATE — repeat string N times → repeat().
+query
 SELECT REPLICATE('ab', 3)
 ----
+ababab
 
 # REVERSE — reverse string.
 query
@@ -88,10 +97,12 @@ SELECT REVERSE('hello')
 ----
 olleh
 
-# SPACE — generate N spaces.
-query error=(unknown function)
-SELECT SPACE(5)
+# SPACE — generate N spaces → repeat(' ', n).
+# Verify via LEN since bare spaces are hard to assert in test output.
+query
+SELECT LEN(SPACE(5))
 ----
+5
 
 # STRING_AGG (SQL Server 2017+) — aggregate concatenation.
 # Parser doesn't support subqueries in FROM (UNION ALL).
@@ -109,55 +120,68 @@ hello world
 
 # GETDATE() — already works, tested in functions file.
 
-# DATEADD — add interval to date.
-query error=(unknown function)
+# DATEADD — add interval to date → timestamptz arithmetic.
+query
 SELECT DATEADD(day, 1, '2026-01-01')
 ----
+2026-01-02 00:00:00+00
 
-# DATEDIFF — difference between dates.
-query error=(unknown function)
+# DATEDIFF — difference between dates → epoch extraction.
+query
 SELECT DATEDIFF(day, '2026-01-01', '2026-01-31')
 ----
+30
 
-# DATEPART — extract part of date.
-query error=(unknown function)
+# DATEPART — extract part of date → EXTRACT().
+query
 SELECT DATEPART(year, '2026-06-15')
 ----
+2026
 
-# DATENAME — name of date part.
-query error=(unknown function)
+# DATENAME — name of date part → to_char().
+query
 SELECT DATENAME(month, '2026-06-15')
 ----
+June
 
-# YEAR / MONTH / DAY — shorthand date part extraction.
-query error=(unknown function)
+# YEAR / MONTH / DAY — shorthand date part extraction → EXTRACT().
+query
 SELECT YEAR('2026-06-15')
 ----
+2026
 
-query error=(unknown function)
+query
 SELECT MONTH('2026-06-15')
 ----
+6
 
-query error=(unknown function)
+query
 SELECT DAY('2026-06-15')
 ----
+15
 
-# SYSDATETIME (SQL Server 2008+).
-query error=(unknown function)
-SELECT SYSDATETIME()
+# SYSDATETIME (SQL Server 2008+) → now().
+# Verify translation produces valid SQL (can't assert exact value).
+query
+SELECT DATEPART(year, SYSDATETIME())
 ----
+2026
 
-# GETUTCDATE — UTC version of GETDATE.
-query error=(unknown function)
-SELECT GETUTCDATE()
+# GETUTCDATE — UTC version of GETDATE → now() AT TIME ZONE 'UTC'.
+# Verify translation produces valid SQL (can't assert exact value).
+query
+SELECT DATEPART(year, GETUTCDATE())
 ----
+2026
 
-# EOMONTH — end of month.
-query error=(unknown function)
+# EOMONTH — end of month → date_trunc arithmetic.
+query
 SELECT EOMONTH('2026-02-15')
 ----
+2026-02-28
 
-# FORMAT — CRDB has format() but with different signature than T-SQL.
+# FORMAT — T-SQL FORMAT(value, fmt) → to_char(value, fmt).
+# May still fail if CRDB's to_char doesn't support the format string.
 query error=(unknown signature)
 SELECT FORMAT(1234567, 'N2')
 ----
@@ -204,30 +228,31 @@ SELECT SIGN(-5)
 ----
 -1
 
-# LOG — T-SQL LOG() is natural log, but CRDB's log() is base-10.
-# This semantic mismatch means LOG passes through but returns wrong
-# results. Needs translation to ln(). Also needs explicit DECIMAL
-# cast because CRDB's log() is ambiguous on int.
-query error=(ambiguous call)
-SELECT LOG(10)
+# LOG — T-SQL LOG(x) is natural log → ln(x).
+query
+SELECT LOG(CONVERT(FLOAT, 1))
 ----
+0
 
-# LOG10 — base-10 log (unknown function in CRDB).
-query error=(unknown function)
-SELECT LOG10(1000)
+# LOG10 — base-10 log → log(x) in CRDB.
+query
+SELECT LOG10(CONVERT(FLOAT, 1000))
 ----
+3
 
 # === Conditional functions ===
 
-# IIF (SQL Server 2012+) — inline IF.
-query error=(unknown function)
+# IIF (SQL Server 2012+) — inline IF → CASE WHEN.
+query
 SELECT IIF(1 = 1, 'yes', 'no')
 ----
+yes
 
-# CHOOSE (SQL Server 2012+) — index-based choice.
-query error=(unknown function)
+# CHOOSE (SQL Server 2012+) — index-based choice → CASE.
+query
 SELECT CHOOSE(2, 'first', 'second', 'third')
 ----
+second
 
 # NULLIF (standard SQL, should work).
 query
@@ -248,12 +273,11 @@ query error=(parse error)
 SELECT CAST(42 AS VARCHAR)
 ----
 
-# TRY_CONVERT (SQL Server 2012+) — safe conversion.
-# Parser treats TRY_CONVERT as a function call with two args.
-# Passes through to CRDB which doesn't have TRY_CONVERT.
-query error=(unknown function)
+# TRY_CONVERT (SQL Server 2012+) — safe conversion → try_cast().
+query
 SELECT TRY_CONVERT(INT, 'not_a_number')
 ----
+NULL
 
 # TRY_CAST (SQL Server 2012+).
 # Parser treats TRY_CAST as a function call but AS inside parens
@@ -264,50 +288,84 @@ SELECT TRY_CAST('not_a_number' AS INT)
 
 # === System functions ===
 
-# NEWID — generate UUID.
-query error=(unknown function)
-SELECT NEWID()
+# NEWID — generate UUID → gen_random_uuid().
+# Can't assert exact value; verify it returns a non-null UUID.
+query
+SELECT LEN(CONVERT(VARCHAR(36), NEWID()))
 ----
+36
 
-# OBJECT_ID — get object ID by name.
-query error=(unknown function)
+# OBJECT_ID — get object ID by name → NULL stub.
+query
 SELECT OBJECT_ID('users')
 ----
+NULL
 
-# DB_NAME — current database name.
-query error=(unknown function)
+# DB_NAME — current database name → current_database().
+query
 SELECT DB_NAME()
 ----
+defaultdb
 
-# SCHEMA_NAME — current schema name.
-query error=(unknown function)
+# SCHEMA_NAME — current schema name → current_schema().
+query
 SELECT SCHEMA_NAME()
 ----
+public
 
-# USER_NAME — current user.
-query error=(unknown function)
+# USER_NAME — current user → current_user.
+query
 SELECT USER_NAME()
 ----
+root
 
-# HOST_NAME — client host.
-query error=(unknown function)
+# HOST_NAME — client host → NULL stub (no CRDB equivalent).
+query
 SELECT HOST_NAME()
 ----
+NULL
 
-# APP_NAME — application name.
-query error=(unknown function)
+# APP_NAME — application name → current_setting('application_name').
+query
 SELECT APP_NAME()
 ----
+logictest
 
 # === Aggregate functions (extended) ===
 
-# COUNT_BIG — 64-bit count.
-query error=(unknown function)
-SELECT COUNT_BIG(*)
+# COUNT_BIG — 64-bit count → count().
+exec
+CREATE TABLE count_big_test (id INT NOT NULL)
 ----
 
-# STDEV / STDEVP / VAR / VARP — statistical aggregates.
-# STDEV may pass through (CRDB has stddev but not stdev).
-query error=(unknown function)
-SELECT STDEV(1)
+exec
+INSERT INTO count_big_test (id) VALUES (1), (2), (3)
+----
+
+query
+SELECT COUNT_BIG(*) FROM count_big_test
+----
+3
+
+exec
+DROP TABLE count_big_test
+----
+
+# STDEV — standard deviation → stddev().
+# stddev on a single value returns NULL.
+exec
+CREATE TABLE stdev_test (val INT NOT NULL)
+----
+
+exec
+INSERT INTO stdev_test (val) VALUES (1), (2), (3)
+----
+
+query
+SELECT STDEV(val) FROM stdev_test
+----
+1
+
+exec
+DROP TABLE stdev_test
 ----

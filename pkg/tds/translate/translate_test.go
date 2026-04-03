@@ -529,6 +529,171 @@ func TestTranslateSelectWithTableAlias(t *testing.T) {
 	require.Equal(t, "SELECT u.name FROM users u WHERE u.id = 1", results[0])
 }
 
+func TestTranslateFunctionMappings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// String functions.
+		{
+			name:     "LEN",
+			input:    "SELECT LEN('hello')",
+			expected: "SELECT length('hello')",
+		},
+		{
+			name:     "CHARINDEX",
+			input:    "SELECT CHARINDEX('world', 'hello world')",
+			expected: "SELECT strpos('hello world', 'world')",
+		},
+		{
+			name:     "STUFF",
+			input:    "SELECT STUFF('hello world', 6, 5, 'there')",
+			expected: "SELECT overlay('hello world' placing 'there' from 6 for 5)",
+		},
+		{
+			name:     "REPLICATE",
+			input:    "SELECT REPLICATE('ab', 3)",
+			expected: "SELECT repeat('ab', 3)",
+		},
+		{
+			name:     "SPACE",
+			input:    "SELECT SPACE(5)",
+			expected: "SELECT repeat(' ', 5)",
+		},
+
+		// Date/time functions.
+		{
+			name:     "DATEADD",
+			input:    "SELECT DATEADD(day, 1, '2026-01-01')",
+			expected: "SELECT ('2026-01-01'::TIMESTAMPTZ + 1 * INTERVAL '1 day')",
+		},
+		{
+			name:     "DATEDIFF",
+			input:    "SELECT DATEDIFF(day, '2026-01-01', '2026-01-31')",
+			expected: "SELECT (EXTRACT(epoch FROM '2026-01-31'::TIMESTAMPTZ - '2026-01-01'::TIMESTAMPTZ) / 86400)::INT",
+		},
+		{
+			name:     "DATEPART",
+			input:    "SELECT DATEPART(year, '2026-06-15')",
+			expected: "SELECT EXTRACT(year FROM '2026-06-15'::TIMESTAMPTZ)::INT",
+		},
+		{
+			name:     "DATENAME",
+			input:    "SELECT DATENAME(month, '2026-06-15')",
+			expected: "SELECT to_char('2026-06-15'::TIMESTAMPTZ, 'Month')",
+		},
+		{
+			name:     "YEAR",
+			input:    "SELECT YEAR('2026-06-15')",
+			expected: "SELECT EXTRACT(year FROM '2026-06-15'::TIMESTAMPTZ)::INT",
+		},
+		{
+			name:     "MONTH",
+			input:    "SELECT MONTH('2026-06-15')",
+			expected: "SELECT EXTRACT(month FROM '2026-06-15'::TIMESTAMPTZ)::INT",
+		},
+		{
+			name:     "DAY",
+			input:    "SELECT DAY('2026-06-15')",
+			expected: "SELECT EXTRACT(day FROM '2026-06-15'::TIMESTAMPTZ)::INT",
+		},
+		{
+			name:     "SYSDATETIME",
+			input:    "SELECT SYSDATETIME()",
+			expected: "SELECT now()",
+		},
+		{
+			name:     "GETUTCDATE",
+			input:    "SELECT GETUTCDATE()",
+			expected: "SELECT (now() AT TIME ZONE 'UTC')",
+		},
+		{
+			name:     "EOMONTH",
+			input:    "SELECT EOMONTH('2026-02-15')",
+			expected: "SELECT (date_trunc('month', '2026-02-15'::TIMESTAMPTZ) + INTERVAL '1 month' - INTERVAL '1 day')::DATE",
+		},
+
+		// Math functions.
+		{
+			name:     "LOG to ln",
+			input:    "SELECT LOG(10)",
+			expected: "SELECT ln(10)",
+		},
+		{
+			name:     "LOG10 to log",
+			input:    "SELECT LOG10(1000)",
+			expected: "SELECT log(1000)",
+		},
+
+		// Conditional functions.
+		{
+			name:     "IIF",
+			input:    "SELECT IIF(1 = 1, 'yes', 'no')",
+			expected: "SELECT CASE WHEN 1 = 1 THEN 'yes' ELSE 'no' END",
+		},
+		{
+			name:     "CHOOSE",
+			input:    "SELECT CHOOSE(2, 'first', 'second', 'third')",
+			expected: "SELECT CASE 2 WHEN 1 THEN 'first' WHEN 2 THEN 'second' WHEN 3 THEN 'third' END",
+		},
+		{
+			name:     "TRY_CONVERT",
+			input:    "SELECT TRY_CONVERT(INT, 'not_a_number')",
+			expected: "SELECT try_cast('not_a_number' AS INT4)",
+		},
+
+		// System functions.
+		{
+			name:     "NEWID",
+			input:    "SELECT NEWID()",
+			expected: "SELECT gen_random_uuid()",
+		},
+		{
+			name:     "DB_NAME",
+			input:    "SELECT DB_NAME()",
+			expected: "SELECT current_database()",
+		},
+		{
+			name:     "SCHEMA_NAME",
+			input:    "SELECT SCHEMA_NAME()",
+			expected: "SELECT current_schema()",
+		},
+		{
+			name:     "USER_NAME",
+			input:    "SELECT USER_NAME()",
+			expected: "SELECT current_user",
+		},
+		{
+			name:     "APP_NAME",
+			input:    "SELECT APP_NAME()",
+			expected: "SELECT current_setting('application_name')",
+		},
+
+		// Aggregate functions.
+		{
+			name:     "COUNT_BIG",
+			input:    "SELECT COUNT_BIG(*)",
+			expected: "SELECT count(*)",
+		},
+		{
+			name:     "STDEV",
+			input:    "SELECT STDEV(col)",
+			expected: "SELECT stddev(col)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
 func TestSplitTypeArgs(t *testing.T) {
 	tests := []struct {
 		input        string

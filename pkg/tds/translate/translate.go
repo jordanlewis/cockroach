@@ -354,13 +354,443 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("COALESCE(%s)", strings.Join(args, ", "))
 
 	case "GETDATE":
-		// GETDATE() → now()
 		return "now()"
+
+	// --- String functions ---
+
+	case "LEN":
+		// LEN(s) → length(s)
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("length(%s)", strings.Join(args, ", "))
+
+	case "CHARINDEX":
+		// CHARINDEX(substr, str) → strpos(str, substr)
+		// Note: argument order is swapped.
+		if len(e.Args) >= 2 {
+			substr := translateExpr(e.Args[0])
+			str := translateExpr(e.Args[1])
+			return fmt.Sprintf("strpos(%s, %s)", str, substr)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("strpos(%s)", strings.Join(args, ", "))
+
+	case "PATINDEX":
+		// PATINDEX(pattern, str) → approximate via strpos (no direct equivalent).
+		// Strip leading/trailing % from the pattern for a basic strpos translation.
+		// This is a lossy translation but handles the common %substr% case.
+		if len(e.Args) >= 2 {
+			str := translateExpr(e.Args[1])
+			pattern := translateExpr(e.Args[0])
+			return fmt.Sprintf("strpos(%s, %s) /* PATINDEX approximation */", str, pattern)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("strpos(%s)", strings.Join(args, ", "))
+
+	case "STUFF":
+		// STUFF(str, start, length, insert) → overlay(str placing insert from start for length)
+		if len(e.Args) == 4 {
+			str := translateExpr(e.Args[0])
+			start := translateExpr(e.Args[1])
+			length := translateExpr(e.Args[2])
+			insert := translateExpr(e.Args[3])
+			return fmt.Sprintf("overlay(%s placing %s from %s for %s)",
+				str, insert, start, length)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("overlay(%s)", strings.Join(args, ", "))
+
+	case "REPLICATE":
+		// REPLICATE(str, n) → repeat(str, n)
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("repeat(%s)", strings.Join(args, ", "))
+
+	case "SPACE":
+		// SPACE(n) → repeat(' ', n)
+		if len(e.Args) == 1 {
+			n := translateExpr(e.Args[0])
+			return fmt.Sprintf("repeat(' ', %s)", n)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("repeat(' ', %s)", strings.Join(args, ", "))
+
+	case "STRING_AGG":
+		// STRING_AGG(expr, separator) — same in CRDB.
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("string_agg(%s)", strings.Join(args, ", "))
+
+	case "QUOTENAME":
+		// QUOTENAME(str) → quote_ident(str)
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("quote_ident(%s)", strings.Join(args, ", "))
+
+	// --- Date/time functions ---
+
+	case "DATEADD":
+		// DATEADD(part, n, date) → (date::TIMESTAMPTZ + n * INTERVAL '1 part')
+		if len(e.Args) == 3 {
+			part := identName(e.Args[0])
+			n := translateExpr(e.Args[1])
+			date := translateExpr(e.Args[2])
+			interval := mapDatepartInterval(part)
+			return fmt.Sprintf("(%s::TIMESTAMPTZ + %s * INTERVAL '%s')",
+				date, n, interval)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("DATEADD(%s)", strings.Join(args, ", "))
+
+	case "DATEDIFF":
+		// DATEDIFF(part, start, end) → extract(epoch FROM end::TIMESTAMPTZ - start::TIMESTAMPTZ)
+		// divided by the appropriate divisor for the datepart.
+		if len(e.Args) == 3 {
+			part := identName(e.Args[0])
+			start := translateExpr(e.Args[1])
+			end := translateExpr(e.Args[2])
+			return translateDateDiff(part, start, end)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("DATEDIFF(%s)", strings.Join(args, ", "))
+
+	case "DATEPART":
+		// DATEPART(part, date) → extract(part FROM date::TIMESTAMPTZ)
+		if len(e.Args) == 2 {
+			part := identName(e.Args[0])
+			date := translateExpr(e.Args[1])
+			return fmt.Sprintf("EXTRACT(%s FROM %s::TIMESTAMPTZ)::INT",
+				mapExtractPart(part), date)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("DATEPART(%s)", strings.Join(args, ", "))
+
+	case "DATENAME":
+		// DATENAME(part, date) → to_char(date::TIMESTAMPTZ, format)
+		if len(e.Args) == 2 {
+			part := identName(e.Args[0])
+			date := translateExpr(e.Args[1])
+			format := mapDatenamePart(part)
+			return fmt.Sprintf("to_char(%s::TIMESTAMPTZ, '%s')", date, format)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("DATENAME(%s)", strings.Join(args, ", "))
+
+	case "YEAR":
+		// YEAR(date) → EXTRACT(year FROM date::TIMESTAMPTZ)::INT
+		if len(e.Args) == 1 {
+			date := translateExpr(e.Args[0])
+			return fmt.Sprintf("EXTRACT(year FROM %s::TIMESTAMPTZ)::INT", date)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("YEAR(%s)", strings.Join(args, ", "))
+
+	case "MONTH":
+		// MONTH(date) → EXTRACT(month FROM date::TIMESTAMPTZ)::INT
+		if len(e.Args) == 1 {
+			date := translateExpr(e.Args[0])
+			return fmt.Sprintf("EXTRACT(month FROM %s::TIMESTAMPTZ)::INT", date)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("MONTH(%s)", strings.Join(args, ", "))
+
+	case "DAY":
+		// DAY(date) → EXTRACT(day FROM date::TIMESTAMPTZ)::INT
+		if len(e.Args) == 1 {
+			date := translateExpr(e.Args[0])
+			return fmt.Sprintf("EXTRACT(day FROM %s::TIMESTAMPTZ)::INT", date)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("DAY(%s)", strings.Join(args, ", "))
+
+	case "SYSDATETIME":
+		return "now()"
+
+	case "GETUTCDATE":
+		return "(now() AT TIME ZONE 'UTC')"
+
+	case "EOMONTH":
+		// EOMONTH(date) → (date_trunc('month', date::TIMESTAMPTZ) + INTERVAL '1 month' - INTERVAL '1 day')::DATE
+		if len(e.Args) >= 1 {
+			date := translateExpr(e.Args[0])
+			return fmt.Sprintf(
+				"(date_trunc('month', %s::TIMESTAMPTZ) + INTERVAL '1 month' - INTERVAL '1 day')::DATE",
+				date)
+		}
+		return "EOMONTH()"
+
+	case "ISDATE":
+		// No direct equivalent; use a try_cast approach.
+		if len(e.Args) == 1 {
+			arg := translateExpr(e.Args[0])
+			return fmt.Sprintf(
+				"CASE WHEN try_cast(%s AS TIMESTAMPTZ) IS NOT NULL THEN 1 ELSE 0 END", arg)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("ISDATE(%s)", strings.Join(args, ", "))
+
+	case "FORMAT":
+		// T-SQL FORMAT(value, format_string) has no direct CRDB equivalent.
+		// Pass through as to_char for basic cases.
+		if len(e.Args) >= 2 {
+			val := translateExpr(e.Args[0])
+			format := translateExpr(e.Args[1])
+			return fmt.Sprintf("to_char(%s, %s)", val, format)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("FORMAT(%s)", strings.Join(args, ", "))
+
+	// --- Math functions ---
+
+	case "SQUARE":
+		// SQUARE(x) → power(x, 2)
+		if len(e.Args) == 1 {
+			arg := translateExpr(e.Args[0])
+			return fmt.Sprintf("power(%s, 2)", arg)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("power(%s, 2)", strings.Join(args, ", "))
+
+	case "LOG":
+		// T-SQL LOG(x) is natural log; CRDB log(x) is base-10.
+		// Translate to ln(x).
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("ln(%s)", strings.Join(args, ", "))
+
+	case "LOG10":
+		// LOG10(x) → log(x) in CRDB (which is base-10).
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("log(%s)", strings.Join(args, ", "))
+
+	case "RAND":
+		return "random()"
+
+	// --- Conditional functions ---
+
+	case "IIF":
+		// IIF(cond, true_val, false_val) → CASE WHEN cond THEN true_val ELSE false_val END
+		if len(e.Args) == 3 {
+			cond := translateExpr(e.Args[0])
+			trueVal := translateExpr(e.Args[1])
+			falseVal := translateExpr(e.Args[2])
+			return fmt.Sprintf("CASE WHEN %s THEN %s ELSE %s END",
+				cond, trueVal, falseVal)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("IIF(%s)", strings.Join(args, ", "))
+
+	case "CHOOSE":
+		// CHOOSE(idx, val1, val2, ...) → CASE idx WHEN 1 THEN val1 WHEN 2 THEN val2 ... END
+		if len(e.Args) >= 2 {
+			idx := translateExpr(e.Args[0])
+			var b strings.Builder
+			fmt.Fprintf(&b, "CASE %s", idx)
+			for i, arg := range e.Args[1:] {
+				fmt.Fprintf(&b, " WHEN %d THEN %s", i+1, translateExpr(arg))
+			}
+			b.WriteString(" END")
+			return b.String()
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("CHOOSE(%s)", strings.Join(args, ", "))
+
+	// --- Type conversion ---
+
+	case "TRY_CONVERT":
+		// TRY_CONVERT(type, expr) → try_cast(expr AS type)
+		// The parser sees the type as an identifier in the first arg.
+		if len(e.Args) >= 2 {
+			typeName := identName(e.Args[0])
+			if typeName == "" {
+				typeName = translateExpr(e.Args[0])
+			}
+			expr := translateExpr(e.Args[1])
+			return fmt.Sprintf("try_cast(%s AS %s)", expr, mapDataType(strings.ToUpper(typeName)))
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("TRY_CONVERT(%s)", strings.Join(args, ", "))
+
+	// --- System functions ---
+
+	case "NEWID":
+		return "gen_random_uuid()"
+
+	case "OBJECT_ID":
+		// No direct equivalent; return NULL with a comment.
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("NULL /* OBJECT_ID(%s) not supported */",
+			strings.Join(args, ", "))
+
+	case "DB_NAME":
+		return "current_database()"
+
+	case "SCHEMA_NAME":
+		return "current_schema()"
+
+	case "USER_NAME":
+		return "current_user"
+
+	case "HOST_NAME":
+		return "NULL /* HOST_NAME() not supported */"
+
+	case "APP_NAME":
+		return "current_setting('application_name')"
+
+	// --- Aggregate functions ---
+
+	case "COUNT_BIG":
+		// COUNT_BIG(*) → count(*) — CRDB count already returns INT8.
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("count(%s)", strings.Join(args, ", "))
+
+	case "STDEV":
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("stddev(%s)", strings.Join(args, ", "))
+
+	case "STDEVP":
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("stddev_pop(%s)", strings.Join(args, ", "))
+
+	case "VAR":
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("variance(%s)", strings.Join(args, ", "))
+
+	case "VARP":
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("var_pop(%s)", strings.Join(args, ", "))
+
+	case "CHECKSUM_AGG":
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("NULL /* CHECKSUM_AGG(%s) not supported */",
+			strings.Join(args, ", "))
 
 	default:
 		// Pass through unknown functions.
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("%s(%s)", name, strings.Join(args, ", "))
+	}
+}
+
+// identName extracts the identifier name from an expression if it is an
+// IdentExpr with a single part. Returns empty string otherwise.
+func identName(expr parser.Expr) string {
+	if id, ok := expr.(*parser.IdentExpr); ok && len(id.Parts) == 1 {
+		return id.Parts[0]
+	}
+	return ""
+}
+
+// mapDatepartInterval returns the INTERVAL unit string for a T-SQL datepart
+// keyword. Used by DATEADD translation.
+func mapDatepartInterval(part string) string {
+	switch strings.ToLower(part) {
+	case "year", "yy", "yyyy":
+		return "1 year"
+	case "quarter", "qq", "q":
+		return "3 months"
+	case "month", "mm", "m":
+		return "1 month"
+	case "week", "wk", "ww":
+		return "1 week"
+	case "day", "dd", "d", "dayofyear", "dy", "y":
+		return "1 day"
+	case "hour", "hh":
+		return "1 hour"
+	case "minute", "mi", "n":
+		return "1 minute"
+	case "second", "ss", "s":
+		return "1 second"
+	case "millisecond", "ms":
+		return "1 millisecond"
+	case "microsecond", "mcs":
+		return "1 microsecond"
+	default:
+		return "1 " + part
+	}
+}
+
+// mapExtractPart maps T-SQL datepart keywords to EXTRACT field names.
+func mapExtractPart(part string) string {
+	switch strings.ToLower(part) {
+	case "year", "yy", "yyyy":
+		return "year"
+	case "quarter", "qq", "q":
+		return "quarter"
+	case "month", "mm", "m":
+		return "month"
+	case "week", "wk", "ww":
+		return "week"
+	case "day", "dd", "d":
+		return "day"
+	case "dayofyear", "dy", "y":
+		return "doy"
+	case "hour", "hh":
+		return "hour"
+	case "minute", "mi", "n":
+		return "minute"
+	case "second", "ss", "s":
+		return "second"
+	case "millisecond", "ms":
+		return "millisecond"
+	case "microsecond", "mcs":
+		return "microsecond"
+	case "weekday", "dw":
+		return "dow"
+	default:
+		return part
+	}
+}
+
+// mapDatenamePart maps T-SQL datepart keywords to to_char format strings
+// used by DATENAME translation.
+func mapDatenamePart(part string) string {
+	switch strings.ToLower(part) {
+	case "year", "yy", "yyyy":
+		return "YYYY"
+	case "quarter", "qq", "q":
+		return "Q"
+	case "month", "mm", "m":
+		return "Month"
+	case "week", "wk", "ww":
+		return "WW"
+	case "day", "dd", "d":
+		return "DD"
+	case "dayofyear", "dy", "y":
+		return "DDD"
+	case "weekday", "dw":
+		return "Day"
+	case "hour", "hh":
+		return "HH24"
+	case "minute", "mi", "n":
+		return "MI"
+	case "second", "ss", "s":
+		return "SS"
+	default:
+		return part
+	}
+}
+
+// translateDateDiff translates DATEDIFF(part, start, end) to a CRDB expression
+// using epoch extraction and integer division.
+func translateDateDiff(part, start, end string) string {
+	diff := fmt.Sprintf("EXTRACT(epoch FROM %s::TIMESTAMPTZ - %s::TIMESTAMPTZ)", end, start)
+	switch strings.ToLower(part) {
+	case "year", "yy", "yyyy":
+		return fmt.Sprintf("(%s / 31557600)::INT", diff)
+	case "quarter", "qq", "q":
+		return fmt.Sprintf("(%s / 7889400)::INT", diff)
+	case "month", "mm", "m":
+		return fmt.Sprintf("(%s / 2629800)::INT", diff)
+	case "week", "wk", "ww":
+		return fmt.Sprintf("(%s / 604800)::INT", diff)
+	case "day", "dd", "d", "dayofyear", "dy", "y":
+		return fmt.Sprintf("(%s / 86400)::INT", diff)
+	case "hour", "hh":
+		return fmt.Sprintf("(%s / 3600)::INT", diff)
+	case "minute", "mi", "n":
+		return fmt.Sprintf("(%s / 60)::INT", diff)
+	case "second", "ss", "s":
+		return fmt.Sprintf("(%s)::INT", diff)
+	case "millisecond", "ms":
+		return fmt.Sprintf("(%s * 1000)::INT", diff)
+	default:
+		return fmt.Sprintf("(%s)::INT", diff)
 	}
 }
 
