@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"sort"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
@@ -104,6 +105,16 @@ func writeSetVarcharValue(buf *bytes.Buffer, values []string) {
 	}
 	_ = cqlwire.WriteInt(buf, int32(inner.Len()))
 	buf.Write(inner.Bytes())
+}
+
+// sortedKeys returns the keys of a map sorted in ascending order.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // systemSchemaTable defines the column schema for a system_schema table.
@@ -561,6 +572,14 @@ func buildSystemSchemaTablesBody(
 		{"system", "peers"},
 		{"system", "peers_v2"},
 	}
+	// Include system_schema's own tables so the catalog is
+	// self-describing. Cassandra lists all system_schema tables
+	// here and cqlsh DESCRIBE depends on this for keyspace
+	// introspection. Sort for deterministic output.
+	schemaTableNames := sortedKeys(systemSchemaTables)
+	for _, name := range schemaTableNames {
+		tables = append(tables, tableRow{"system_schema", name})
+	}
 
 	// Query CRDB for real user tables.
 	if db != nil {
@@ -760,6 +779,30 @@ func buildSystemSchemaColumnsBody(
 			position:        pos,
 			colType:         systemColumnTypeName(c),
 		})
+	}
+
+	// system_schema table columns. Include column metadata for each
+	// system_schema table so the catalog is self-describing. The
+	// first column of each table (keyspace_name) is the partition key.
+	// Iterate in sorted order for deterministic output.
+	for _, tblName := range sortedKeys(systemSchemaTables) {
+		schema := systemSchemaTables[tblName]
+		for _, c := range schema.columns {
+			kind := "regular"
+			pos := int32(0)
+			if c.name == "keyspace_name" {
+				kind = "partition_key"
+			}
+			columnRows = append(columnRows, colRow{
+				keyspaceName:    "system_schema",
+				tableName:       tblName,
+				columnName:      c.name,
+				clusteringOrder: "none",
+				kind:            kind,
+				position:        pos,
+				colType:         systemColumnTypeName(c),
+			})
+		}
 	}
 
 	// Query CRDB for real user-table columns.

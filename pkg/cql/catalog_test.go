@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/cql/parser"
 	cqltypes "github.com/cockroachdb/cockroach/pkg/cql/types"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/stretchr/testify/require"
@@ -110,8 +111,9 @@ func TestHandleSystemSchemaTables(t *testing.T) {
 
 	rowCount, err := cqlwire.ReadInt(r)
 	require.NoError(t, err)
-	// system.local, system.peers, system.peers_v2
-	require.Equal(t, int32(3), rowCount)
+	// system.local, system.peers, system.peers_v2 + all system_schema tables
+	expectedTables := int32(3 + len(systemSchemaTables))
+	require.Equal(t, expectedTables, rowCount)
 }
 
 func TestHandleSystemSchemaColumns(t *testing.T) {
@@ -136,11 +138,81 @@ func TestHandleSystemSchemaColumns(t *testing.T) {
 	}
 
 	rowCount, _ := cqlwire.ReadInt(r)
-	// system.local + system.peers + system.peers_v2
+	// system.local + system.peers + system.peers_v2 + all system_schema tables
+	systemSchemaColCount := 0
+	for _, schema := range systemSchemaTables {
+		systemSchemaColCount += len(schema.columns)
+	}
 	expectedCols := int32(
-		len(systemLocalColumns) + len(systemPeersColumns) + len(systemPeersV2Columns),
+		len(systemLocalColumns) + len(systemPeersColumns) +
+			len(systemPeersV2Columns) + systemSchemaColCount,
 	)
 	require.Equal(t, expectedCols, rowCount)
+}
+
+func TestHandleSystemSchemaTablesFilterSystemSchema(t *testing.T) {
+	// Verify that filtering system_schema.tables by keyspace_name =
+	// 'system_schema' returns all system_schema tables (self-describing
+	// catalog). This is what cqlsh DESCRIBE KEYSPACE system_schema uses.
+	ctx := context.Background()
+	where := []parser.WhereClause{{
+		Column:   "keyspace_name",
+		Operator: "=",
+		Value:    &parser.StringLiteral{Value: "system_schema"},
+	}}
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "tables", where, nil)
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	_, _ = cqlwire.ReadInt(r) // kind
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		_, _ = cqlwire.ReadString(r) // name
+		_, _ = cqlwire.ReadShort(r)  // type
+	}
+
+	rowCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	require.Equal(t, int32(len(systemSchemaTables)), rowCount,
+		"system_schema.tables should list all system_schema tables when filtered")
+}
+
+func TestHandleSystemSchemaColumnsFilterSystemSchema(t *testing.T) {
+	// Verify that filtering system_schema.columns by keyspace_name =
+	// 'system_schema' returns column metadata for system_schema tables.
+	ctx := context.Background()
+	where := []parser.WhereClause{{
+		Column:   "keyspace_name",
+		Operator: "=",
+		Value:    &parser.StringLiteral{Value: "system_schema"},
+	}}
+	res, handled := handleSystemSelect(ctx, nil, "system_schema", "columns", where, nil)
+	require.True(t, handled)
+	require.False(t, res.IsError)
+
+	r := bytes.NewReader(res.Body)
+	_, _ = cqlwire.ReadInt(r) // kind
+	_, _ = cqlwire.ReadInt(r) // flags
+	colCount, _ := cqlwire.ReadInt(r)
+	for i := int32(0); i < colCount; i++ {
+		_, _ = cqlwire.ReadString(r) // keyspace
+		_, _ = cqlwire.ReadString(r) // table
+		_, _ = cqlwire.ReadString(r) // name
+		_, _ = cqlwire.ReadShort(r)  // type
+	}
+
+	rowCount, err := cqlwire.ReadInt(r)
+	require.NoError(t, err)
+	var expectedCols int32
+	for _, schema := range systemSchemaTables {
+		expectedCols += int32(len(schema.columns))
+	}
+	require.Equal(t, expectedCols, rowCount,
+		"system_schema.columns should list all system_schema table columns when filtered")
 }
 
 func TestHandleSystemSchemaSelectCaseInsensitive(t *testing.T) {
