@@ -108,8 +108,24 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseSelectOrCompound()
 	case tokenWITH:
 		return p.parseWith()
+	case tokenDECLARE:
+		return p.parseDeclare()
+	case tokenSET:
+		return p.parseSetVar()
+	case tokenIF:
+		return p.parseIf()
+	case tokenWHILE:
+		return p.parseWhile()
 	case tokenBEGIN:
-		return p.parseBeginTran()
+		return p.parseBegin()
+	case tokenBREAK:
+		p.lex.next()
+		return &BreakStmt{}, nil
+	case tokenCONTINUE:
+		p.lex.next()
+		return &ContinueStmt{}, nil
+	case tokenPRINT:
+		return p.parsePrint()
 	case tokenCOMMIT:
 		return p.parseCommitTran()
 	case tokenROLLBACK:
@@ -118,8 +134,6 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseSaveTran()
 	case tokenMERGE:
 		return p.parseMerge()
-	case tokenPRINT:
-		return p.parsePrint()
 	case tokenRAISERROR:
 		return p.parseRaiserror()
 	default:
@@ -1036,21 +1050,144 @@ func (p *parser) parseComputeAgg() (ComputeAgg, error) {
 	return ComputeAgg{Func: strings.ToUpper(name), Arg: arg}, nil
 }
 
-// parseBeginTran parses: BEGIN TRAN[SACTION] [name]
-func (p *parser) parseBeginTran() (*BeginTranStmt, error) {
+// parseBegin disambiguates BEGIN TRAN (transaction) from BEGIN...END
+// (statement block).
+func (p *parser) parseBegin() (Statement, error) {
 	p.lex.next() // consume BEGIN
-	// Expect TRAN or TRANSACTION.
-	if p.lex.peek().typ != tokenTRAN && p.lex.peek().typ != tokenTRANSACTION {
-		return nil, p.error(fmt.Sprintf(
-			"expected TRAN or TRANSACTION after BEGIN, got %q", p.lex.peek().val))
+	// BEGIN TRAN or BEGIN TRANSACTION → transaction start.
+	if p.lex.peek().typ == tokenTRAN || p.lex.peek().typ == tokenTRANSACTION {
+		p.lex.next() // consume TRAN/TRANSACTION
+		stmt := &BeginTranStmt{}
+		if p.lex.peek().typ == tokenIdent {
+			stmt.Name = p.lex.next().val
+		}
+		return stmt, nil
 	}
-	p.lex.next() // consume TRAN/TRANSACTION
-	stmt := &BeginTranStmt{}
-	// Optional transaction name.
-	if p.lex.peek().typ == tokenIdent {
-		stmt.Name = p.lex.next().val
+	// Otherwise BEGIN...END statement block.
+	return p.parseBeginEndBody()
+}
+
+// parseBeginEndBody parses the body of a BEGIN...END block (BEGIN was
+// already consumed).
+func (p *parser) parseBeginEndBody() (*BeginEndBlock, error) {
+	block := &BeginEndBlock{}
+	for {
+		// Skip semicolons between statements.
+		for p.lex.peek().typ == tokenSemicolon {
+			p.lex.next()
+		}
+		if p.lex.peek().typ == tokenEND {
+			p.lex.next() // consume END
+			break
+		}
+		if p.lex.peek().typ == tokenEOF {
+			return nil, p.error("unterminated BEGIN...END block")
+		}
+		stmt, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		block.Stmts = append(block.Stmts, stmt)
+	}
+	return block, nil
+}
+
+// parseDeclare parses: DECLARE @var TYPE [= expr]
+func (p *parser) parseDeclare() (*DeclareVarStmt, error) {
+	p.lex.next() // consume DECLARE
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(name, "@") {
+		return nil, p.error(fmt.Sprintf(
+			"expected @variable name after DECLARE, got %q", name))
+	}
+	dataType, err := p.parseDataType()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &DeclareVarStmt{Name: name, DataType: dataType}
+	// Optional default: = <expr>
+	if p.lex.peek().typ == tokenEq {
+		p.lex.next() // consume =
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Default = expr
 	}
 	return stmt, nil
+}
+
+// parseSetVar parses: SET @var = expr
+func (p *parser) parseSetVar() (*SetVarStmt, error) {
+	p.lex.next() // consume SET
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(name, "@") {
+		return nil, p.error(fmt.Sprintf(
+			"expected @variable name after SET, got %q", name))
+	}
+	if err := p.expect(tokenEq); err != nil {
+		return nil, err
+	}
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &SetVarStmt{Name: name, Expr: expr}, nil
+}
+
+// parseIf parses: IF condition stmt [ELSE stmt]
+// The condition is a boolean expression. The body can be a single
+// statement or a BEGIN...END block.
+func (p *parser) parseIf() (*IfStmt, error) {
+	p.lex.next() // consume IF
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseStatement()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &IfStmt{Condition: cond, Body: body}
+	if p.lex.peek().typ == tokenELSE {
+		p.lex.next() // consume ELSE
+		elseBody, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		stmt.ElseBody = elseBody
+	}
+	return stmt, nil
+}
+
+// parseWhile parses: WHILE condition stmt
+func (p *parser) parseWhile() (*WhileStmt, error) {
+	p.lex.next() // consume WHILE
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseStatement()
+	if err != nil {
+		return nil, err
+	}
+	return &WhileStmt{Condition: cond, Body: body}, nil
+}
+
+// parsePrint parses: PRINT <expr>
+func (p *parser) parsePrint() (*PrintStmt, error) {
+	p.lex.next() // consume PRINT
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &PrintStmt{Expr: expr}, nil
 }
 
 // parseCommitTran parses: COMMIT [TRAN[SACTION]] [name]
@@ -1097,17 +1234,6 @@ func (p *parser) parseSaveTran() (*SaveTranStmt, error) {
 		return nil, err
 	}
 	return &SaveTranStmt{Name: name}, nil
-}
-
-// parsePrint parses: PRINT <expr>
-// [Both] PRINT is supported by both SQL Server and Sybase ASE.
-func (p *parser) parsePrint() (*PrintStmt, error) {
-	p.lex.next() // consume PRINT
-	expr, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	return &PrintStmt{Expr: expr}, nil
 }
 
 // parseRaiserror parses the Sybase ASE form: RAISERROR <errnum> [, <message>].
@@ -2443,7 +2569,9 @@ func isKeywordToken(typ tokenType) bool {
 		tokenBEGIN, tokenTRAN, tokenTRANSACTION, tokenCOMMIT,
 		tokenROLLBACK, tokenSAVE,
 		tokenIDENTITY, tokenDEFAULT,
-		tokenCOMPUTE:
+		tokenCOMPUTE,
+		tokenDECLARE, tokenWHILE, tokenBREAK, tokenCONTINUE,
+		tokenPRINT:
 		return true
 	}
 	return false

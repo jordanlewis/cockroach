@@ -22,6 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/tds/translate"
 	tdstypes "github.com/cockroachdb/cockroach/pkg/tds/types"
 	"github.com/cockroachdb/cockroach/pkg/util/timeofday"
+	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/redact"
 )
 
@@ -41,6 +42,11 @@ type Executor struct {
 	// 0 or 1 since CRDB doesn't support nested transactions).
 	activeTxn isql.Txn
 	tranCount int
+
+	// variables holds T-SQL session variables (DECLARE @var).
+	// Keys are variable names including the @ prefix (e.g. "@x").
+	// Values are SQL literal strings suitable for substitution.
+	variables map[string]string
 }
 
 // NewExecutor creates an Executor bound to the given isql.DB.
@@ -101,8 +107,13 @@ func (e *Executor) ExecuteBatch(
 	}
 
 	// Check for SET commands not caught by catalog (catch-all).
+	// Don't swallow SET @variable assignments — those are parsed as
+	// SetVarStmt and handled by the control flow interpreter.
 	if len(trimmed) >= 4 && strings.EqualFold(trimmed[:4], "SET ") {
-		return writeDoneFinal(tw)
+		rest := strings.TrimSpace(trimmed[4:])
+		if len(rest) == 0 || rest[0] != '@' {
+			return writeDoneFinal(tw)
+		}
 	}
 
 	// Parse T-SQL.
@@ -111,18 +122,15 @@ func (e *Executor) ExecuteBatch(
 		return writeErrorToken(tw, 50000, 1, 16, fmt.Sprintf("T-SQL parse error: %s", err))
 	}
 
-	// Translate to CRDB SQL.
-	crdbStatements, err := translate.Batch(batch)
-	if err != nil {
-		return writeErrorToken(tw, 50000, 1, 16, fmt.Sprintf("T-SQL translation error: %s", err))
-	}
-
-	// Execute each translated statement.
-	for i, crdbSQL := range crdbStatements {
-		stmt := batch.Stmts[i]
-		// Substitute @@TRANCOUNT with the current value before execution.
-		crdbSQL = e.substituteTranCount(crdbSQL)
-		if err := e.executeStatement(ctx, stmt, crdbSQL, tw); err != nil {
+	// Execute each parsed statement. Control flow statements are handled
+	// directly by the interpreter; regular statements go through the
+	// translate → execute path.
+	for _, stmt := range batch.Stmts {
+		if err := e.execParsedStmt(ctx, stmt, tw); err != nil {
+			if isControlFlowSignal(err) {
+				return writeErrorToken(tw, 50000, 1, 16,
+					fmt.Sprintf("%s used outside of a WHILE loop", err.Error()))
+			}
 			return err
 		}
 	}
@@ -692,6 +700,215 @@ func isVarLenTDSType(typeID byte) bool {
 // isPrecScaleTDSType checks if a TDS type ID requires precision/scale.
 func isPrecScaleTDSType(typeID byte) bool {
 	return typeID == tdswire.TypeDecimalN || typeID == tdswire.TypeNumericN
+}
+
+// Sentinel errors for BREAK and CONTINUE control flow signals.
+var (
+	errBreak    = fmt.Errorf("BREAK")
+	errContinue = fmt.Errorf("CONTINUE")
+)
+
+func isControlFlowSignal(err error) bool {
+	return errors.Is(err, errBreak) || errors.Is(err, errContinue)
+}
+
+// execParsedStmt translates and executes a single parsed T-SQL
+// statement. Control flow statements (DECLARE, SET @var, IF, WHILE,
+// BEGIN...END) are interpreted directly; others go through the
+// standard translate → execute path.
+func (e *Executor) execParsedStmt(
+	ctx context.Context, stmt parser.Statement, tw *tdswire.TokenWriter,
+) error {
+	switch s := stmt.(type) {
+	case *parser.DeclareVarStmt:
+		return e.executeDeclare(ctx, s, tw)
+	case *parser.SetVarStmt:
+		return e.executeSetVar(ctx, s, tw)
+	case *parser.IfStmt:
+		return e.executeIf(ctx, s, tw)
+	case *parser.WhileStmt:
+		return e.executeWhile(ctx, s, tw)
+	case *parser.BeginEndBlock:
+		return e.executeBeginEndBlock(ctx, s, tw)
+	case *parser.BreakStmt:
+		return errBreak
+	case *parser.ContinueStmt:
+		return errContinue
+	case *parser.PrintStmt:
+		// PRINT is silently acknowledged (CockroachDB has no print channel).
+		return nil
+	default:
+		// Regular statement: translate then execute.
+		crdbSQL, err := translate.Statement(stmt)
+		if err != nil {
+			return writeErrorToken(tw, 50000, 1, 16,
+				fmt.Sprintf("T-SQL translation error: %s", err))
+		}
+		crdbSQL = e.substituteTranCount(crdbSQL)
+		crdbSQL = e.substituteVars(crdbSQL)
+		return e.executeStatement(ctx, stmt, crdbSQL, tw)
+	}
+}
+
+// executeDeclare handles DECLARE @var TYPE [= expr].
+func (e *Executor) executeDeclare(
+	ctx context.Context, s *parser.DeclareVarStmt, tw *tdswire.TokenWriter,
+) error {
+	if e.variables == nil {
+		e.variables = make(map[string]string)
+	}
+	if s.Default != nil {
+		val, err := e.evaluateExpr(ctx, s.Default)
+		if err != nil {
+			return writeErrorToken(tw, 50000, 1, 16,
+				fmt.Sprintf("error evaluating default for %s: %s", s.Name, err))
+		}
+		e.variables[s.Name] = val
+	} else {
+		e.variables[s.Name] = "NULL"
+	}
+	return nil
+}
+
+// executeSetVar handles SET @var = expr.
+func (e *Executor) executeSetVar(
+	ctx context.Context, s *parser.SetVarStmt, tw *tdswire.TokenWriter,
+) error {
+	if e.variables == nil {
+		e.variables = make(map[string]string)
+	}
+	val, err := e.evaluateExpr(ctx, s.Expr)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("error evaluating SET %s: %s", s.Name, err))
+	}
+	e.variables[s.Name] = val
+	return nil
+}
+
+// executeIf handles IF condition body [ELSE elseBody].
+func (e *Executor) executeIf(ctx context.Context, s *parser.IfStmt, tw *tdswire.TokenWriter) error {
+	result, err := e.evaluateCondition(ctx, s.Condition)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("error evaluating IF condition: %s", err))
+	}
+	if result {
+		return e.execParsedStmt(ctx, s.Body, tw)
+	}
+	if s.ElseBody != nil {
+		return e.execParsedStmt(ctx, s.ElseBody, tw)
+	}
+	return nil
+}
+
+// executeWhile handles WHILE condition body.
+func (e *Executor) executeWhile(
+	ctx context.Context, s *parser.WhileStmt, tw *tdswire.TokenWriter,
+) error {
+	const maxIterations = 10000
+	for i := 0; i < maxIterations; i++ {
+		result, err := e.evaluateCondition(ctx, s.Condition)
+		if err != nil {
+			return writeErrorToken(tw, 50000, 1, 16,
+				fmt.Sprintf("error evaluating WHILE condition: %s", err))
+		}
+		if !result {
+			return nil
+		}
+		if err := e.execParsedStmt(ctx, s.Body, tw); err != nil {
+			if errors.Is(err, errBreak) {
+				return nil
+			}
+			if errors.Is(err, errContinue) {
+				continue
+			}
+			return err
+		}
+	}
+	return writeErrorToken(tw, 50000, 1, 16,
+		"WHILE loop exceeded maximum iterations (10000)")
+}
+
+// executeBeginEndBlock handles BEGIN...END statement blocks.
+func (e *Executor) executeBeginEndBlock(
+	ctx context.Context, s *parser.BeginEndBlock, tw *tdswire.TokenWriter,
+) error {
+	for _, stmt := range s.Stmts {
+		if err := e.execParsedStmt(ctx, stmt, tw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// evaluateExpr evaluates a T-SQL expression by translating it to CRDB
+// SQL and executing SELECT <expr>. Returns the result as a SQL literal
+// string.
+func (e *Executor) evaluateExpr(ctx context.Context, expr parser.Expr) (string, error) {
+	crdbExpr := translate.Expr(expr)
+	crdbExpr = e.substituteVars(crdbExpr)
+	sql := fmt.Sprintf("SELECT (%s)", crdbExpr)
+
+	executor := e.db.Executor()
+	rows, _, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("tds-eval-expr"),
+		nil, // txn
+		e.executorOverride(),
+		sql,
+	)
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return "NULL", nil
+	}
+	d := rows[0][0]
+	if d == tree.DNull {
+		return "NULL", nil
+	}
+	return tree.AsStringWithFlags(d, tree.FmtSimple), nil
+}
+
+// evaluateCondition evaluates a T-SQL boolean expression. Returns true
+// if the expression evaluates to a truthy value.
+func (e *Executor) evaluateCondition(ctx context.Context, expr parser.Expr) (bool, error) {
+	crdbExpr := translate.Expr(expr)
+	crdbExpr = e.substituteVars(crdbExpr)
+	sql := fmt.Sprintf("SELECT CASE WHEN (%s) THEN true ELSE false END", crdbExpr)
+
+	executor := e.db.Executor()
+	rows, _, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("tds-eval-cond"),
+		nil, // txn
+		e.executorOverride(),
+		sql,
+	)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return false, nil
+	}
+	d := rows[0][0]
+	if b, ok := d.(*tree.DBool); ok {
+		return bool(*b), nil
+	}
+	return false, nil
+}
+
+// substituteVars replaces @variable references in SQL strings with
+// their current literal values from the executor's variable map.
+func (e *Executor) substituteVars(sql string) string {
+	if len(e.variables) == 0 {
+		return sql
+	}
+	for name, val := range e.variables {
+		sql = strings.ReplaceAll(sql, name, val)
+	}
+	return sql
 }
 
 // ExecuteBatchToBytes is a convenience method that executes a SQL batch

@@ -165,6 +165,12 @@ const (
 	// Type system keywords.
 	tokenIDENTITY
 	tokenDEFAULT
+
+	// Control flow keywords.
+	tokenDECLARE
+	tokenWHILE
+	tokenBREAK
+	tokenCONTINUE
 )
 
 var keywords = map[string]tokenType{
@@ -284,6 +290,12 @@ var keywords = map[string]tokenType{
 	// Type system keywords.
 	"IDENTITY": tokenIDENTITY,
 	"DEFAULT":  tokenDEFAULT,
+
+	// Control flow keywords.
+	"DECLARE":  tokenDECLARE,
+	"WHILE":    tokenWHILE,
+	"BREAK":    tokenBREAK,
+	"CONTINUE": tokenCONTINUE,
 }
 
 // token represents a single lexical token from T-SQL input.

@@ -157,11 +157,24 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateRollbackTran(s), nil
 	case *parser.SaveTranStmt:
 		return fmt.Sprintf("SAVEPOINT %s", quoteIdent(s.Name)), nil
+	case *parser.DeclareVarStmt:
+		// Control flow: handled by the executor's interpreter.
+		return "", nil
+	case *parser.SetVarStmt:
+		return "", nil
+	case *parser.IfStmt:
+		return "", nil
+	case *parser.WhileStmt:
+		return "", nil
+	case *parser.BeginEndBlock:
+		return "", nil
+	case *parser.BreakStmt:
+		return "", nil
+	case *parser.ContinueStmt:
+		return "", nil
 	case *parser.PrintStmt:
-		// [Both] PRINT is handled by the executor; no SQL translation.
 		return "", nil
 	case *parser.RaiserrorStmt:
-		// [Sybase ASE] RAISERROR handled by the executor; no SQL translation.
 		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
@@ -650,6 +663,13 @@ func translateRollbackTran(s *parser.RollbackTranStmt) string {
 	return "ROLLBACK"
 }
 
+// Expr translates a T-SQL expression into a CockroachDB-compatible SQL
+// expression string. This is exported for use by the executor when it
+// needs to evaluate expressions for control flow.
+func Expr(expr parser.Expr) string {
+	return translateExpr(expr)
+}
+
 // translateExpr recursively translates a T-SQL expression into a
 // CockroachDB-compatible SQL expression string.
 func translateExpr(expr parser.Expr) string {
@@ -799,6 +819,11 @@ func translateIdent(e *parser.IdentExpr) string {
 		// Handle @@system variables.
 		if strings.HasPrefix(name, "@@") {
 			return translateSystemVariable(name)
+		}
+		// T-SQL @variables are left unquoted so the executor's variable
+		// substitution can replace them with their current value.
+		if strings.HasPrefix(name, "@") {
+			return name
 		}
 		return quoteIdent(name)
 	}

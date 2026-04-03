@@ -1261,6 +1261,98 @@ type MergeWhenNotMatched struct {
 	Values  []Expr
 }
 
+// DeclareVarStmt represents DECLARE @var TYPE [= expr].
+type DeclareVarStmt struct {
+	Name     string // variable name including the @ prefix
+	DataType string
+	Default  Expr // optional default value
+}
+
+func (*DeclareVarStmt) statementNode() {}
+
+func (s *DeclareVarStmt) String() string {
+	if s.Default != nil {
+		return fmt.Sprintf("DECLARE %s %s = %s", s.Name, s.DataType, s.Default)
+	}
+	return fmt.Sprintf("DECLARE %s %s", s.Name, s.DataType)
+}
+
+// SetVarStmt represents SET @var = expr (variable assignment).
+type SetVarStmt struct {
+	Name string // variable name including the @ prefix
+	Expr Expr
+}
+
+func (*SetVarStmt) statementNode() {}
+
+func (s *SetVarStmt) String() string {
+	return fmt.Sprintf("SET %s = %s", s.Name, s.Expr)
+}
+
+// IfStmt represents IF condition body [ELSE elseBody].
+// Body and ElseBody are individual Statements (often a BeginEndBlock
+// for multi-statement branches, or a single SELECT/DML).
+type IfStmt struct {
+	Condition Expr
+	Body      Statement
+	ElseBody  Statement // nil if no ELSE
+}
+
+func (*IfStmt) statementNode() {}
+
+func (s *IfStmt) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "IF %s %s", s.Condition, s.Body)
+	if s.ElseBody != nil {
+		fmt.Fprintf(&b, " ELSE %s", s.ElseBody)
+	}
+	return b.String()
+}
+
+// WhileStmt represents WHILE condition body. Body is typically a
+// BeginEndBlock.
+type WhileStmt struct {
+	Condition Expr
+	Body      Statement
+}
+
+func (*WhileStmt) statementNode() {}
+
+func (s *WhileStmt) String() string {
+	return fmt.Sprintf("WHILE %s %s", s.Condition, s.Body)
+}
+
+// BeginEndBlock represents BEGIN stmt1; stmt2; ... END — a statement
+// block used as the body of IF, WHILE, or standalone grouping. This is
+// distinct from BeginTranStmt which starts a transaction.
+type BeginEndBlock struct {
+	Stmts []Statement
+}
+
+func (*BeginEndBlock) statementNode() {}
+
+func (s *BeginEndBlock) String() string {
+	var parts []string
+	for _, stmt := range s.Stmts {
+		parts = append(parts, stmt.String())
+	}
+	return fmt.Sprintf("BEGIN %s END", strings.Join(parts, "; "))
+}
+
+// BreakStmt represents the BREAK statement inside a WHILE loop.
+type BreakStmt struct{}
+
+func (*BreakStmt) statementNode() {}
+
+func (*BreakStmt) String() string { return "BREAK" }
+
+// ContinueStmt represents the CONTINUE statement inside a WHILE loop.
+type ContinueStmt struct{}
+
+func (*ContinueStmt) statementNode() {}
+
+func (*ContinueStmt) String() string { return "CONTINUE" }
+
 // PrintStmt represents PRINT <expr>, which sends an informational
 // message to the client. [Both] PRINT is supported by both SQL Server
 // and Sybase ASE.

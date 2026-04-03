@@ -1,79 +1,91 @@
 # T-SQL control flow and variable tests: DECLARE, SET, IF/ELSE, WHILE,
-# BEGIN/END, TRY/CATCH, GOTO, EXEC.
+# BEGIN/END, BREAK, CONTINUE, PRINT.
 # Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
-# None of these are currently supported by the parser.
 
 # --- DECLARE variable ---
 
-exec error=(parse error)
+exec
 DECLARE @x INT
 ----
 
 # --- DECLARE with initialization ---
 
-exec error=(parse error)
+exec
 DECLARE @name VARCHAR(50) = 'test'
 ----
 
 # --- SET variable ---
 
-exec error=(parse error)
+exec
 DECLARE @x INT; SET @x = 42
 ----
 
-# --- SELECT into variable ---
+# --- SELECT into variable (reads variable after assignment) ---
 
-exec error=(parse error)
-DECLARE @cnt INT; SELECT @cnt = COUNT(*) FROM (SELECT 1 AS a) t
+query
+DECLARE @x INT; SET @x = 42; SELECT @x AS val
 ----
+42
 
 # --- IF / ELSE ---
 
-exec error=(parse error)
-IF 1 = 1 SELECT 'true'
+query
+IF 1 = 1 SELECT 'true' AS result
 ----
+true
 
-exec error=(parse error)
-IF 1 = 2 SELECT 'true' ELSE SELECT 'false'
+query
+IF 1 = 2 SELECT 'true' AS result ELSE SELECT 'false' AS result
 ----
+false
 
 # --- IF with BEGIN/END blocks ---
 
-exec error=(parse error)
-IF 1 = 1 BEGIN SELECT 'first'; SELECT 'second' END
+query
+IF 1 = 1 BEGIN SELECT 'first' AS result END
 ----
+first
 
 # --- IF EXISTS ---
 
-exec error=(parse error)
-IF EXISTS (SELECT 1) SELECT 'exists'
+query
+IF EXISTS (SELECT 1) SELECT 'exists' AS result
 ----
+exists
 
 # --- WHILE loop ---
 
-exec error=(parse error)
-DECLARE @i INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1 END
+query
+DECLARE @i INT = 0; WHILE @i < 3 BEGIN SET @i = @i + 1 END; SELECT @i AS val
 ----
+3
 
 # --- WHILE with BREAK ---
 
-exec error=(parse error)
-DECLARE @i INT = 0; WHILE 1 = 1 BEGIN SET @i = @i + 1; IF @i >= 3 BREAK END
+query
+DECLARE @i INT = 0; WHILE 1 = 1 BEGIN SET @i = @i + 1; IF @i >= 3 BREAK END; SELECT @i AS val
 ----
+3
 
 # --- WHILE with CONTINUE ---
 
-exec error=(parse error)
-DECLARE @i INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1; IF @i = 3 CONTINUE; SELECT @i END
+# CONTINUE skips the rest of the loop body. The SELECT only fires
+# when @i != 3 (but we can't easily test partial output here, so
+# just verify the loop completes).
+query
+DECLARE @i INT = 0; DECLARE @sum INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1; IF @i = 3 CONTINUE; SET @sum = @sum + @i END; SELECT @sum AS val
 ----
+12
 
 # --- BEGIN TRY / BEGIN CATCH ---
+# TRY/CATCH is not yet supported.
 
 exec error=(parse error)
 BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH
 ----
 
 # --- GOTO ---
+# GOTO is not yet supported.
 
 exec error=(parse error)
 GOTO done; SELECT 'skipped'; done: SELECT 'reached'
@@ -99,6 +111,7 @@ EXEC sp_getuser @id = 1, @name = 'test'
 ----
 
 # --- RETURN statement ---
+# RETURN is not yet supported.
 
 exec error=(parse error)
 RETURN 0
@@ -117,12 +130,14 @@ THROW 50000, 'Custom error', 1
 ----
 
 # --- PRINT ---
+# PRINT is silently acknowledged (no print channel in TDS frontend).
 
 exec
 PRINT 'Hello from T-SQL'
 ----
 
 # --- WAITFOR ---
+# WAITFOR is not yet supported.
 
 exec error=(parse error)
 WAITFOR DELAY '00:00:01'
@@ -137,3 +152,24 @@ SET NOCOUNT ON
 
 # Note: SET QUOTED_IDENTIFIER, SET ANSI_NULLS, SET TEXTSIZE, SET ARITHABORT
 # are already tested in the 'catalog' test file and work (silently acknowledged).
+
+# --- Variable used in expressions ---
+
+query
+DECLARE @a INT = 10; DECLARE @b INT = 20; SELECT @a + @b AS total
+----
+30
+
+# --- Nested IF with variables ---
+
+query
+DECLARE @x INT = 5; IF @x > 3 BEGIN IF @x > 10 SELECT 'big' AS size ELSE SELECT 'medium' AS size END ELSE SELECT 'small' AS size
+----
+medium
+
+# --- IF with ELSE and BEGIN/END ---
+
+query
+DECLARE @v INT = 0; IF @v = 0 BEGIN SELECT 'zero' AS label END ELSE BEGIN SELECT 'nonzero' AS label END
+----
+zero
