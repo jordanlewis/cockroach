@@ -1,20 +1,20 @@
 # Static columns in tables with clustering keys.
 #
-# Static columns share a single value per partition key, regardless
-# of the number of clustering rows. The STATIC keyword is accepted
-# by the parser and silently ignored during translation — CRDB does
-# not distinguish static columns.
+# In Cassandra, static columns share a single value per partition key,
+# regardless of the number of clustering rows. When a static column is
+# written for any clustering row, the value propagates to all rows in
+# that partition.
 
 exec
 USE defaultdb
 ----
 
-# Static column in a table with clustering key. The STATIC keyword
-# is parsed but the column is treated as a regular column in CRDB.
+# Create a table with a static column.
 exec
 CREATE TABLE IF NOT EXISTS static_table (pk int, ck int, v text, s text static, PRIMARY KEY (pk, ck))
 ----
 
+# Insert two rows with the same static value.
 exec
 INSERT INTO static_table (pk, ck, v, s) VALUES (1, 1, 'row1', 'shared')
 ----
@@ -24,11 +24,72 @@ INSERT INTO static_table (pk, ck, v, s) VALUES (1, 2, 'row2', 'shared')
 ----
 
 query rowsort
-SELECT pk, ck, v, s FROM static_table
+SELECT pk, ck, v, s FROM static_table WHERE pk = 1
 ----
 pk ck v s
 1 1 row1 shared
 1 2 row2 shared
+
+# Updating the static column via a new insert propagates to all
+# rows in the partition.
+exec
+INSERT INTO static_table (pk, ck, v, s) VALUES (1, 3, 'row3', 'updated')
+----
+
+query rowsort
+SELECT pk, ck, v, s FROM static_table WHERE pk = 1
+----
+pk ck v s
+1 1 row1 updated
+1 2 row2 updated
+1 3 row3 updated
+
+# Insert without specifying the static column — inherits the
+# partition's current static value.
+exec
+INSERT INTO static_table (pk, ck, v) VALUES (1, 4, 'row4')
+----
+
+query rowsort
+SELECT pk, ck, v, s FROM static_table WHERE pk = 1
+----
+pk ck v s
+1 1 row1 updated
+1 2 row2 updated
+1 3 row3 updated
+1 4 row4 updated
+
+# Different partition keys are independent.
+exec
+INSERT INTO static_table (pk, ck, v, s) VALUES (2, 1, 'other', 'separate')
+----
+
+query
+SELECT pk, ck, v, s FROM static_table WHERE pk = 2
+----
+pk ck v s
+2 1 other separate
+
+# UPDATE propagates static column values too.
+exec
+UPDATE static_table SET s = 'via_update' WHERE pk = 1 AND ck = 1
+----
+
+query rowsort
+SELECT pk, ck, v, s FROM static_table WHERE pk = 1
+----
+pk ck v s
+1 1 row1 via_update
+1 2 row2 via_update
+1 3 row3 via_update
+1 4 row4 via_update
+
+# Partition 2 is unaffected.
+query
+SELECT pk, ck, v, s FROM static_table WHERE pk = 2
+----
+pk ck v s
+2 1 other separate
 
 # Multiple static columns.
 exec
@@ -36,11 +97,17 @@ CREATE TABLE IF NOT EXISTS multi_static (pk int, ck int, a text static, b int st
 ----
 
 exec
-INSERT INTO multi_static (pk, ck, a, b, c) VALUES (1, 1, 'hello', 42, 'data')
+INSERT INTO multi_static (pk, ck, a, b, c) VALUES (1, 1, 'hello', 42, 'data1')
 ----
 
-query
-SELECT pk, ck, a, b, c FROM multi_static WHERE pk = 1 AND ck = 1
+exec
+INSERT INTO multi_static (pk, ck, a, b, c) VALUES (1, 2, 'world', 99, 'data2')
+----
+
+# Both rows should have the latest static values ('world', 99).
+query rowsort
+SELECT pk, ck, a, b, c FROM multi_static WHERE pk = 1
 ----
 pk ck a b c
-1 1 hello 42 data
+1 1 world 99 data1
+1 2 world 99 data2

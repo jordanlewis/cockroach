@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
@@ -204,18 +205,27 @@ func (e *Executor) ExecuteQuery(
 	}
 }
 
-// recordTableSchema extracts partition key and column metadata from a
-// CREATE TABLE statement and stores it in the executor's schema tracker.
-// This enables PER PARTITION LIMIT translations on subsequent SELECTs.
+// recordTableSchema extracts partition key, column, and static column
+// metadata from a CREATE TABLE statement and stores it in the executor's
+// schema tracker. This enables PER PARTITION LIMIT translations on
+// subsequent SELECTs and static column propagation on writes.
 func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace string) {
 	cols := make([]string, len(s.Columns))
+	var staticCols map[string]bool
 	for i, col := range s.Columns {
 		cols[i] = col.Name
+		if col.IsStatic {
+			if staticCols == nil {
+				staticCols = make(map[string]bool)
+			}
+			staticCols[strings.ToLower(col.Name)] = true
+		}
 	}
 	e.schema.RecordTable(keyspace, s.Table, translate.TableMeta{
 		PartitionKeys:  s.PrimaryKey.PartitionKeys,
 		ClusteringKeys: s.PrimaryKey.ClusteringKeys,
 		Columns:        cols,
+		StaticColumns:  staticCols,
 	})
 }
 
@@ -246,8 +256,10 @@ func (e *Executor) executeDDL(
 	}
 }
 
-// executeDML executes a DML statement (INSERT/UPSERT) and returns a
-// Void RESULT.
+// executeDML executes a DML statement (INSERT/UPSERT/UPDATE/DELETE) and
+// returns a Void RESULT. If the translation includes a static column
+// propagation UPDATE, it is executed after the main statement to
+// synchronize static values across all rows in the partition.
 func (e *Executor) executeDML(
 	ctx context.Context, result translate.Result, override sessiondata.InternalExecutorOverride,
 ) ExecuteResult {
@@ -263,6 +275,22 @@ func (e *Executor) executeDML(
 	if err != nil {
 		return errorResult(errCodeServerError, err.Error())
 	}
+
+	// Propagate static column values across the partition if needed.
+	if result.PropagateStaticSQL != "" {
+		_, err := executor.ExecEx(
+			ctx,
+			redact.Sprint("cql-static-propagation"),
+			nil, // txn
+			override,
+			result.PropagateStaticSQL,
+			result.PropagateStaticParams...,
+		)
+		if err != nil {
+			return errorResult(errCodeServerError, err.Error())
+		}
+	}
+
 	return ExecuteResult{
 		Body: buildVoidBody(),
 	}
@@ -302,6 +330,21 @@ func (e *Executor) executeInsertIfNotExists(
 	if rowsAffected > 0 {
 		// Insert succeeded → [applied]=true.
 		querySQL = `SELECT true AS "[applied]"`
+
+		// Propagate static column values if the insert succeeded.
+		if result.PropagateStaticSQL != "" {
+			_, propErr := executor.ExecEx(
+				ctx,
+				redact.Sprint("cql-static-propagation"),
+				nil, // txn
+				override,
+				result.PropagateStaticSQL,
+				result.PropagateStaticParams...,
+			)
+			if propErr != nil {
+				return errorResult(errCodeServerError, propErr.Error())
+			}
+		}
 	} else {
 		// Duplicate found → [applied]=false + existing row.
 		meta, ok := e.schema.LookupTable(keyspace, stmt.Table)
@@ -379,6 +422,21 @@ func (e *Executor) executeBatch(
 			)
 			if err != nil {
 				return err
+			}
+
+			// Propagate static column values within the batch transaction.
+			if result.PropagateStaticSQL != "" {
+				_, err = txn.ExecEx(
+					ctx,
+					redact.Sprint("cql-batch-static-propagation"),
+					txn.KV(),
+					override,
+					result.PropagateStaticSQL,
+					result.PropagateStaticParams...,
+				)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		return nil

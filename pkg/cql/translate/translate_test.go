@@ -760,6 +760,103 @@ func TestTranslateSelectJSON(t *testing.T) {
 	}
 }
 
+func TestTranslateInsertStaticPropagation(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "t", TableMeta{
+		PartitionKeys:  []string{"pk"},
+		ClusteringKeys: []string{"ck"},
+		Columns:        []string{"pk", "ck", "v", "s"},
+		StaticColumns:  map[string]bool{"s": true},
+	})
+	schema.RecordTable("", "multi", TableMeta{
+		PartitionKeys:  []string{"pk"},
+		ClusteringKeys: []string{"ck"},
+		Columns:        []string{"pk", "ck", "a", "b", "c"},
+		StaticColumns:  map[string]bool{"a": true, "b": true},
+	})
+
+	tests := []struct {
+		name     string
+		cql      string
+		wantProp string
+	}{
+		{
+			name:     "insert with static column propagates",
+			cql:      "INSERT INTO t (pk, ck, v, s) VALUES (1, 2, 'val', 'shared')",
+			wantProp: `UPDATE "t" SET "s" = 'shared' WHERE "pk" = 1`,
+		},
+		{
+			name:     "insert without static column inherits",
+			cql:      "INSERT INTO t (pk, ck, v) VALUES (1, 2, 'val')",
+			wantProp: `UPDATE "t" SET "s" = COALESCE("s", (SELECT "s" FROM "t" AS "__cql_src" WHERE "__cql_src"."pk" = 1 AND "__cql_src"."s" IS NOT NULL LIMIT 1)) WHERE "pk" = 1`,
+		},
+		{
+			name:     "insert with multiple static columns",
+			cql:      "INSERT INTO multi (pk, ck, a, b, c) VALUES (1, 2, 'hello', 42, 'data')",
+			wantProp: `UPDATE "multi" SET "a" = 'hello', "b" = 42 WHERE "pk" = 1`,
+		},
+		{
+			name:     "insert with partial static columns",
+			cql:      "INSERT INTO multi (pk, ck, a, c) VALUES (1, 2, 'hello', 'data')",
+			wantProp: `UPDATE "multi" SET "a" = 'hello', "b" = COALESCE("b", (SELECT "b" FROM "multi" AS "__cql_src" WHERE "__cql_src"."pk" = 1 AND "__cql_src"."b" IS NOT NULL LIMIT 1)) WHERE "pk" = 1`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := TranslateWithSchema(stmt, schema)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantProp, result.PropagateStaticSQL)
+		})
+	}
+}
+
+func TestTranslateInsertNoStaticWithoutSchema(t *testing.T) {
+	// Without schema, no propagation is generated.
+	stmt, err := parser.Parse("INSERT INTO t (pk, ck, v, s) VALUES (1, 2, 'val', 'shared')")
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Empty(t, result.PropagateStaticSQL)
+}
+
+func TestTranslateUpdateStaticPropagation(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "t", TableMeta{
+		PartitionKeys:  []string{"pk"},
+		ClusteringKeys: []string{"ck"},
+		Columns:        []string{"pk", "ck", "v", "s"},
+		StaticColumns:  map[string]bool{"s": true},
+	})
+
+	tests := []struct {
+		name     string
+		cql      string
+		wantProp string
+	}{
+		{
+			name:     "update static column propagates",
+			cql:      "UPDATE t SET s = 'new' WHERE pk = 1 AND ck = 2",
+			wantProp: `UPDATE "t" SET "s" = 'new' WHERE "pk" = 1`,
+		},
+		{
+			name:     "update non-static column no propagation",
+			cql:      "UPDATE t SET v = 'val' WHERE pk = 1 AND ck = 2",
+			wantProp: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := TranslateWithSchema(stmt, schema)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantProp, result.PropagateStaticSQL)
+		})
+	}
+}
+
 func TestTranslateRoundTrip(t *testing.T) {
 	// Verify that parsing a CQL statement and translating it produces valid SQL.
 	cqlStatements := []string{

@@ -32,12 +32,13 @@ import (
 )
 
 // TableMeta holds metadata about a CQL table needed for translations that
-// require schema context, such as PER PARTITION LIMIT and INSERT IF NOT
-// EXISTS (lightweight transaction) result sets.
+// require schema context, such as PER PARTITION LIMIT, INSERT IF NOT EXISTS
+// (lightweight transaction) result sets, and static column propagation.
 type TableMeta struct {
-	PartitionKeys  []string // partition key columns from PRIMARY KEY
-	ClusteringKeys []string // clustering key columns from PRIMARY KEY
-	Columns        []string // all column names in declaration order
+	PartitionKeys  []string        // partition key columns from PRIMARY KEY
+	ClusteringKeys []string        // clustering key columns from PRIMARY KEY
+	Columns        []string        // all column names in declaration order
+	StaticColumns  map[string]bool // lowercase names of STATIC columns (nil if none)
 }
 
 // SchemaInfo tracks table metadata accumulated from CREATE TABLE statements,
@@ -171,6 +172,11 @@ type Result struct {
 	// Bind markers (? and :name) are left as $N placeholders; literal values
 	// are inlined into the SQL string.
 	Params []interface{}
+	// PropagateStaticSQL is an optional UPDATE that propagates static column
+	// values across all rows in the same partition. Generated when an INSERT
+	// or UPDATE modifies static columns in a CQL table.
+	PropagateStaticSQL    string
+	PropagateStaticParams []interface{}
 }
 
 // Translate converts a CQL AST statement into a CockroachDB SQL Result.
@@ -192,11 +198,11 @@ func TranslateWithSchema(stmt parser.Statement, schema *SchemaInfo) (Result, err
 	case *parser.CreateTableStatement:
 		return translateCreateTable(s)
 	case *parser.InsertStatement:
-		return translateInsert(s)
+		return translateInsert(s, schema)
 	case *parser.SelectStatement:
 		return translateSelect(s, schema)
 	case *parser.UpdateStatement:
-		return translateUpdate(s)
+		return translateUpdate(s, schema)
 	case *parser.DeleteStatement:
 		return translateDelete(s)
 	case *parser.CreateIndexStatement:
@@ -324,8 +330,10 @@ func translateCreateIndex(s *parser.CreateIndexStatement) (Result, error) {
 
 // translateInsert maps CQL INSERT INTO to CRDB SQL. CQL INSERT is an upsert
 // (last-write-wins) unless IF NOT EXISTS is specified, in which case it is a
-// conditional insert.
-func translateInsert(s *parser.InsertStatement) (Result, error) {
+// conditional insert. When schema is available and the target table has static
+// columns, a propagation UPDATE is generated to synchronize static values
+// across all rows in the partition.
+func translateInsert(s *parser.InsertStatement, schema *SchemaInfo) (Result, error) {
 	if s.JSON {
 		return translateInsertJSON(s)
 	}
@@ -372,7 +380,18 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 		sb.WriteString(" ON CONFLICT DO NOTHING")
 	}
 
-	return Result{SQL: sb.String(), Params: params}, nil
+	result := Result{SQL: sb.String(), Params: params}
+
+	// Generate static column propagation if the table has static columns.
+	if schema != nil {
+		propSQL, propParams := buildInsertStaticPropagation(s, schema)
+		if propSQL != "" {
+			result.PropagateStaticSQL = propSQL
+			result.PropagateStaticParams = propParams
+		}
+	}
+
+	return result, nil
 }
 
 // translateSelect maps CQL SELECT to CRDB SQL SELECT.
@@ -699,13 +718,15 @@ func writeWhereClauses(
 	return nil
 }
 
-// translateUpdate maps CQL UPDATE to CRDB SQL UPDATE.
+// translateUpdate maps CQL UPDATE to CRDB SQL UPDATE. When schema is
+// available and the table has static columns, a propagation UPDATE is
+// generated to synchronize static values across all partition rows.
 //
 // CQL UPDATE with IF EXISTS or IF conditions uses conditional logic. IF EXISTS
 // is a no-op guard (SQL UPDATE WHERE is already a no-op for missing rows).
 // IF conditions are appended as additional WHERE predicates so the UPDATE
 // only executes when the conditions are satisfied.
-func translateUpdate(s *parser.UpdateStatement) (Result, error) {
+func translateUpdate(s *parser.UpdateStatement, schema *SchemaInfo) (Result, error) {
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -764,7 +785,18 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 		}
 	}
 
-	return Result{SQL: sb.String(), Params: params}, nil
+	result := Result{SQL: sb.String(), Params: params}
+
+	// Generate static column propagation if the table has static columns.
+	if schema != nil {
+		propSQL, propParams := buildUpdateStaticPropagation(s, schema)
+		if propSQL != "" {
+			result.PropagateStaticSQL = propSQL
+			result.PropagateStaticParams = propParams
+		}
+	}
+
+	return result, nil
 }
 
 // translateDelete maps CQL DELETE to CRDB SQL.
@@ -1334,6 +1366,192 @@ func translateAlterType(s *parser.AlterTypeStatement) (Result, error) {
 	default:
 		return Result{}, errors.Newf("unsupported ALTER TYPE operation: %T", s.Op)
 	}
+}
+
+// buildInsertStaticPropagation generates a propagation UPDATE for an INSERT
+// into a table with static columns. For static columns included in the INSERT,
+// the explicit value is propagated to all partition rows. For static columns
+// not in the INSERT, COALESCE inherits the value from existing partition rows.
+func buildInsertStaticPropagation(
+	s *parser.InsertStatement, schema *SchemaInfo,
+) (string, []interface{}) {
+	meta, ok := schema.LookupTable(s.Keyspace, s.Table)
+	if !ok || len(meta.StaticColumns) == 0 {
+		return "", nil
+	}
+
+	// Map INSERT column names (lowercase) to their index in Values.
+	colIdx := make(map[string]int, len(s.Columns))
+	for i, col := range s.Columns {
+		colIdx[strings.ToLower(col)] = i
+	}
+
+	// Find partition key value indices.
+	type colVal struct {
+		name   string
+		valIdx int
+	}
+	var pkCols []colVal
+	for _, pk := range meta.PartitionKeys {
+		idx, ok := colIdx[strings.ToLower(pk)]
+		if !ok {
+			return "", nil // can't propagate without PK values
+		}
+		pkCols = append(pkCols, colVal{pk, idx})
+	}
+
+	// Collect static columns in sorted order for deterministic SQL.
+	sortedStatic := make([]string, 0, len(meta.StaticColumns))
+	for col := range meta.StaticColumns {
+		sortedStatic = append(sortedStatic, col)
+	}
+	sort.Strings(sortedStatic)
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("UPDATE ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" SET ")
+
+	for i, col := range sortedStatic {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		qCol := quoteIdent(col)
+		sb.WriteString(qCol)
+		sb.WriteString(" = ")
+
+		if idx, ok := colIdx[col]; ok {
+			// Static column is in the INSERT: propagate its explicit value.
+			sqlVal, param, err := exprToSQL(s.Values[idx], &paramIdx)
+			if err != nil {
+				return "", nil
+			}
+			sb.WriteString(sqlVal)
+			if param != nil {
+				params = append(params, param)
+			}
+		} else {
+			// Static column not in the INSERT: inherit from existing rows.
+			sb.WriteString("COALESCE(")
+			sb.WriteString(qCol)
+			sb.WriteString(", (SELECT ")
+			sb.WriteString(qCol)
+			sb.WriteString(" FROM ")
+			sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+			sb.WriteString(" AS \"__cql_src\" WHERE ")
+			for j, pk := range pkCols {
+				if j > 0 {
+					sb.WriteString(" AND ")
+				}
+				sb.WriteString("\"__cql_src\".")
+				sb.WriteString(quoteIdent(pk.name))
+				sb.WriteString(" = ")
+				sqlVal, param, err := exprToSQL(s.Values[pk.valIdx], &paramIdx)
+				if err != nil {
+					return "", nil
+				}
+				sb.WriteString(sqlVal)
+				if param != nil {
+					params = append(params, param)
+				}
+			}
+			sb.WriteString(" AND \"__cql_src\".")
+			sb.WriteString(qCol)
+			sb.WriteString(" IS NOT NULL LIMIT 1))")
+		}
+	}
+
+	sb.WriteString(" WHERE ")
+	for i, pk := range pkCols {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+		sb.WriteString(quoteIdent(pk.name))
+		sb.WriteString(" = ")
+		sqlVal, param, err := exprToSQL(s.Values[pk.valIdx], &paramIdx)
+		if err != nil {
+			return "", nil
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	return sb.String(), params
+}
+
+// buildUpdateStaticPropagation generates a propagation UPDATE for an UPDATE
+// that modifies static columns. The propagation UPDATE applies the new static
+// values to all rows matching the partition key (not just the rows targeted
+// by the original clustering key conditions).
+func buildUpdateStaticPropagation(
+	s *parser.UpdateStatement, schema *SchemaInfo,
+) (string, []interface{}) {
+	meta, ok := schema.LookupTable(s.Keyspace, s.Table)
+	if !ok || len(meta.StaticColumns) == 0 {
+		return "", nil
+	}
+
+	// Collect assignments that target static columns.
+	var staticAssigns []parser.Assignment
+	for _, a := range s.Assignments {
+		if meta.StaticColumns[strings.ToLower(a.Column)] {
+			staticAssigns = append(staticAssigns, a)
+		}
+	}
+	if len(staticAssigns) == 0 {
+		return "", nil
+	}
+
+	// Extract partition key conditions from the WHERE clause.
+	pkSet := make(map[string]bool, len(meta.PartitionKeys))
+	for _, pk := range meta.PartitionKeys {
+		pkSet[strings.ToLower(pk)] = true
+	}
+	var pkWheres []parser.WhereClause
+	for _, w := range s.Where {
+		if pkSet[strings.ToLower(w.Column)] {
+			pkWheres = append(pkWheres, w)
+		}
+	}
+	if len(pkWheres) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("UPDATE ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" SET ")
+
+	for i, a := range staticAssigns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(a.Column))
+		sb.WriteString(" = ")
+		sqlVal, param, err := exprToSQL(a.Value, &paramIdx)
+		if err != nil {
+			return "", nil
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	sb.WriteString(" WHERE ")
+	if err := writeWhereClauses(&sb, pkWheres, &params, &paramIdx); err != nil {
+		return "", nil
+	}
+
+	return sb.String(), params
 }
 
 // quoteIdent quotes a SQL identifier with double quotes. CQL identifiers are
