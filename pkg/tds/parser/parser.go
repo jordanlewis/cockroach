@@ -4,11 +4,40 @@
 // included in the /LICENSE file.
 
 // Package parser implements a recursive descent parser for a subset of the
-// T-SQL / Sybase SQL dialect. It covers USE, CREATE/DROP TABLE/DATABASE,
-// INSERT, DELETE, UPDATE, SELECT (with WHERE, ORDER BY, TOP, GROUP BY,
-// HAVING), subqueries (scalar, EXISTS, IN, ANY/ALL), set operations
-// (UNION/INTERSECT/EXCEPT), CTEs (WITH), window functions (OVER), and
-// OFFSET-FETCH pagination.
+// T-SQL / Sybase SQL dialect. It accepts syntax from both Microsoft SQL Server
+// and SAP Sybase ASE, which share a common T-SQL heritage but diverge in
+// specific features.
+//
+// # Dialect scope
+//
+// The parser accepts the following features from each dialect:
+//
+// [Both] (common T-SQL supported by both SQL Server and Sybase ASE):
+//
+//   - USE, CREATE/DROP TABLE/DATABASE, INSERT, DELETE, UPDATE, SELECT
+//   - WHERE, ORDER BY, TOP, GROUP BY, HAVING
+//   - Subqueries (scalar, EXISTS, IN, ANY/ALL/SOME), CASE expressions
+//   - Set operations (UNION/INTERSECT/EXCEPT), CTEs (WITH)
+//   - Window functions (OVER), BETWEEN, LIKE
+//   - JOINs (INNER/LEFT/RIGHT/FULL/CROSS)
+//   - ALTER TABLE, CREATE INDEX, CREATE/DROP VIEW
+//   - BEGIN/COMMIT/ROLLBACK TRAN, SAVE TRAN
+//   - CONVERT(type, expr), ISNULL, GETDATE
+//   - IDENTITY columns, DEFAULT, computed columns (AS expr)
+//   - Bracket-quoted identifiers [name], @@system variables
+//
+// [SQL Server] (Microsoft SQL Server specific):
+//
+//   - OFFSET n ROWS FETCH NEXT m ROWS ONLY (SQL Server 2012+)
+//   - OUTPUT clause on INSERT/UPDATE/DELETE
+//   - MERGE INTO ... USING ... ON ... WHEN MATCHED/NOT MATCHED
+//   - CREATE PROCEDURE/FUNCTION/TRIGGER (parsed but not translated)
+//   - VARCHAR(MAX) / NVARCHAR(MAX)
+//
+// [Sybase ASE] (SAP Sybase ASE specific):
+//
+//   - ROWS LIMIT x [OFFSET y] pagination (Sybase ASE 15.7+)
+//   - UNSIGNED type modifier (UNSIGNED INT, UNSIGNED BIGINT, etc.)
 //
 // T-SQL is case-insensitive for keywords; the lexer normalizes keywords
 // to upper case for matching but preserves original casing in identifiers.
@@ -434,9 +463,10 @@ func (p *parser) parseDataType() (string, error) {
 	}
 	typeName := strings.ToUpper(name)
 
-	// Sybase ASE supports UNSIGNED as a type modifier (e.g. UNSIGNED INT,
-	// UNSIGNED BIGINT). Consume the base type and combine into a compound
-	// type name so the translator can map it.
+	// [Sybase ASE] UNSIGNED type modifier (e.g. UNSIGNED INT, UNSIGNED
+	// BIGINT). SQL Server does not support UNSIGNED integer types. Consume
+	// the base type and combine into a compound type name so the translator
+	// can map it.
 	if typeName == "UNSIGNED" {
 		base, err := p.expectIdent()
 		if err != nil {
@@ -849,7 +879,8 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		}
 	}
 
-	// Optional Sybase ASE ROWS LIMIT x [OFFSET y] pagination.
+	// [Sybase ASE] Optional ROWS LIMIT x [OFFSET y] pagination (ASE 15.7+).
+	// SQL Server does not support this syntax.
 	if p.lex.peek().typ == tokenROWS {
 		saved := p.lex.peek()
 		p.lex.next() // consume ROWS
@@ -888,7 +919,8 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		p.lex.peeked = &saved
 	}
 
-	// Optional OFFSET-FETCH (T-SQL pagination).
+	// [SQL Server] Optional OFFSET-FETCH pagination (SQL Server 2012+).
+	// Sybase ASE does not support this syntax.
 	if p.lex.peek().typ == tokenOFFSET {
 		p.lex.next()
 		tok := p.lex.next()
@@ -1068,6 +1100,7 @@ func (p *parser) parseSaveTran() (*SaveTranStmt, error) {
 }
 
 // parsePrint parses: PRINT <expr>
+// [Both] PRINT is supported by both SQL Server and Sybase ASE.
 func (p *parser) parsePrint() (*PrintStmt, error) {
 	p.lex.next() // consume PRINT
 	expr, err := p.parseExpr()
@@ -1077,7 +1110,9 @@ func (p *parser) parsePrint() (*PrintStmt, error) {
 	return &PrintStmt{Expr: expr}, nil
 }
 
-// parseRaiserror parses the Sybase ASE form: RAISERROR <errnum> [, <message>]
+// parseRaiserror parses the Sybase ASE form: RAISERROR <errnum> [, <message>].
+// [Sybase ASE] This is the Sybase ASE RAISERROR syntax. SQL Server uses a
+// different form: RAISERROR('message', severity, state).
 func (p *parser) parseRaiserror() (*RaiserrorStmt, error) {
 	p.lex.next() // consume RAISERROR
 	tok := p.lex.next()
@@ -2111,7 +2146,8 @@ func (p *parser) skipToEndOfStatement() {
 }
 
 // parseOutputClause parses: OUTPUT <select_column_list>.
-// T-SQL OUTPUT columns may reference inserted.*, deleted.*, or plain columns.
+// [SQL Server] OUTPUT with inserted.*/deleted.* pseudo-tables is SQL
+// Server-specific. Sybase ASE has no OUTPUT clause.
 func (p *parser) parseOutputClause() ([]SelectColumn, error) {
 	p.lex.next() // consume OUTPUT
 	var cols []SelectColumn
@@ -2135,6 +2171,9 @@ func (p *parser) parseOutputClause() ([]SelectColumn, error) {
 //	[WHEN MATCHED THEN (UPDATE SET ...|DELETE)]
 //	[WHEN NOT MATCHED THEN INSERT [(<cols>)] VALUES (<vals>)]
 //	[OUTPUT <cols>]
+//
+// [SQL Server] MERGE is SQL Server 2008+ (and ANSI SQL:2003). Sybase ASE
+// does not support MERGE; it uses separate INSERT/UPDATE/DELETE instead.
 func (p *parser) parseMerge() (*MergeStmt, error) {
 	p.lex.next() // consume MERGE
 	if p.lex.peek().typ == tokenINTO {

@@ -150,15 +150,17 @@ const (
 	tokenROLLBACK
 	tokenSAVE
 
-	// Sybase ASE pagination keyword.
+	// [Sybase ASE] Pagination keyword for ROWS LIMIT x [OFFSET y] syntax
+	// (Sybase ASE 15.7+). SQL Server does not use LIMIT.
 	tokenLIMIT
 
-	// Sybase ASE COMPUTE BY keyword.
+	// [Sybase ASE] COMPUTE BY keyword for row aggregation. SQL Server
+	// supported COMPUTE historically but deprecated it in 2012.
 	tokenCOMPUTE
 
 	// Session command keywords.
-	tokenPRINT
-	tokenRAISERROR
+	tokenPRINT     // [Both] PRINT is supported by both dialects
+	tokenRAISERROR // [Sybase ASE] Sybase ASE RAISERROR syntax
 
 	// Type system keywords.
 	tokenIDENTITY
@@ -269,10 +271,10 @@ var keywords = map[string]tokenType{
 	"ROLLBACK":    tokenROLLBACK,
 	"SAVE":        tokenSAVE,
 
-	// Sybase ASE pagination keyword.
+	// [Sybase ASE] pagination keyword.
 	"LIMIT": tokenLIMIT,
 
-	// Sybase ASE COMPUTE BY keyword.
+	// [Sybase ASE] COMPUTE BY keyword.
 	"COMPUTE": tokenCOMPUTE,
 
 	// Session command keywords.

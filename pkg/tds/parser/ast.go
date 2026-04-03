@@ -142,13 +142,14 @@ func (s *CreateTableStmt) String() string {
 
 // InsertStmt represents INSERT INTO <table> [(<columns>)] VALUES (<values>), ...
 // or INSERT INTO <table> [(<columns>)] SELECT ...
-// An optional OUTPUT clause maps to RETURNING in CockroachDB.
+// [SQL Server] An optional OUTPUT clause maps to RETURNING in CockroachDB.
+// Sybase ASE does not support OUTPUT on INSERT.
 type InsertStmt struct {
 	Table   string
 	Columns []string
 	Values  [][]Expr       // non-nil for VALUES inserts
 	Select  Statement      // non-nil for INSERT...SELECT
-	Output  []SelectColumn // OUTPUT clause
+	Output  []SelectColumn // [SQL Server] OUTPUT clause
 }
 
 func (*InsertStmt) statementNode() {}
@@ -194,14 +195,14 @@ func (s *InsertStmt) String() string {
 }
 
 // DeleteStmt represents DELETE [FROM] <table> [WHERE <expr>].
-// Extended for multi-table DELETE (DELETE t FROM t JOIN s ON ...)
-// and OUTPUT clause.
+// [Both] Extended for multi-table DELETE (DELETE t FROM t JOIN s ON ...).
+// [SQL Server] OUTPUT clause (Sybase ASE does not support OUTPUT on DELETE).
 type DeleteStmt struct {
 	Table  string // target table name (or alias for multi-table)
 	Where  Expr
 	From   []TableRef     // non-empty for multi-table DELETE
 	Joins  []JoinClause   // JOINs for multi-table DELETE
-	Output []SelectColumn // OUTPUT clause
+	Output []SelectColumn // [SQL Server] OUTPUT clause
 }
 
 func (*DeleteStmt) statementNode() {}
@@ -239,14 +240,15 @@ func (s *DeleteStmt) String() string {
 }
 
 // UpdateStmt represents UPDATE <table> SET <assignments> [FROM ...] [WHERE <expr>].
-// Extended for UPDATE...FROM (multi-table UPDATE) and OUTPUT clause.
+// [Both] Extended for UPDATE...FROM (multi-table UPDATE).
+// [SQL Server] OUTPUT clause (Sybase ASE does not support OUTPUT on UPDATE).
 type UpdateStmt struct {
 	Table       string
 	Assignments []Assignment
 	From        []TableRef   // FROM clause for multi-table UPDATE
 	Joins       []JoinClause // JOINs in FROM clause
 	Where       Expr
-	Output      []SelectColumn // OUTPUT clause
+	Output      []SelectColumn // [SQL Server] OUTPUT clause
 }
 
 func (*UpdateStmt) statementNode() {}
@@ -337,10 +339,12 @@ func (j *JoinClause) String() string {
 	return s
 }
 
-// ComputeClause represents a Sybase ASE COMPUTE clause:
+// ComputeClause represents a COMPUTE clause:
 // COMPUTE <agg>(expr) [, <agg>(expr) ...] [BY col [, col ...]].
-// COMPUTE without BY produces a grand total; with BY, it produces
-// summary rows after each group (like a control break).
+// [Sybase ASE] COMPUTE BY is unique to Sybase ASE. SQL Server supported
+// COMPUTE BY historically but deprecated it in SQL Server 2012 and removed
+// it in later versions. COMPUTE without BY produces a grand total; with
+// BY, it produces summary rows after each group (like a control break).
 type ComputeClause struct {
 	Aggregates []ComputeAgg
 	By         []Expr // nil for grand total (COMPUTE without BY)
@@ -380,12 +384,16 @@ func (a *ComputeAgg) String() string {
 
 // SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
 // [JOIN ...] [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>]
-// [ORDER BY <exprs>] [OFFSET n ROWS [FETCH NEXT m ROWS ONLY]]
-// or the Sybase ASE pagination variant: [ROWS LIMIT x [OFFSET y]].
-// An optional trailing COMPUTE clause adds summary rows.
+// [ORDER BY <exprs>] with two mutually exclusive pagination variants:
+//
+//   - [SQL Server] OFFSET n ROWS [FETCH NEXT m ROWS ONLY] (SQL Server 2012+)
+//   - [Sybase ASE] ROWS LIMIT x [OFFSET y] (Sybase ASE 15.7+)
+//
+// The RowsLimitSyntax flag distinguishes which variant was parsed. An
+// optional trailing COMPUTE clause ([Sybase ASE]) adds summary rows.
 type SelectStmt struct {
 	Distinct        bool
-	Top             *int
+	Top             *int // [Both] SELECT TOP N
 	Columns         []SelectColumn
 	From            []TableRef
 	Joins           []JoinClause
@@ -393,10 +401,10 @@ type SelectStmt struct {
 	GroupBy         []Expr
 	Having          Expr
 	OrderBy         []OrderByExpr
-	Offset          *int            // OFFSET n ROWS, or OFFSET y in Sybase ROWS LIMIT
-	Fetch           *int            // FETCH NEXT m ROWS ONLY, or LIMIT x in Sybase ROWS LIMIT
-	RowsLimitSyntax bool            // true when parsed from Sybase ROWS LIMIT syntax
-	Compute         []ComputeClause // Sybase ASE COMPUTE [BY] clauses
+	Offset          *int            // [SQL Server] OFFSET n ROWS, or [Sybase ASE] OFFSET y
+	Fetch           *int            // [SQL Server] FETCH NEXT m ROWS ONLY, or [Sybase ASE] LIMIT x
+	RowsLimitSyntax bool            // true = [Sybase ASE] ROWS LIMIT syntax; false = [SQL Server] OFFSET-FETCH
+	Compute         []ComputeClause // [Sybase ASE] COMPUTE [BY] clauses
 }
 
 func (*SelectStmt) statementNode() {}
@@ -521,8 +529,10 @@ func (o *OrderByExpr) String() string {
 }
 
 // CompoundSelectStmt represents two SELECT-like statements joined by a set
-// operation (UNION, UNION ALL, INTERSECT, EXCEPT). ORDER BY, OFFSET-FETCH, or
-// Sybase ROWS LIMIT apply to the compound result when present.
+// operation (UNION, UNION ALL, INTERSECT, EXCEPT). [Both] Set operations are
+// supported by both SQL Server and Sybase ASE. ORDER BY and pagination
+// ([SQL Server] OFFSET-FETCH or [Sybase ASE] ROWS LIMIT) apply to the
+// compound result when present.
 type CompoundSelectStmt struct {
 	Left            Statement // *SelectStmt or *CompoundSelectStmt
 	Op              string    // "UNION", "UNION ALL", "INTERSECT", "EXCEPT"
@@ -530,7 +540,7 @@ type CompoundSelectStmt struct {
 	OrderBy         []OrderByExpr
 	Offset          *int
 	Fetch           *int
-	RowsLimitSyntax bool // true when parsed from Sybase ROWS LIMIT syntax
+	RowsLimitSyntax bool // true = [Sybase ASE] ROWS LIMIT; false = [SQL Server] OFFSET-FETCH
 }
 
 func (*CompoundSelectStmt) statementNode() {}
@@ -701,10 +711,12 @@ func (e *FuncCallExpr) String() string {
 }
 
 // ConvertExpr represents CONVERT(<type>, <expr>[, <style>]).
+// [Both] CONVERT is supported by both SQL Server and Sybase ASE.
+// [SQL Server] The optional third Style argument is SQL Server-specific.
 type ConvertExpr struct {
 	DataType string
 	Expr     Expr
-	Style    Expr // optional
+	Style    Expr // [SQL Server] optional style parameter
 }
 
 func (*ConvertExpr) exprNode() {}
@@ -1181,6 +1193,8 @@ func (s *SaveTranStmt) String() string {
 
 // MergeStmt represents MERGE INTO <target> USING <source> ON <condition>
 // WHEN MATCHED THEN ... WHEN NOT MATCHED THEN ...
+// [SQL Server] MERGE is SQL Server 2008+ (and ANSI SQL:2003). Sybase ASE
+// does not support MERGE.
 type MergeStmt struct {
 	Target     TableRef
 	Source     TableRef
@@ -1248,7 +1262,8 @@ type MergeWhenNotMatched struct {
 }
 
 // PrintStmt represents PRINT <expr>, which sends an informational
-// message to the client.
+// message to the client. [Both] PRINT is supported by both SQL Server
+// and Sybase ASE.
 type PrintStmt struct {
 	Expr Expr
 }
@@ -1259,9 +1274,10 @@ func (s *PrintStmt) String() string {
 	return fmt.Sprintf("PRINT %s", s.Expr)
 }
 
-// RaiserrorStmt represents the Sybase ASE RAISERROR syntax:
-// RAISERROR <errnum> [, <message>]. This differs from SQL Server's
-// RAISERROR('msg', severity, state) form.
+// RaiserrorStmt represents the RAISERROR syntax.
+// [Sybase ASE] Sybase form: RAISERROR <errnum> [, <message>].
+// [SQL Server] SQL Server uses a different form: RAISERROR('msg',
+// severity, state) — not yet supported by this parser.
 type RaiserrorStmt struct {
 	ErrNum  int
 	Message string // optional

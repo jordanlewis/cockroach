@@ -3,12 +3,29 @@
 // Use of this software is governed by the CockroachDB Software License
 // included in the /LICENSE file.
 
-// Package catalog provides Sybase system catalog emulation for the TDS
-// protocol layer. It detects and translates Sybase-specific system queries
-// (@@VERSION, sp_helpdb, sp_help, sysobjects, syscolumns) and SET commands
-// into CockroachDB-compatible SQL. This allows Sybase/SQL Server drivers
-// and applications to perform their usual startup and metadata queries
-// against CockroachDB without modification.
+// Package catalog provides system catalog emulation for the TDS protocol
+// layer. It detects and translates system queries and SET commands into
+// CockroachDB-compatible SQL, allowing Sybase/SQL Server drivers and
+// applications to perform their usual startup and metadata queries against
+// CockroachDB without modification.
+//
+// # Dialect scope
+//
+// Most features here are common to both SQL Server and Sybase ASE, since
+// they share a common heritage of system stored procedures and system tables.
+//
+// [Both] Features used by both SQL Server and Sybase ASE:
+//   - SELECT @@VERSION
+//   - sp_helpdb, sp_help (stored procedure calls)
+//   - SET QUOTED_IDENTIFIER, SET ANSI_NULLS, SET TEXTSIZE,
+//     SET ARITHABORT, SET CONCAT_NULL_YIELDS_NULL
+//
+// [Sybase ASE] Features primarily used by Sybase ASE drivers:
+//   - sysobjects/syscolumns system table queries (Sybase ASE uses these
+//     extensively; SQL Server prefers sys.objects/sys.columns)
+//   - The @@VERSION string is formatted as Sybase ASE ("Adaptive Server
+//     Enterprise") since most TDS drivers that connect to the TDS port
+//     identify themselves as Sybase clients.
 package catalog
 
 import (
@@ -50,6 +67,9 @@ var (
 
 	// reSetCommand matches common Sybase/SQL Server SET commands that drivers
 	// send during connection initialization. These are acknowledged silently.
+	// [Both] Most SET options are common to both dialects.
+	// [SQL Server] SET IDENTITY_INSERT is SQL Server-specific.
+	// [Both] SET ROWCOUNT is supported by both dialects.
 	reSetCommand = regexp.MustCompile(
 		`(?i)^\s*SET\s+(?:` +
 			`QUOTED_IDENTIFIER\s+(?:ON|OFF)` +

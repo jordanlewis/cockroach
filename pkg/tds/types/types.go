@@ -13,6 +13,14 @@
 // variable-length variants (e.g. INTNTYPE = 0x26 carries a length byte that
 // determines the actual integer width). This package maps both forms to the
 // corresponding CockroachDB *types.T.
+//
+// # Dialect note
+//
+// The TDS wire protocol is shared by both SQL Server and Sybase ASE. The
+// type IDs defined here are used by both dialects and are part of the wire
+// protocol specification, not dialect-specific SQL syntax. The SQL-level
+// type names that map to these wire types differ between dialects (see the
+// translate package's mapDataType for those mappings).
 package types
 
 import (

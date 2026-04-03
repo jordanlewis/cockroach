@@ -4,29 +4,68 @@
 // included in the /LICENSE file.
 
 // Package translate converts T-SQL AST nodes (as produced by the parser
-// package) into CockroachDB-compatible SQL strings. It handles Sybase/SQL
-// Server-specific syntax and function differences:
+// package) into CockroachDB-compatible SQL strings.
+//
+// # Dialect scope
+//
+// This package handles both SQL Server (Microsoft) and Sybase ASE dialect
+// features. The two dialects share a common T-SQL heritage but diverged
+// after the 2010 SAP acquisition of Sybase. Features are annotated below
+// as [Both], [SQL Server], or [Sybase ASE] to indicate which dialect(s)
+// introduced or support them.
+//
+// # Translations
+//
+// [Both] Common T-SQL features supported by both SQL Server and Sybase ASE:
 //
 //   - USE <db> → SET database = '<db>'
-//   - CREATE TABLE: maps Sybase types to CRDB types (MONEY → DECIMAL(19,4),
-//     DATETIME → TIMESTAMP, NVARCHAR → VARCHAR, etc.) and applies Sybase's
-//     default-nullable semantics (columns are nullable unless explicitly
-//     declared NOT NULL).
+//   - CREATE TABLE: default-nullable semantics (columns are nullable unless
+//     explicitly declared NOT NULL)
 //   - SELECT TOP N → LIMIT N
-//   - OFFSET-FETCH → LIMIT/OFFSET
 //   - Bracket-quoted identifiers [name] → double-quoted identifiers "name"
 //   - ISNULL(a,b) → COALESCE(a,b)
 //   - CONVERT(type, expr) → CAST(expr AS type)
 //   - GETDATE() → now()
 //   - String concatenation with + → ||
-//   - @@ROWCOUNT → crdb_internal.num_rows_affected (placeholder)
-//   - @@IDENTITY → lastval()
-//   - @@VERSION → version()
-//   - UNION/INTERSECT/EXCEPT → pass-through
-//   - WITH (CTEs) → pass-through
-//   - Subqueries, EXISTS, ANY/ALL → pass-through
+//   - @@ROWCOUNT, @@IDENTITY, @@VERSION system variables
+//   - UNION/INTERSECT/EXCEPT, WITH (CTEs), subqueries, EXISTS, ANY/ALL/SOME
 //   - Window functions (OVER) → pass-through
-//   - SOME → ANY (T-SQL synonym)
+//   - CASE, BETWEEN, IN → pass-through
+//   - BEGIN/COMMIT/ROLLBACK TRAN, SAVE TRAN
+//   - IDENTITY columns, DEFAULT expressions, computed columns
+//   - Data types: INT/SMALLINT/BIGINT/TINYINT, FLOAT/REAL, CHAR/VARCHAR,
+//     NCHAR/NVARCHAR, TEXT/NTEXT, BINARY/VARBINARY/IMAGE, DATETIME,
+//     SMALLDATETIME, DATE/TIME, MONEY/SMALLMONEY, NUMERIC/DECIMAL,
+//     UNIQUEIDENTIFIER, BIT
+//   - Functions: LEN, CHARINDEX, STUFF, REPLICATE, SPACE, DATEADD,
+//     DATEDIFF, DATEPART, DATENAME, YEAR/MONTH/DAY, LOG, LOG10
+//   - DDL: ALTER TABLE, CREATE INDEX (with INCLUDE), CREATE/DROP VIEW,
+//     TRUNCATE TABLE
+//   - Multi-table DELETE/UPDATE...FROM
+//
+// [SQL Server] Features specific to Microsoft SQL Server (not in Sybase ASE):
+//
+//   - OFFSET n ROWS FETCH NEXT m ROWS ONLY (SQL Server 2012+)
+//   - OUTPUT clause (inserted.*/deleted.*) on INSERT/UPDATE/DELETE/MERGE
+//   - MERGE INTO ... USING ... ON ... WHEN MATCHED/NOT MATCHED
+//   - DATETIME2, DATETIMEOFFSET (SQL Server 2008+)
+//   - TIMESTAMP/ROWVERSION (binary counter, not datetime)
+//   - STRING_AGG (SQL Server 2017+), IIF, CHOOSE, TRY_CONVERT, FORMAT
+//     (all SQL Server 2012+)
+//   - SYSDATETIME, GETUTCDATE, EOMONTH, ISDATE, NEWID
+//   - COUNT_BIG, STDEV/STDEVP, VAR/VARP, CHECKSUM_AGG
+//   - OBJECT_ID, DB_NAME, SCHEMA_NAME, USER_NAME, HOST_NAME, APP_NAME
+//   - CREATE PROCEDURE/FUNCTION/TRIGGER (parsed but rejected)
+//   - VARCHAR(MAX)/NVARCHAR(MAX)
+//   - DROP INDEX idx ON tbl syntax, PATINDEX, QUOTENAME
+//
+// [Sybase ASE] Features specific to SAP Sybase ASE (not in SQL Server):
+//
+//   - ROWS LIMIT x [OFFSET y] pagination (Sybase ASE 15.7+)
+//   - LIST(expr [, separator]) aggregate (Sybase equivalent of STRING_AGG)
+//   - UNSIGNED integer types: UNSIGNED TINYINT/SMALLINT/INT/BIGINT
+//   - BIGDATETIME, BIGTIME (microsecond-precision, Sybase ASE 15.5+)
+//   - UNICHAR, UNIVARCHAR, UNITEXT (Sybase Unicode character types)
 package translate
 
 import (
@@ -119,10 +158,10 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.SaveTranStmt:
 		return fmt.Sprintf("SAVEPOINT %s", quoteIdent(s.Name)), nil
 	case *parser.PrintStmt:
-		// PRINT is handled by the executor; no SQL translation.
+		// [Both] PRINT is handled by the executor; no SQL translation.
 		return "", nil
 	case *parser.RaiserrorStmt:
-		// RAISERROR is handled by the executor; no SQL translation.
+		// [Sybase ASE] RAISERROR handled by the executor; no SQL translation.
 		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
@@ -142,12 +181,11 @@ func translateUse(s *parser.UseStmt) string {
 	return fmt.Sprintf("SET database = '%s'", s.Database)
 }
 
-// translateCreateTable converts a T-SQL CREATE TABLE to CRDB syntax. Sybase
-// type names are mapped to their CockroachDB equivalents, and the
-// Sybase-default nullable semantics are applied: columns without an explicit
-// NULL/NOT NULL constraint are assumed nullable (matching Sybase/SQL Server
-// behavior, which differs from CRDB where columns are also nullable by default
-// but the explicit annotation helps clarity).
+// translateCreateTable converts a T-SQL CREATE TABLE to CRDB syntax.
+// [Both] Type names are mapped to their CockroachDB equivalents (see
+// mapDataType), and default-nullable semantics are applied: columns
+// without an explicit NULL/NOT NULL constraint are assumed nullable,
+// matching both SQL Server and Sybase ASE behavior.
 func translateCreateTable(s *parser.CreateTableStmt) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "CREATE TABLE %s (", quoteIdent(s.Table))
@@ -162,8 +200,10 @@ func translateCreateTable(s *parser.CreateTableStmt) string {
 }
 
 // translateColumnDef writes a translated column definition to the builder.
-// Handles regular columns (with type, optional IDENTITY/DEFAULT), and
-// computed columns (AS expr → STORED).
+// [Both] Handles regular columns (with type, optional IDENTITY/DEFAULT)
+// and computed columns (AS expr → STORED). Both SQL Server and Sybase ASE
+// support IDENTITY and computed columns, though the PERSISTED keyword
+// (SQL Server) vs AS expression (Sybase) differ slightly in source syntax.
 func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 	if col.ComputedExpr != nil {
 		// Computed column: name AS (expr) STORED. CockroachDB infers the
@@ -175,8 +215,9 @@ func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 
 	fmt.Fprintf(b, "%s %s", quoteIdent(col.Name), mapDataType(col.DataType))
 
-	// IDENTITY → GENERATED BY DEFAULT AS IDENTITY. "BY DEFAULT" allows
-	// explicit value inserts, matching T-SQL behavior.
+	// [Both] IDENTITY → GENERATED BY DEFAULT AS IDENTITY. "BY DEFAULT"
+	// allows explicit value inserts, matching T-SQL behavior in both
+	// SQL Server and Sybase ASE.
 	if col.Identity != nil {
 		b.WriteString(" GENERATED BY DEFAULT AS IDENTITY")
 	}
@@ -199,7 +240,9 @@ func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 }
 
 // translateInsert converts a T-SQL INSERT INTO statement to CRDB syntax.
-// Handles INSERT...VALUES, INSERT...SELECT, and OUTPUT → RETURNING.
+// [Both] INSERT...VALUES and INSERT...SELECT are standard T-SQL.
+// [SQL Server] OUTPUT → RETURNING (inserted.*/deleted.* pseudo-tables are
+// SQL Server-specific; Sybase ASE has no OUTPUT clause).
 func translateInsert(s *parser.InsertStmt) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "INSERT INTO %s", quoteIdent(s.Table))
@@ -242,9 +285,12 @@ func translateInsert(s *parser.InsertStmt) (string, error) {
 	return b.String(), nil
 }
 
-// translateSelect converts a T-SQL SELECT (with TOP, WHERE, ORDER BY,
-// OFFSET-FETCH) to CRDB syntax. TOP N is moved to a trailing LIMIT N clause.
-// OFFSET-FETCH is translated to LIMIT/OFFSET.
+// translateSelect converts a T-SQL SELECT to CRDB syntax.
+// [Both] SELECT TOP N → LIMIT N (supported by both SQL Server and Sybase ASE).
+// [SQL Server] OFFSET n ROWS FETCH NEXT m ROWS ONLY → LIMIT/OFFSET
+// (SQL Server 2012+ pagination syntax).
+// [Sybase ASE] ROWS LIMIT x OFFSET y → LIMIT/OFFSET (Sybase ASE 15.7+
+// pagination syntax). Both pagination forms produce the same CRDB output.
 func translateSelect(s *parser.SelectStmt) string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
@@ -499,8 +545,9 @@ func translateWith(s *parser.WithStmt) (string, error) {
 }
 
 // translateDelete converts a T-SQL DELETE to CRDB syntax.
-// Multi-table DELETE (DELETE t FROM t JOIN s) is translated to
-// DELETE FROM t USING s WHERE ... (CockroachDB USING syntax).
+// [Both] Multi-table DELETE (DELETE t FROM t JOIN s) is supported by both
+// SQL Server and Sybase ASE, translated to DELETE FROM t USING s WHERE ...
+// [SQL Server] OUTPUT → RETURNING (SQL Server-specific).
 func translateDelete(s *parser.DeleteStmt) string {
 	var b strings.Builder
 	if len(s.From) > 0 {
@@ -549,7 +596,8 @@ func translateDelete(s *parser.DeleteStmt) string {
 }
 
 // translateUpdate converts a T-SQL UPDATE to CRDB syntax.
-// Handles UPDATE...FROM (multi-table) and OUTPUT → RETURNING.
+// [Both] UPDATE...FROM (multi-table update) is supported by both dialects.
+// [SQL Server] OUTPUT → RETURNING (SQL Server-specific).
 func translateUpdate(s *parser.UpdateStmt) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "UPDATE %s SET ", quoteIdent(s.Table))
@@ -587,7 +635,8 @@ func translateUpdate(s *parser.UpdateStmt) string {
 }
 
 // translateBeginTran converts BEGIN TRAN[SACTION] [name] to CRDB BEGIN.
-// T-SQL transaction names have no equivalent in CRDB; they are ignored.
+// [Both] Transaction statements are supported by both SQL Server and Sybase
+// ASE. T-SQL transaction names have no equivalent in CRDB; they are ignored.
 func translateBeginTran(s *parser.BeginTranStmt) string {
 	return "BEGIN"
 }
@@ -689,8 +738,9 @@ func translateExists(e *parser.ExistsExpr) string {
 	return fmt.Sprintf("EXISTS (%s)", sql)
 }
 
-// translateAnyAll converts expr op ANY/ALL/SOME (SELECT ...). SOME is
-// translated to ANY since CockroachDB uses the standard SQL ANY keyword.
+// translateAnyAll converts expr op ANY/ALL/SOME (SELECT ...).
+// [Both] ANY/ALL/SOME are supported by both SQL Server and Sybase ASE.
+// SOME is translated to ANY since CockroachDB uses the standard SQL keyword.
 func translateAnyAll(e *parser.AnyAllExpr) string {
 	left := translateExpr(e.Expr)
 	sql, err := Statement(e.Select)
@@ -794,28 +844,31 @@ func isStringExpr(exprs ...parser.Expr) bool {
 	return false
 }
 
-// translateFuncCall translates T-SQL function calls to their CRDB equivalents.
+// translateFuncCall translates T-SQL function calls to their CRDB
+// equivalents. Each case is annotated with [Both], [SQL Server], or
+// [Sybase ASE] to indicate which dialect(s) support the function.
 func translateFuncCall(e *parser.FuncCallExpr) string {
 	name := strings.ToUpper(e.Name)
 
 	switch name {
 	case "ISNULL":
-		// ISNULL(a, b) → COALESCE(a, b)
+		// [Both] ISNULL(a, b) → COALESCE(a, b)
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("COALESCE(%s)", strings.Join(args, ", "))
 
 	case "GETDATE":
+		// [Both] GETDATE() → now()
 		return "now()"
 
 	// --- String functions ---
 
 	case "LEN":
-		// LEN(s) → length(s)
+		// [Both] LEN(s) → length(s)
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("length(%s)", strings.Join(args, ", "))
 
 	case "CHARINDEX":
-		// CHARINDEX(substr, str) → strpos(str, substr)
+		// [Both] CHARINDEX(substr, str) → strpos(str, substr)
 		// Note: argument order is swapped.
 		if len(e.Args) >= 2 {
 			substr := translateExpr(e.Args[0])
@@ -826,9 +879,9 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("strpos(%s)", strings.Join(args, ", "))
 
 	case "PATINDEX":
-		// PATINDEX(pattern, str) → approximate via strpos (no direct equivalent).
-		// Strip leading/trailing % from the pattern for a basic strpos translation.
-		// This is a lossy translation but handles the common %substr% case.
+		// [SQL Server] PATINDEX(pattern, str) → approximate via strpos (no
+		// direct equivalent). Sybase ASE uses PATINDEX too but with different
+		// pattern semantics. This is a lossy translation for the common case.
 		if len(e.Args) >= 2 {
 			str := translateExpr(e.Args[1])
 			pattern := translateExpr(e.Args[0])
@@ -838,7 +891,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("strpos(%s)", strings.Join(args, ", "))
 
 	case "STUFF":
-		// STUFF(str, start, length, insert) → overlay(str placing insert from start for length)
+		// [Both] STUFF(str, start, length, insert) → overlay(str placing insert from start for length)
 		if len(e.Args) == 4 {
 			str := translateExpr(e.Args[0])
 			start := translateExpr(e.Args[1])
@@ -851,12 +904,12 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("overlay(%s)", strings.Join(args, ", "))
 
 	case "REPLICATE":
-		// REPLICATE(str, n) → repeat(str, n)
+		// [Both] REPLICATE(str, n) → repeat(str, n)
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("repeat(%s)", strings.Join(args, ", "))
 
 	case "SPACE":
-		// SPACE(n) → repeat(' ', n)
+		// [Both] SPACE(n) → repeat(' ', n)
 		if len(e.Args) == 1 {
 			n := translateExpr(e.Args[0])
 			return fmt.Sprintf("repeat(' ', %s)", n)
@@ -865,13 +918,13 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("repeat(' ', %s)", strings.Join(args, ", "))
 
 	case "STRING_AGG":
-		// STRING_AGG(expr, separator) — same in CRDB.
+		// [SQL Server] STRING_AGG(expr, separator) — SQL Server 2017+.
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("string_agg(%s)", strings.Join(args, ", "))
 
 	case "LIST":
-		// LIST(expr [, separator]) — Sybase ASE equivalent of STRING_AGG.
-		// Default separator is comma when omitted.
+		// [Sybase ASE] LIST(expr [, separator]) — Sybase ASE equivalent of
+		// STRING_AGG. Default separator is comma when omitted.
 		if len(e.Args) >= 2 {
 			expr := translateExpr(e.Args[0])
 			sep := translateExpr(e.Args[1])
@@ -885,14 +938,14 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("string_agg(%s)", strings.Join(args, ", "))
 
 	case "QUOTENAME":
-		// QUOTENAME(str) → quote_ident(str)
+		// [SQL Server] QUOTENAME(str) → quote_ident(str)
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("quote_ident(%s)", strings.Join(args, ", "))
 
 	// --- Date/time functions ---
 
 	case "DATEADD":
-		// DATEADD(part, n, date) → (date::TIMESTAMPTZ + n * INTERVAL '1 part')
+		// [Both] DATEADD(part, n, date) → (date::TIMESTAMPTZ + n * INTERVAL '1 part')
 		if len(e.Args) == 3 {
 			part := identName(e.Args[0])
 			n := translateExpr(e.Args[1])
@@ -905,7 +958,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("DATEADD(%s)", strings.Join(args, ", "))
 
 	case "DATEDIFF":
-		// DATEDIFF(part, start, end) → extract(epoch FROM end::TIMESTAMPTZ - start::TIMESTAMPTZ)
+		// [Both] DATEDIFF(part, start, end) → extract(epoch FROM end - start)
 		// divided by the appropriate divisor for the datepart.
 		if len(e.Args) == 3 {
 			part := identName(e.Args[0])
@@ -917,7 +970,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("DATEDIFF(%s)", strings.Join(args, ", "))
 
 	case "DATEPART":
-		// DATEPART(part, date) → extract(part FROM date::TIMESTAMPTZ)
+		// [Both] DATEPART(part, date) → extract(part FROM date::TIMESTAMPTZ)
 		if len(e.Args) == 2 {
 			part := identName(e.Args[0])
 			date := translateExpr(e.Args[1])
@@ -928,7 +981,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("DATEPART(%s)", strings.Join(args, ", "))
 
 	case "DATENAME":
-		// DATENAME(part, date) → to_char(date::TIMESTAMPTZ, format)
+		// [Both] DATENAME(part, date) → to_char(date::TIMESTAMPTZ, format)
 		if len(e.Args) == 2 {
 			part := identName(e.Args[0])
 			date := translateExpr(e.Args[1])
@@ -939,7 +992,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("DATENAME(%s)", strings.Join(args, ", "))
 
 	case "YEAR":
-		// YEAR(date) → EXTRACT(year FROM date::TIMESTAMPTZ)::INT
+		// [Both] YEAR(date) → EXTRACT(year FROM date::TIMESTAMPTZ)::INT
 		if len(e.Args) == 1 {
 			date := translateExpr(e.Args[0])
 			return fmt.Sprintf("EXTRACT(year FROM %s::TIMESTAMPTZ)::INT", date)
@@ -948,7 +1001,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("YEAR(%s)", strings.Join(args, ", "))
 
 	case "MONTH":
-		// MONTH(date) → EXTRACT(month FROM date::TIMESTAMPTZ)::INT
+		// [Both] MONTH(date) → EXTRACT(month FROM date::TIMESTAMPTZ)::INT
 		if len(e.Args) == 1 {
 			date := translateExpr(e.Args[0])
 			return fmt.Sprintf("EXTRACT(month FROM %s::TIMESTAMPTZ)::INT", date)
@@ -957,7 +1010,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("MONTH(%s)", strings.Join(args, ", "))
 
 	case "DAY":
-		// DAY(date) → EXTRACT(day FROM date::TIMESTAMPTZ)::INT
+		// [Both] DAY(date) → EXTRACT(day FROM date::TIMESTAMPTZ)::INT
 		if len(e.Args) == 1 {
 			date := translateExpr(e.Args[0])
 			return fmt.Sprintf("EXTRACT(day FROM %s::TIMESTAMPTZ)::INT", date)
@@ -966,12 +1019,15 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("DAY(%s)", strings.Join(args, ", "))
 
 	case "SYSDATETIME":
+		// [SQL Server] SYSDATETIME() — SQL Server 2008+ high-precision now().
 		return "now()"
 
 	case "GETUTCDATE":
+		// [SQL Server] GETUTCDATE() — SQL Server-specific UTC timestamp.
 		return "(now() AT TIME ZONE 'UTC')"
 
 	case "EOMONTH":
+		// [SQL Server] EOMONTH(date) — SQL Server 2012+ end-of-month.
 		// EOMONTH(date) → (date_trunc('month', date::TIMESTAMPTZ) + INTERVAL '1 month' - INTERVAL '1 day')::DATE
 		if len(e.Args) >= 1 {
 			date := translateExpr(e.Args[0])
@@ -982,7 +1038,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return "EOMONTH()"
 
 	case "ISDATE":
-		// No direct equivalent; use a try_cast approach.
+		// [SQL Server] ISDATE() — no direct equivalent; use a try_cast approach.
 		if len(e.Args) == 1 {
 			arg := translateExpr(e.Args[0])
 			return fmt.Sprintf(
@@ -992,8 +1048,8 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("ISDATE(%s)", strings.Join(args, ", "))
 
 	case "FORMAT":
-		// T-SQL FORMAT(value, format_string) has no direct CRDB equivalent.
-		// Pass through as to_char for basic cases.
+		// [SQL Server] FORMAT(value, format_string) — SQL Server 2012+.
+		// No direct CRDB equivalent; pass through as to_char for basic cases.
 		if len(e.Args) >= 2 {
 			val := translateExpr(e.Args[0])
 			format := translateExpr(e.Args[1])
@@ -1005,7 +1061,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 	// --- Math functions ---
 
 	case "SQUARE":
-		// SQUARE(x) → power(x, 2)
+		// [SQL Server] SQUARE(x) → power(x, 2). Sybase ASE uses power() directly.
 		if len(e.Args) == 1 {
 			arg := translateExpr(e.Args[0])
 			return fmt.Sprintf("power(%s, 2)", arg)
@@ -1014,23 +1070,24 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("power(%s, 2)", strings.Join(args, ", "))
 
 	case "LOG":
-		// T-SQL LOG(x) is natural log; CRDB log(x) is base-10.
+		// [Both] T-SQL LOG(x) is natural log; CRDB log(x) is base-10.
 		// Translate to ln(x).
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("ln(%s)", strings.Join(args, ", "))
 
 	case "LOG10":
-		// LOG10(x) → log(x) in CRDB (which is base-10).
+		// [Both] LOG10(x) → log(x) in CRDB (which is base-10).
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("log(%s)", strings.Join(args, ", "))
 
 	case "RAND":
+		// [Both] RAND() → random()
 		return "random()"
 
 	// --- Conditional functions ---
 
 	case "IIF":
-		// IIF(cond, true_val, false_val) → CASE WHEN cond THEN true_val ELSE false_val END
+		// [SQL Server] IIF(cond, true_val, false_val) — SQL Server 2012+.
 		if len(e.Args) == 3 {
 			cond := translateExpr(e.Args[0])
 			trueVal := translateExpr(e.Args[1])
@@ -1042,7 +1099,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		return fmt.Sprintf("IIF(%s)", strings.Join(args, ", "))
 
 	case "CHOOSE":
-		// CHOOSE(idx, val1, val2, ...) → CASE idx WHEN 1 THEN val1 WHEN 2 THEN val2 ... END
+		// [SQL Server] CHOOSE(idx, val1, val2, ...) — SQL Server 2012+.
 		if len(e.Args) >= 2 {
 			idx := translateExpr(e.Args[0])
 			var b strings.Builder
@@ -1059,7 +1116,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 	// --- Type conversion ---
 
 	case "TRY_CONVERT":
-		// TRY_CONVERT(type, expr) → try_cast(expr AS type)
+		// [SQL Server] TRY_CONVERT(type, expr) — SQL Server 2012+.
 		// The parser sees the type as an identifier in the first arg.
 		if len(e.Args) >= 2 {
 			typeName := identName(e.Args[0])
@@ -1075,53 +1132,64 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 	// --- System functions ---
 
 	case "NEWID":
+		// [SQL Server] NEWID() → gen_random_uuid()
 		return "gen_random_uuid()"
 
 	case "OBJECT_ID":
-		// No direct equivalent; return NULL with a comment.
+		// [SQL Server] OBJECT_ID() — no direct equivalent; return NULL.
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("NULL /* OBJECT_ID(%s) not supported */",
 			strings.Join(args, ", "))
 
 	case "DB_NAME":
+		// [SQL Server] DB_NAME() → current_database()
 		return "current_database()"
 
 	case "SCHEMA_NAME":
+		// [SQL Server] SCHEMA_NAME() → current_schema()
 		return "current_schema()"
 
 	case "USER_NAME":
+		// [SQL Server] USER_NAME() → current_user
 		return "current_user"
 
 	case "HOST_NAME":
+		// [SQL Server] HOST_NAME() — no CRDB equivalent.
 		return "NULL /* HOST_NAME() not supported */"
 
 	case "APP_NAME":
+		// [SQL Server] APP_NAME() → current_setting('application_name')
 		return "current_setting('application_name')"
 
 	// --- Aggregate functions ---
 
 	case "COUNT_BIG":
-		// COUNT_BIG(*) → count(*) — CRDB count already returns INT8.
+		// [SQL Server] COUNT_BIG(*) → count(*) — CRDB count already returns INT8.
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("count(%s)", strings.Join(args, ", "))
 
 	case "STDEV":
+		// [SQL Server] STDEV → stddev (Sybase ASE uses stddev directly).
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("stddev(%s)", strings.Join(args, ", "))
 
 	case "STDEVP":
+		// [SQL Server] STDEVP → stddev_pop
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("stddev_pop(%s)", strings.Join(args, ", "))
 
 	case "VAR":
+		// [SQL Server] VAR → variance
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("variance(%s)", strings.Join(args, ", "))
 
 	case "VARP":
+		// [SQL Server] VARP → var_pop
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("var_pop(%s)", strings.Join(args, ", "))
 
 	case "CHECKSUM_AGG":
+		// [SQL Server] CHECKSUM_AGG — no CRDB equivalent.
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("NULL /* CHECKSUM_AGG(%s) not supported */",
 			strings.Join(args, ", "))
@@ -1261,8 +1329,9 @@ func translateDateDiff(part, start, end string) string {
 }
 
 // translateConvert converts CONVERT(type, expr) → CAST(expr AS type).
-// The style parameter (third argument) is dropped since CRDB's CAST does not
-// support it.
+// [Both] CONVERT is supported by both SQL Server and Sybase ASE. The style
+// parameter (third argument) is SQL Server-specific and is dropped since
+// CRDB's CAST does not support it.
 func translateConvert(e *parser.ConvertExpr) string {
 	expr := translateExpr(e.Expr)
 	crdbType := mapDataType(e.DataType)
@@ -1377,7 +1446,8 @@ func writeQuotedColumns(b *strings.Builder, cols []string) {
 }
 
 // translateCreateIndex converts CREATE [UNIQUE] INDEX to CRDB syntax.
-// T-SQL INCLUDE is mapped to CockroachDB's STORING clause.
+// [SQL Server] INCLUDE clause is SQL Server-specific (mapped to
+// CockroachDB's STORING clause). Sybase ASE does not support INCLUDE.
 func translateCreateIndex(s *parser.CreateIndexStmt) string {
 	var b strings.Builder
 	b.WriteString("CREATE ")
@@ -1403,7 +1473,8 @@ func translateCreateView(s *parser.CreateViewStmt) string {
 }
 
 // translateDropIndex converts T-SQL DROP INDEX to CRDB syntax.
-// T-SQL: DROP INDEX idx ON tbl → CRDB: DROP INDEX tbl@idx
+// [SQL Server] DROP INDEX idx ON tbl → CRDB: DROP INDEX tbl@idx.
+// Sybase ASE uses DROP INDEX tbl.idx syntax (not yet supported).
 func translateDropIndex(s *parser.DropIndexStmt) string {
 	var b strings.Builder
 	b.WriteString("DROP INDEX ")
@@ -1428,6 +1499,9 @@ func translateArgs(args []parser.Expr) []string {
 }
 
 // translateSystemVariable maps T-SQL @@variables to CRDB equivalents.
+// [Both] @@ROWCOUNT, @@IDENTITY, @@VERSION, and @@TRANCOUNT are supported
+// by both SQL Server and Sybase ASE. Sybase ASE also has @@SERVERNAME,
+// @@SPID, and other @@variables that are not yet implemented here.
 func translateSystemVariable(name string) string {
 	switch strings.ToUpper(name) {
 	case "@@ROWCOUNT":
@@ -1437,7 +1511,7 @@ func translateSystemVariable(name string) string {
 	case "@@VERSION":
 		return "version()"
 	case "@@TRANCOUNT":
-		// T-SQL @@TRANCOUNT tracks transaction nesting depth. CRDB doesn't
+		// [Both] @@TRANCOUNT tracks transaction nesting depth. CRDB doesn't
 		// support nested transactions. The executor tracks this state and
 		// substitutes the value before execution.
 		return "@@TRANCOUNT"
@@ -1503,15 +1577,16 @@ func isDigit(c rune) bool {
 	return c >= '0' && c <= '9'
 }
 
-// mapDataType converts a Sybase/SQL Server data type name to its CockroachDB
-// equivalent. The input is expected to be upper-cased (as produced by the
-// parser's parseDataType).
+// mapDataType converts a T-SQL data type name to its CockroachDB equivalent.
+// Each type is annotated with [Both], [SQL Server], or [Sybase ASE] to
+// indicate which dialect(s) support it. The input is expected to be
+// upper-cased (as produced by the parser's parseDataType).
 func mapDataType(dt string) string {
 	// Split into type name and optional arguments.
 	name, args := splitTypeArgs(dt)
 
 	switch name {
-	// Integer types.
+	// [Both] Integer types — supported by both SQL Server and Sybase ASE.
 	case "TINYINT":
 		return "INT2" // CockroachDB has no unsigned integer; INT2 is the closest.
 	case "SMALLINT":
@@ -1521,8 +1596,9 @@ func mapDataType(dt string) string {
 	case "BIGINT":
 		return "INT8"
 
-	// Sybase unsigned integer types. CockroachDB has no unsigned integers,
-	// so we map to the smallest signed type that covers the full unsigned range.
+	// [Sybase ASE] Unsigned integer types. CockroachDB has no unsigned
+	// integers, so we map to the smallest signed type that covers the full
+	// unsigned range. SQL Server does not support UNSIGNED integer types.
 	case "UNSIGNED TINYINT":
 		return "INT2" // unsigned 8-bit (0–255) fits in signed 16-bit
 	case "UNSIGNED SMALLINT":
@@ -1532,20 +1608,20 @@ func mapDataType(dt string) string {
 	case "UNSIGNED BIGINT":
 		return "DECIMAL(20, 0)" // unsigned 64-bit (0–18446744073709551615) exceeds INT8 range
 
-	// Float types.
+	// [Both] Float types.
 	case "REAL":
 		return "FLOAT4"
 	case "FLOAT":
 		return "FLOAT8"
 
-	// Bit type. T-SQL BIT is semantically a 1-bit integer (0, 1, or NULL),
-	// not a boolean. Mapping to INT2 preserves integer semantics so that
-	// literal 0/1 inserts and arithmetic expressions work without explicit
-	// casts.
+	// [Both] Bit type. T-SQL BIT is semantically a 1-bit integer (0, 1,
+	// or NULL), not a boolean. Mapping to INT2 preserves integer semantics
+	// so that literal 0/1 inserts and arithmetic expressions work without
+	// explicit casts.
 	case "BIT":
 		return "INT2"
 
-	// Character types. CockroachDB uses STRING / VARCHAR.
+	// [Both] Character types. CockroachDB uses STRING / VARCHAR.
 	case "CHAR":
 		if args != "" {
 			return fmt.Sprintf("CHAR(%s)", args)
@@ -1560,7 +1636,7 @@ func mapDataType(dt string) string {
 		}
 		return "VARCHAR"
 	case "NCHAR":
-		// CRDB treats all strings as UTF-8; NCHAR maps to CHAR.
+		// [Both] CRDB treats all strings as UTF-8; NCHAR maps to CHAR.
 		if args != "" {
 			return fmt.Sprintf("CHAR(%s)", args)
 		}
@@ -1576,8 +1652,9 @@ func mapDataType(dt string) string {
 	case "TEXT", "NTEXT":
 		return "STRING"
 
-	// Sybase Unicode character types. CockroachDB stores all strings as
-	// UTF-8, so UNICHAR/UNIVARCHAR map to CHAR/VARCHAR and UNITEXT to STRING.
+	// [Sybase ASE] Unicode character types. CockroachDB stores all strings
+	// as UTF-8, so UNICHAR/UNIVARCHAR map to CHAR/VARCHAR and UNITEXT to
+	// STRING. SQL Server uses NCHAR/NVARCHAR for Unicode instead.
 	case "UNICHAR":
 		if args != "" {
 			return fmt.Sprintf("CHAR(%s)", args)
@@ -1591,7 +1668,7 @@ func mapDataType(dt string) string {
 	case "UNITEXT":
 		return "STRING"
 
-	// Binary types.
+	// [Both] Binary types.
 	case "BINARY":
 		if args != "" {
 			return fmt.Sprintf("BYTES")
@@ -1603,30 +1680,41 @@ func mapDataType(dt string) string {
 		return "BYTES"
 
 	// Date/time types.
-	case "DATETIME", "DATETIME2":
+	case "DATETIME":
+		// [Both] DATETIME — supported by both SQL Server and Sybase ASE.
+		return "TIMESTAMP"
+	case "DATETIME2":
+		// [SQL Server] DATETIME2 — SQL Server 2008+ high-precision datetime.
+		// Sybase ASE has no DATETIME2; it uses BIGDATETIME instead.
 		return "TIMESTAMP"
 	case "SMALLDATETIME":
+		// [Both] SMALLDATETIME — supported by both dialects.
 		return "TIMESTAMP"
 	case "DATE":
+		// [Both] DATE — supported by both dialects.
 		return "DATE"
 	case "TIME":
+		// [Both] TIME — supported by both dialects.
 		return "TIME"
 	case "DATETIMEOFFSET":
+		// [SQL Server] DATETIMEOFFSET — SQL Server 2008+ timezone-aware
+		// datetime. Sybase ASE has no equivalent.
 		return "TIMESTAMPTZ"
 
-	// Sybase ASE 15.5+ extended datetime types with microsecond precision.
+	// [Sybase ASE] Extended datetime types with microsecond precision
+	// (Sybase ASE 15.5+). SQL Server uses DATETIME2 for high precision.
 	case "BIGDATETIME":
 		return "TIMESTAMP"
 	case "BIGTIME":
 		return "TIME"
 
-	// Money types → DECIMAL with fixed precision/scale.
+	// [Both] Money types → DECIMAL with fixed precision/scale.
 	case "MONEY":
 		return "DECIMAL(19, 4)"
 	case "SMALLMONEY":
 		return "DECIMAL(10, 4)"
 
-	// Numeric/Decimal — pass through with args.
+	// [Both] Numeric/Decimal — pass through with args.
 	case "NUMERIC":
 		if args != "" {
 			return fmt.Sprintf("DECIMAL(%s)", args)
@@ -1638,14 +1726,16 @@ func mapDataType(dt string) string {
 		}
 		return "DECIMAL"
 
-	// GUID → UUID.
+	// [Both] GUID → UUID.
 	case "UNIQUEIDENTIFIER":
 		return "UUID"
 
-	// Timestamp (rowversion in SQL Server) → BYTES.
+	// [SQL Server] Timestamp (rowversion in SQL Server) → BYTES.
+	// SQL Server TIMESTAMP is a binary counter, not a date/time. It's
+	// 8 bytes, used for optimistic concurrency. ROWVERSION is the modern
+	// alias. Sybase ASE TIMESTAMP is also a binary counter but with a
+	// different internal format.
 	case "TIMESTAMP", "ROWVERSION":
-		// SQL Server TIMESTAMP is a binary counter, not a date/time.
-		// It's 8 bytes, used for optimistic concurrency.
 		return "BYTES"
 
 	default:
@@ -1659,7 +1749,9 @@ func mapDataType(dt string) string {
 
 // translateMerge converts a T-SQL MERGE INTO ... USING ... ON ...
 // to CockroachDB's INSERT ... ON CONFLICT DO UPDATE SET ... syntax.
-// This is a best-effort translation for common MERGE patterns (upsert).
+// [SQL Server] MERGE is SQL Server 2008+ (and ANSI SQL:2003). Sybase ASE
+// does not support MERGE; it uses separate INSERT/UPDATE/DELETE statements
+// instead. This is a best-effort translation for common MERGE patterns.
 func translateMerge(s *parser.MergeStmt) (string, error) {
 	var b strings.Builder
 
@@ -1747,7 +1839,8 @@ func translateMerge(s *parser.MergeStmt) (string, error) {
 
 // translateOutputColumns converts OUTPUT clause columns (which may reference
 // inserted.*/deleted.*) to RETURNING column expressions by stripping the
-// inserted./deleted. prefixes.
+// inserted./deleted. prefixes. [SQL Server] The OUTPUT clause with
+// inserted/deleted pseudo-tables is SQL Server-specific.
 func translateOutputColumns(cols []parser.SelectColumn) string {
 	var parts []string
 	for _, col := range cols {
