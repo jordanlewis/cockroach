@@ -57,6 +57,8 @@ var (
 			`|TEXTSIZE\s+\d+` +
 			`|ARITHABORT\s+(?:ON|OFF)` +
 			`|CONCAT_NULL_YIELDS_NULL\s+(?:ON|OFF)` +
+			`|ROWCOUNT\s+\d+` +
+			`|IDENTITY_INSERT\s+\S+\s+(?:ON|OFF)` +
 			`)\s*;?\s*$`,
 	)
 )

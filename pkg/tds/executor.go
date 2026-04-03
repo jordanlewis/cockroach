@@ -229,6 +229,12 @@ func (e *Executor) executeStatement(
 	case *parser.SaveTranStmt:
 		return e.executeDDL(ctx, crdbSQL, tw)
 
+	case *parser.PrintStmt:
+		return e.executePrint(s, tw)
+
+	case *parser.RaiserrorStmt:
+		return e.executeRaiserror(s, tw)
+
 	default:
 		// Best-effort: try as DML.
 		return e.executeDML(ctx, crdbSQL, tw)
@@ -271,6 +277,43 @@ func (e *Executor) executeRollbackTran(
 		TokenType: tdswire.TokenDone,
 		Status:    tdswire.DoneFinal,
 	})
+}
+
+// executePrint handles PRINT <expr> by sending a TDS INFO token with
+// the message text to the client.
+func (e *Executor) executePrint(stmt *parser.PrintStmt, tw *tdswire.TokenWriter) error {
+	msg := exprToString(stmt.Expr)
+	if err := tw.WriteError(tdswire.ErrorToken{
+		TokenType: tdswire.TokenInfo,
+		Number:    0,
+		State:     1,
+		Class:     0, // informational
+		Message:   msg,
+		Server:    "CockroachDB",
+	}); err != nil {
+		return err
+	}
+	return writeDoneFinal(tw)
+}
+
+// executeRaiserror handles the Sybase ASE RAISERROR syntax by sending
+// a TDS ERROR token with the specified error number and optional message.
+func (e *Executor) executeRaiserror(stmt *parser.RaiserrorStmt, tw *tdswire.TokenWriter) error {
+	msg := stmt.Message
+	if msg == "" {
+		msg = fmt.Sprintf("error %d", stmt.ErrNum)
+	}
+	return writeErrorToken(tw, int32(stmt.ErrNum), 1, 16, msg)
+}
+
+// exprToString extracts the string value from a parser expression.
+// For string literals, it returns the unquoted value. For other
+// expression types, it returns the String() representation.
+func exprToString(expr parser.Expr) string {
+	if lit, ok := expr.(*parser.StringLit); ok {
+		return lit.Value
+	}
+	return expr.String()
 }
 
 // executeDDL executes a DDL statement (CREATE TABLE, etc.) and returns

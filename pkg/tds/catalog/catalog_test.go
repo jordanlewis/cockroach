@@ -248,6 +248,10 @@ func TestIsCatalogQuery_SetCommands(t *testing.T) {
 		{"case insensitive", "set quoted_identifier on", true},
 		{"with semicolon", "SET ANSI_NULLS ON;", true},
 		{"with whitespace", "  SET TEXTSIZE 65536  ", true},
+		{"rowcount", "SET ROWCOUNT 100", true},
+		{"rowcount zero", "SET ROWCOUNT 0", true},
+		{"identity insert on", "SET IDENTITY_INSERT mytable ON", true},
+		{"identity insert off", "SET IDENTITY_INSERT dbo.users OFF", true},
 		{"unknown set", "SET UNKNOWN_OPTION ON", false},
 		{"not set", "SELECT 1", false},
 	}
@@ -265,6 +269,8 @@ func TestTranslateSetCommands(t *testing.T) {
 		"SET TEXTSIZE 2147483647",
 		"SET ARITHABORT ON",
 		"SET CONCAT_NULL_YIELDS_NULL ON",
+		"SET ROWCOUNT 100",
+		"SET IDENTITY_INSERT mytable ON",
 	}
 	for _, cmd := range setCommands {
 		t.Run(cmd, func(t *testing.T) {

@@ -1745,4 +1745,70 @@ func TestComputeByString(t *testing.T) {
 	}
 }
 
+func TestParsePrint(t *testing.T) {
+	batch, err := Parse("PRINT 'hello world'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+	}
+	ps, ok := batch.Stmts[0].(*PrintStmt)
+	if !ok {
+		t.Fatalf("expected *PrintStmt, got %T", batch.Stmts[0])
+	}
+	lit, ok := ps.Expr.(*StringLit)
+	if !ok {
+		t.Fatalf("expected *StringLit expr, got %T", ps.Expr)
+	}
+	if lit.Value != "hello world" {
+		t.Errorf("expected message=%q, got %q", "hello world", lit.Value)
+	}
+}
+
+func TestParsePrintExpr(t *testing.T) {
+	batch, err := Parse("PRINT 42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := batch.Stmts[0].(*PrintStmt)
+	if _, ok := ps.Expr.(*IntLit); !ok {
+		t.Fatalf("expected *IntLit expr, got %T", ps.Expr)
+	}
+}
+
+func TestParseRaiserror(t *testing.T) {
+	batch, err := Parse("RAISERROR 50000, 'something went wrong'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+	}
+	rs, ok := batch.Stmts[0].(*RaiserrorStmt)
+	if !ok {
+		t.Fatalf("expected *RaiserrorStmt, got %T", batch.Stmts[0])
+	}
+	if rs.ErrNum != 50000 {
+		t.Errorf("expected errnum=50000, got %d", rs.ErrNum)
+	}
+	if rs.Message != "something went wrong" {
+		t.Errorf("expected message=%q, got %q",
+			"something went wrong", rs.Message)
+	}
+}
+
+func TestParseRaiserrorNoMessage(t *testing.T) {
+	batch, err := Parse("RAISERROR 18001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := batch.Stmts[0].(*RaiserrorStmt)
+	if rs.ErrNum != 18001 {
+		t.Errorf("expected errnum=18001, got %d", rs.ErrNum)
+	}
+	if rs.Message != "" {
+		t.Errorf("expected empty message, got %q", rs.Message)
+	}
+}
 func boolPtr(b bool) *bool { return &b }

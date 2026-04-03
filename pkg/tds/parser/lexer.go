@@ -156,6 +156,10 @@ const (
 	// Sybase ASE COMPUTE BY keyword.
 	tokenCOMPUTE
 
+	// Session command keywords.
+	tokenPRINT
+	tokenRAISERROR
+
 	// Type system keywords.
 	tokenIDENTITY
 	tokenDEFAULT
@@ -270,6 +274,10 @@ var keywords = map[string]tokenType{
 
 	// Sybase ASE COMPUTE BY keyword.
 	"COMPUTE": tokenCOMPUTE,
+
+	// Session command keywords.
+	"PRINT":     tokenPRINT,
+	"RAISERROR": tokenRAISERROR,
 
 	// Type system keywords.
 	"IDENTITY": tokenIDENTITY,

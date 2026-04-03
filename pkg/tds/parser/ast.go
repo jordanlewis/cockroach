@@ -1247,6 +1247,36 @@ type MergeWhenNotMatched struct {
 	Values  []Expr
 }
 
+// PrintStmt represents PRINT <expr>, which sends an informational
+// message to the client.
+type PrintStmt struct {
+	Expr Expr
+}
+
+func (*PrintStmt) statementNode() {}
+
+func (s *PrintStmt) String() string {
+	return fmt.Sprintf("PRINT %s", s.Expr)
+}
+
+// RaiserrorStmt represents the Sybase ASE RAISERROR syntax:
+// RAISERROR <errnum> [, <message>]. This differs from SQL Server's
+// RAISERROR('msg', severity, state) form.
+type RaiserrorStmt struct {
+	ErrNum  int
+	Message string // optional
+}
+
+func (*RaiserrorStmt) statementNode() {}
+
+func (s *RaiserrorStmt) String() string {
+	if s.Message != "" {
+		escaped := strings.ReplaceAll(s.Message, "'", "''")
+		return fmt.Sprintf("RAISERROR %d, '%s'", s.ErrNum, escaped)
+	}
+	return fmt.Sprintf("RAISERROR %d", s.ErrNum)
+}
+
 // formatColumnRef formats a column reference that may contain dots
 // (e.g., t.name from UPDATE...FROM). Each part is individually quoted
 // if necessary.

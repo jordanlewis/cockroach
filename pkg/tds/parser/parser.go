@@ -89,6 +89,10 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseSaveTran()
 	case tokenMERGE:
 		return p.parseMerge()
+	case tokenPRINT:
+		return p.parsePrint()
+	case tokenRAISERROR:
+		return p.parseRaiserror()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -1061,6 +1065,42 @@ func (p *parser) parseSaveTran() (*SaveTranStmt, error) {
 		return nil, err
 	}
 	return &SaveTranStmt{Name: name}, nil
+}
+
+// parsePrint parses: PRINT <expr>
+func (p *parser) parsePrint() (*PrintStmt, error) {
+	p.lex.next() // consume PRINT
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &PrintStmt{Expr: expr}, nil
+}
+
+// parseRaiserror parses the Sybase ASE form: RAISERROR <errnum> [, <message>]
+func (p *parser) parseRaiserror() (*RaiserrorStmt, error) {
+	p.lex.next() // consume RAISERROR
+	tok := p.lex.next()
+	if tok.typ != tokenInt {
+		return nil, p.error(fmt.Sprintf(
+			"expected error number after RAISERROR, got %q", tok.val))
+	}
+	errNum, err := strconv.Atoi(tok.val)
+	if err != nil {
+		return nil, p.error(fmt.Sprintf("invalid error number: %s", tok.val))
+	}
+	stmt := &RaiserrorStmt{ErrNum: errNum}
+	// Optional comma-separated message string.
+	if p.lex.peek().typ == tokenComma {
+		p.lex.next() // consume comma
+		msgTok := p.lex.next()
+		if msgTok.typ != tokenString {
+			return nil, p.error(fmt.Sprintf(
+				"expected string after RAISERROR errnum, got %q", msgTok.val))
+		}
+		stmt.Message = msgTok.val
+	}
+	return stmt, nil
 }
 
 // parseSelectColumn parses a select column: <expr> [AS <alias>] or *.

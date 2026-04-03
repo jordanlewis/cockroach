@@ -118,6 +118,12 @@ func Statement(stmt parser.Statement) (string, error) {
 		return translateRollbackTran(s), nil
 	case *parser.SaveTranStmt:
 		return fmt.Sprintf("SAVEPOINT %s", quoteIdent(s.Name)), nil
+	case *parser.PrintStmt:
+		// PRINT is handled by the executor; no SQL translation.
+		return "", nil
+	case *parser.RaiserrorStmt:
+		// RAISERROR is handled by the executor; no SQL translation.
+		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}

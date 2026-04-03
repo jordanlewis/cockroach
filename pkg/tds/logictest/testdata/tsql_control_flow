@@ -104,10 +104,10 @@ exec error=(parse error)
 RETURN 0
 ----
 
-# --- RAISERROR ---
+# --- RAISERROR (Sybase ASE syntax) ---
 
-exec error=(parse error)
-RAISERROR('Test error', 16, 1)
+exec error=(Test error)
+RAISERROR 50000, 'Test error'
 ----
 
 # --- THROW (SQL Server 2012+) ---
@@ -118,7 +118,7 @@ THROW 50000, 'Custom error', 1
 
 # --- PRINT ---
 
-exec error=(parse error)
+exec
 PRINT 'Hello from T-SQL'
 ----
 
