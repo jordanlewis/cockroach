@@ -8,13 +8,13 @@ Generated: 2026-04-03 (updated: window functions, subqueries, OFFSET-FETCH now p
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 736 |
-| Passing directives | 684 (93%) |
-| Error directives (expected failures) | 47 (6%) |
+| Passing directives | 686 (93%) |
+| Error directives (expected failures) | 45 (6%) |
 | Empty-result directives (parse OK, TDS wire gap) | 5 |
 | Known behavioral divergences | 2 |
 | Stale test comments | 1 |
 
-## Error Categorization (47 total)
+## Error Categorization (45 total)
 
 Errors are categorized by root cause and implementation effort. "Expected
 errors" (bad syntax, missing tables) are separated from feature gaps.
@@ -50,7 +50,7 @@ These features parse correctly but are intentionally blocked from execution.
 | ddl_extended | unsupported | CREATE TRIGGER |
 | tsql_control_flow | Test error | RAISERROR (Sybase syntax, working correctly) |
 
-### Parser Feature Gaps — 28
+### Parser Feature Gaps — 26
 
 These fail because the T-SQL parser cannot parse the syntax yet.
 Grouped by feature area for convoy planning. (Down from 43: window
@@ -91,17 +91,6 @@ All 7 DML extension features are now fully supported:
   (→ RETURNING) on INSERT/UPDATE/DELETE, UPDATE...FROM...JOIN,
   DELETE...JOIN (→ DELETE USING). See dml_extended tests.
 
-#### CAST / TRY_CAST Syntax (2 errors)
-
-| File | Count | Features |
-|------|-------|----------|
-| functions_extended | 1 | CAST(expr AS type) |
-| functions_extended | 1 | TRY_CAST(expr AS type) |
-
-**Implementation note:** The parser treats CAST as a function call, but
-AS inside parentheses is a keyword and breaks expression parsing. Needs
-special-case handling like CONVERT already has.
-
 #### EXEC Statement and Stored Procedures (5 errors)
 
 | File | Count | Features |
@@ -137,6 +126,7 @@ priority — can often be rewritten with GROUP BY + CASE.
 
 OFFSET-FETCH now parses, translates, and executes correctly. The test in
 select_extended passes with correct results.
+
 
 #### Control Flow Gaps (4 errors)
 
@@ -238,11 +228,9 @@ subqueries test file has more complex patterns.
 **Estimated scope:** Extend existing subquery support to cover derived
 tables, comparison subqueries, ANY/SOME/ALL operators.
 
-### Convoy B: CAST/TRY_CAST (HIGH priority, 2 errors)
+### Convoy B: CAST/TRY_CAST + OFFSET-FETCH (COMPLETE — 0 errors remaining)
 
-CAST is fundamental SQL that every driver uses.
-
-**Estimated scope:** Special-case CAST(expr AS type) in expression parser.
+CAST, TRY_CAST, and OFFSET-FETCH are now fully supported.
 
 ### Convoy C: TDS Wire-Protocol Gaps (HIGH priority, 5 empty-result tests)
 

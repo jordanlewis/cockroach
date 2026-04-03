@@ -22,7 +22,7 @@
 //   - JOINs (INNER/LEFT/RIGHT/FULL/CROSS)
 //   - ALTER TABLE, CREATE INDEX, CREATE/DROP VIEW
 //   - BEGIN/COMMIT/ROLLBACK TRAN, SAVE TRAN
-//   - CONVERT(type, expr), ISNULL, GETDATE
+//   - CAST(expr AS type), CONVERT(type, expr), ISNULL, GETDATE
 //   - IDENTITY columns, DEFAULT, computed columns (AS expr)
 //   - Bracket-quoted identifiers [name], @@system variables
 //
@@ -1835,6 +1835,11 @@ func (p *parser) parsePrimary() (Expr, error) {
 	case tokenCONVERT:
 		return p.parseCONVERT()
 
+	case tokenCAST:
+		return p.parseCAST(false)
+	case tokenTRY_CAST:
+		return p.parseCAST(true)
+
 	case tokenIdent:
 		return p.parseIdentOrFunc()
 
@@ -1896,6 +1901,30 @@ func (p *parser) parseCONVERT() (Expr, error) {
 		return nil, err
 	}
 	return conv, nil
+}
+
+// parseCAST parses: CAST(<expr> AS <type>) or TRY_CAST(<expr> AS <type>).
+// The try parameter controls whether this is CAST (false) or TRY_CAST (true).
+func (p *parser) parseCAST(try bool) (Expr, error) {
+	p.lex.next() // consume CAST or TRY_CAST
+	if err := p.expect(tokenLParen); err != nil {
+		return nil, err
+	}
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenAS); err != nil {
+		return nil, err
+	}
+	dataType, err := p.parseDataType()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenRParen); err != nil {
+		return nil, err
+	}
+	return &CastExpr{Expr: expr, DataType: dataType, Try: try}, nil
 }
 
 // parseCASE parses:
@@ -2552,7 +2581,7 @@ func isKeywordToken(typ tokenType) bool {
 		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
 		tokenDROP, tokenDISTINCT, tokenGROUP, tokenHAVING,
 		tokenCASE, tokenWHEN, tokenTHEN, tokenELSE, tokenEND,
-		tokenISNULL, tokenCONVERT, tokenGETDATE,
+		tokenISNULL, tokenCONVERT, tokenCAST, tokenTRY_CAST, tokenGETDATE,
 		tokenJOIN, tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL,
 		tokenOUTER, tokenCROSS, tokenON,
 		tokenALTER, tokenCOLUMN, tokenCONSTRAINT, tokenINDEX,

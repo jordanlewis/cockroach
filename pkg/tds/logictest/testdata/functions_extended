@@ -267,11 +267,11 @@ SELECT NULLIF(1, 2)
 
 # === Type conversion ===
 
-# CAST — standard SQL (parser treats CAST as a function call, but
-# the AS keyword inside the parens causes a parse error).
-query error=(parse error)
+# CAST — standard SQL syntax: CAST(expr AS type).
+query
 SELECT CAST(42 AS VARCHAR)
 ----
+42
 
 # TRY_CONVERT (SQL Server 2012+) — safe conversion → try_cast().
 query
@@ -279,12 +279,11 @@ SELECT TRY_CONVERT(INT, 'not_a_number')
 ----
 NULL
 
-# TRY_CAST (SQL Server 2012+).
-# Parser treats TRY_CAST as a function call but AS inside parens
-# causes a parse error (AS is a keyword, not valid in expression).
-query error=(parse error)
+# TRY_CAST (SQL Server 2012+) — safe conversion, returns NULL on failure.
+query
 SELECT TRY_CAST('not_a_number' AS INT)
 ----
+NULL
 
 # === System functions ===
 

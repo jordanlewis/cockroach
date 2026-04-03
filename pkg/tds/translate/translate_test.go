@@ -256,6 +256,74 @@ func TestTranslateCONVERT(t *testing.T) {
 	}
 }
 
+func TestTranslateCAST(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "cast varchar",
+			input:    "SELECT CAST(42 AS VARCHAR)",
+			expected: "SELECT CAST(42 AS VARCHAR)",
+		},
+		{
+			name:     "cast int type mapping",
+			input:    "SELECT CAST(price AS INT)",
+			expected: "SELECT CAST(price AS INT4)",
+		},
+		{
+			name:     "cast datetime type mapping",
+			input:    "SELECT CAST(col AS DATETIME)",
+			expected: "SELECT CAST(col AS TIMESTAMP)",
+		},
+		{
+			name:     "cast decimal with precision",
+			input:    "SELECT CAST(price AS DECIMAL(10, 2)) FROM products",
+			expected: "SELECT CAST(price AS DECIMAL(10, 2)) FROM products",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateTRY_CAST(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "try_cast int",
+			input:    "SELECT TRY_CAST('not_a_number' AS INT)",
+			expected: "SELECT try_cast('not_a_number' AS INT4)",
+		},
+		{
+			name:     "try_cast datetime",
+			input:    "SELECT TRY_CAST(col AS DATETIME)",
+			expected: "SELECT try_cast(col AS TIMESTAMP)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
 func TestTranslateGETDATE(t *testing.T) {
 	batch, err := parser.Parse("SELECT GETDATE()")
 	require.NoError(t, err)

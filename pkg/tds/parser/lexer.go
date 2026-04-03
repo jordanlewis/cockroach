@@ -84,6 +84,8 @@ const (
 	tokenEND
 	tokenISNULL
 	tokenCONVERT
+	tokenCAST
+	tokenTRY_CAST
 	tokenGETDATE
 
 	// JOIN-related keywords.
@@ -213,6 +215,8 @@ var keywords = map[string]tokenType{
 	"END":      tokenEND,
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
+	"CAST":     tokenCAST,
+	"TRY_CAST": tokenTRY_CAST,
 	"GETDATE":  tokenGETDATE,
 	"JOIN":     tokenJOIN,
 	"INNER":    tokenINNER,

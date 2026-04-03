@@ -281,6 +281,60 @@ func TestParseCONVERTWithoutStyle(t *testing.T) {
 	}
 }
 
+func TestParseCAST(t *testing.T) {
+	sql := `SELECT CAST(42 AS VARCHAR)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	cast, ok := sel.Columns[0].Expr.(*CastExpr)
+	if !ok {
+		t.Fatalf("expected *CastExpr, got %T", sel.Columns[0].Expr)
+	}
+	if cast.DataType != "VARCHAR" {
+		t.Errorf("expected VARCHAR, got %s", cast.DataType)
+	}
+	if cast.Try {
+		t.Error("expected Try=false for CAST")
+	}
+	if cast.Expr.(*IntLit).Value != 42 {
+		t.Errorf("expected expr=42, got %s", cast.Expr)
+	}
+}
+
+func TestParseCAST_WithPrecision(t *testing.T) {
+	sql := `SELECT CAST(price AS DECIMAL(10, 2)) FROM products`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	cast := sel.Columns[0].Expr.(*CastExpr)
+	if cast.DataType != "DECIMAL(10, 2)" {
+		t.Errorf("expected DECIMAL(10, 2), got %s", cast.DataType)
+	}
+}
+
+func TestParseTRY_CAST(t *testing.T) {
+	sql := `SELECT TRY_CAST('not_a_number' AS INT)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	cast, ok := sel.Columns[0].Expr.(*CastExpr)
+	if !ok {
+		t.Fatalf("expected *CastExpr, got %T", sel.Columns[0].Expr)
+	}
+	if cast.DataType != "INT" {
+		t.Errorf("expected INT, got %s", cast.DataType)
+	}
+	if !cast.Try {
+		t.Error("expected Try=true for TRY_CAST")
+	}
+}
+
 func TestParseGETDATE(t *testing.T) {
 	sql := `SELECT GETDATE()`
 	batch, err := Parse(sql)

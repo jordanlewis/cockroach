@@ -728,6 +728,25 @@ func (e *ConvertExpr) String() string {
 	return fmt.Sprintf("CONVERT(%s, %s)", e.DataType, e.Expr)
 }
 
+// CastExpr represents CAST(<expr> AS <type>) and TRY_CAST(<expr> AS <type>).
+// [Both] CAST is standard SQL supported by both SQL Server and Sybase ASE.
+// [SQL Server] TRY_CAST returns NULL on conversion failure instead of an error.
+type CastExpr struct {
+	Expr     Expr
+	DataType string
+	Try      bool // true for TRY_CAST
+}
+
+func (*CastExpr) exprNode() {}
+
+func (e *CastExpr) String() string {
+	name := "CAST"
+	if e.Try {
+		name = "TRY_CAST"
+	}
+	return fmt.Sprintf("%s(%s AS %s)", name, e.Expr, e.DataType)
+}
+
 // ParenExpr represents a parenthesized expression.
 type ParenExpr struct {
 	Expr Expr

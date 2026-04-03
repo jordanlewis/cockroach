@@ -721,6 +721,9 @@ func translateExpr(expr parser.Expr) string {
 	case *parser.ConvertExpr:
 		return translateConvert(e)
 
+	case *parser.CastExpr:
+		return translateCast(e)
+
 	case *parser.CaseExpr:
 		return translateCase(e)
 
@@ -1373,6 +1376,17 @@ func translateDateDiff(part, start, end string) string {
 func translateConvert(e *parser.ConvertExpr) string {
 	expr := translateExpr(e.Expr)
 	crdbType := mapDataType(e.DataType)
+	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
+}
+
+// translateCast converts CAST(expr AS type) → CAST(expr AS type) with type
+// mapping, and TRY_CAST(expr AS type) → try_cast(expr AS type).
+func translateCast(e *parser.CastExpr) string {
+	expr := translateExpr(e.Expr)
+	crdbType := mapDataType(e.DataType)
+	if e.Try {
+		return fmt.Sprintf("try_cast(%s AS %s)", expr, crdbType)
+	}
 	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
 }
 
