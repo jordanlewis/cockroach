@@ -27,7 +27,7 @@ query
 SELECT id, coords FROM tuple_table WHERE id = 1
 ----
 id coords
-1 [10, 20]
+1 (10, 20)
 
 # Multi-element tuple with mixed types.
 exec
@@ -42,7 +42,7 @@ query
 SELECT id, data FROM mixed_tuple WHERE id = 1
 ----
 id data
-1 [42, "hello", 3.14]
+1 (42, 'hello', 3.14)
 
 # Frozen tuple column type — frozen<> maps to JSONB, same as
 # unfrozen tuples. CRDB does not enforce immutability.

@@ -152,4 +152,4 @@ query
 SELECT id, attrs FROM lt_coll_map WHERE id = 2
 ----
 id attrs
-2 {}
+2 NULL

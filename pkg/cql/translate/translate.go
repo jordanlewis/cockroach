@@ -43,6 +43,7 @@ type TableMeta struct {
 	Columns        []string          // all column names in declaration order
 	StaticColumns  map[string]bool   // lowercase names of STATIC columns (nil if none)
 	ColumnTypes    map[string]string // lowercase col name → CRDB SQL type (e.g. "JSONB")
+	ColumnCQLTypes map[string]string // lowercase col name → original CQL type name (e.g. "set", "list")
 }
 
 // SchemaInfo tracks table metadata accumulated from CREATE TABLE statements,
@@ -84,13 +85,14 @@ func (s *SchemaInfo) LookupTable(keyspace, table string) (TableMeta, bool) {
 // cqlFunctionToSQL maps lowercase CQL function names to their CockroachDB SQL
 // equivalents. Functions not in this map are unsupported.
 var cqlFunctionToSQL = map[string]string{
-	"now":   "now",
-	"uuid":  "gen_random_uuid",
-	"count": "count",
-	"sum":   "sum",
-	"avg":   "avg",
-	"min":   "min",
-	"max":   "max",
+	"now":    "now",
+	"uuid":   "gen_random_uuid",
+	"count":  "count",
+	"sum":    "sum",
+	"avg":    "avg",
+	"min":    "min",
+	"max":    "max",
+	"length": "length",
 	// toJson maps to CRDB's to_jsonb which converts any value to JSONB.
 	"tojson": "to_jsonb",
 }
@@ -181,6 +183,10 @@ type Result struct {
 	// or UPDATE modifies static columns in a CQL table.
 	PropagateStaticSQL    string
 	PropagateStaticParams []interface{}
+	// Table and Keyspace identify the source table for SELECT results, enabling
+	// the executor to look up original CQL column types for display formatting.
+	Table    string
+	Keyspace string
 }
 
 // Translate converts a CQL AST statement into a CockroachDB SQL Result.
@@ -426,7 +432,10 @@ func translateSelect(s *parser.SelectStatement, schema *SchemaInfo) (Result, err
 		return Result{}, err
 	}
 
-	return Result{SQL: sb.String(), Params: params}, nil
+	return Result{
+		SQL: sb.String(), Params: params,
+		Table: s.Table, Keyspace: s.Keyspace,
+	}, nil
 }
 
 // writeFromAndClauses appends FROM, WHERE, GROUP BY, ORDER BY, and LIMIT
@@ -630,7 +639,10 @@ func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, 
 		}
 	}
 
-	return Result{SQL: sb.String(), Params: params}, nil
+	return Result{
+		SQL: sb.String(), Params: params,
+		Table: s.Table, Keyspace: s.Keyspace,
+	}, nil
 }
 
 // writeSelectColumns writes the column list from a SELECT statement's

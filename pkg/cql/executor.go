@@ -249,17 +249,30 @@ func (e *Executor) ExecuteQuery(
 func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace string) {
 	cols := make([]string, len(s.Columns))
 	colTypes := make(map[string]string, len(s.Columns))
+	colCQLTypes := make(map[string]string, len(s.Columns))
 	var staticCols map[string]bool
 	for i, col := range s.Columns {
 		cols[i] = col.Name
 		if sqlType := translate.CqlTypeToSQL(col.DataType); sqlType != "" {
 			colTypes[strings.ToLower(col.Name)] = sqlType
 		}
+		// Preserve the original CQL type name for collection display formatting.
+		// For frozen<T>, use the inner type name since frozen is just an
+		// immutability wrapper.
+		lowerName := strings.ToLower(col.Name)
+		cqlTypeName := strings.ToLower(col.DataType.Name)
+		if cqlTypeName == "frozen" && len(col.DataType.Params) > 0 {
+			cqlTypeName = strings.ToLower(col.DataType.Params[0].Name)
+		}
+		switch cqlTypeName {
+		case "set", "list", "tuple", "map":
+			colCQLTypes[lowerName] = cqlTypeName
+		}
 		if col.IsStatic {
 			if staticCols == nil {
 				staticCols = make(map[string]bool)
 			}
-			staticCols[strings.ToLower(col.Name)] = true
+			staticCols[lowerName] = true
 		}
 	}
 	var clusteringDesc map[string]bool
@@ -278,6 +291,7 @@ func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace st
 		Columns:        cols,
 		StaticColumns:  staticCols,
 		ColumnTypes:    colTypes,
+		ColumnCQLTypes: colCQLTypes,
 	})
 }
 
@@ -451,7 +465,7 @@ func (e *Executor) executeConditionalDML(
 		}
 	}
 
-	body, err := buildRowsBody(cols, rows)
+	body, err := buildRowsBody(cols, rows, nil)
 	if err != nil {
 		return errorResult(errCodeServerError, err.Error())
 	}
@@ -531,7 +545,7 @@ func (e *Executor) executeInsertIfNotExists(
 		return errorResult(errCodeServerError, err.Error())
 	}
 
-	body, err := buildRowsBody(cols, rows)
+	body, err := buildRowsBody(cols, rows, nil)
 	if err != nil {
 		return errorResult(errCodeServerError, err.Error())
 	}
@@ -556,7 +570,11 @@ func (e *Executor) executeSelect(
 		return errorResult(errCodeServerError, err.Error())
 	}
 
-	body, err := buildRowsBody(cols, rows)
+	// Build CQL type hints for collection columns so the encoder can
+	// format sets, lists, and tuples with the correct bracket style.
+	cqlTypeHints := e.buildCQLTypeHints(result.Keyspace, result.Table)
+
+	body, err := buildRowsBody(cols, rows, cqlTypeHints)
 	if err != nil {
 		return errorResult(errCodeServerError, err.Error())
 	}
@@ -684,17 +702,31 @@ func buildSchemaChangeBody(changeType, target, keyspace, name string) []byte {
 // colinfo.ResultColumns and rows of tree.Datums. The metadata includes
 // column names and CQL types; the data section encodes each datum in
 // CQL binary format.
-func buildRowsBody(cols colinfo.ResultColumns, rows []tree.Datums) ([]byte, error) {
+//
+// cqlTypeHints optionally maps lowercase column names to their original
+// CQL types (e.g. CQLSet, CQLList). When a hint is present for a JSONB
+// column, the encoder uses it to produce Cassandra-style formatting
+// instead of raw JSON text.
+func buildRowsBody(
+	cols colinfo.ResultColumns, rows []tree.Datums, cqlTypeHints map[string]cqltypes.CQLType,
+) ([]byte, error) {
 	numCols := len(cols)
 
-	// Map CRDB column types to CQL types.
-	cqlTypes := make([]cqltypes.CQLType, numCols)
+	// Map CRDB column types to CQL types. wireTypes are sent in the
+	// frame metadata (always CQLVarchar for collections since we don't
+	// emit element-type metadata). encTypes drive formatting in EncodeDatum.
+	wireTypes := make([]cqltypes.CQLType, numCols)
+	encTypes := make([]cqltypes.CQLType, numCols)
 	for i, col := range cols {
 		ct, err := cqltypes.CQLTypeFromCRDB(col.Typ)
 		if err != nil {
 			return nil, errors.Wrapf(err, "mapping column %q", col.Name)
 		}
-		cqlTypes[i] = ct
+		wireTypes[i] = ct
+		encTypes[i] = ct
+		if hint, ok := cqlTypeHints[strings.ToLower(col.Name)]; ok && ct == cqltypes.CQLVarchar {
+			encTypes[i] = hint
+		}
 	}
 
 	var buf bytes.Buffer
@@ -714,8 +746,9 @@ func buildRowsBody(cols colinfo.ResultColumns, rows []tree.Datums) ([]byte, erro
 		_ = cqlwire.WriteString(&buf, "") // keyspace
 		_ = cqlwire.WriteString(&buf, "") // table
 		_ = cqlwire.WriteString(&buf, col.Name)
-		// Option ID: [short] type id.
-		_ = cqlwire.WriteShort(&buf, uint16(cqlTypes[i]))
+		// Option ID: [short] type id. Always use wireTypes here since
+		// collection types would require element-type sub-metadata.
+		_ = cqlwire.WriteShort(&buf, uint16(wireTypes[i]))
 	}
 
 	// Row count.
@@ -724,7 +757,7 @@ func buildRowsBody(cols colinfo.ResultColumns, rows []tree.Datums) ([]byte, erro
 	// Row data: for each row, for each column, encode as CQL [bytes].
 	for _, row := range rows {
 		for j, datum := range row {
-			val, isNull, err := cqltypes.EncodeDatum(datum, cqlTypes[j])
+			val, isNull, err := cqltypes.EncodeDatum(datum, encTypes[j])
 			if err != nil {
 				return nil, errors.Wrapf(err, "encoding row value for column %q", cols[j].Name)
 			}
@@ -739,6 +772,36 @@ func buildRowsBody(cols colinfo.ResultColumns, rows []tree.Datums) ([]byte, erro
 	}
 
 	return buf.Bytes(), nil
+}
+
+// buildCQLTypeHints looks up the table in the schema and returns a map of
+// column names to their original CQL types for collection columns. Returns
+// nil if the table is not in the schema or has no collection columns.
+func (e *Executor) buildCQLTypeHints(keyspace, table string) map[string]cqltypes.CQLType {
+	if table == "" {
+		return nil
+	}
+	meta, ok := e.schema.LookupTable(keyspace, table)
+	if !ok || len(meta.ColumnCQLTypes) == 0 {
+		return nil
+	}
+	hints := make(map[string]cqltypes.CQLType, len(meta.ColumnCQLTypes))
+	for col, cqlTypeName := range meta.ColumnCQLTypes {
+		switch cqlTypeName {
+		case "set":
+			hints[col] = cqltypes.CQLSet
+		case "list":
+			hints[col] = cqltypes.CQLList
+		case "tuple":
+			hints[col] = cqltypes.CQLTuple
+		case "map":
+			hints[col] = cqltypes.CQLMap
+		}
+	}
+	if len(hints) == 0 {
+		return nil
+	}
+	return hints
 }
 
 // buildErrorBody builds a CQL ERROR frame body from an error code and

@@ -53,7 +53,7 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
 id tags
-1 ["hello", "world"]
+1 ['hello', 'world']
 
 # ---------------------------------------------------------------
 # UPDATE with list literal — full replacement.
@@ -67,7 +67,7 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
 id tags
-1 ["a", "b"]
+1 ['a', 'b']
 
 # ---------------------------------------------------------------
 # List append (SET col = col + [...]) — JSONB concatenation.
@@ -81,7 +81,7 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
 id tags
-1 ["a", "b", "c"]
+1 ['a', 'b', 'c']
 
 # ---------------------------------------------------------------
 # List prepend (SET col = [...] + col) — JSONB concatenation.
@@ -95,7 +95,7 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
 id tags
-1 ["z", "a", "b", "c"]
+1 ['z', 'a', 'b', 'c']
 
 # ---------------------------------------------------------------
 # List removal (SET col = col - [...]) — JSONB subtraction.
@@ -113,7 +113,7 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
 id tags
-1 ["a", "b", "c"]
+1 ['a', 'b', 'c']
 
 # ---------------------------------------------------------------
 # Nested list (list<list<int>>) — works via JSONB nesting.
@@ -145,4 +145,4 @@ query
 SELECT id, tags FROM lt_coll_list WHERE id = 2
 ----
 id tags
-2 []
+2 NULL

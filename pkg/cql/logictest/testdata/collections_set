@@ -53,7 +53,7 @@ query
 SELECT id, emails FROM lt_coll_set WHERE id = 1
 ----
 id emails
-1 ["a@example.com", "b@example.com"]
+1 {'a@example.com', 'b@example.com'}
 
 # ---------------------------------------------------------------
 # UPDATE with set literal — full replacement.
@@ -67,7 +67,7 @@ query
 SELECT id, emails FROM lt_coll_set WHERE id = 1
 ----
 id emails
-1 ["x@test.com"]
+1 {'x@test.com'}
 
 # ---------------------------------------------------------------
 # Set add (SET col = col + {...}) — JSONB concatenation.
@@ -81,7 +81,7 @@ query
 SELECT id, emails FROM lt_coll_set WHERE id = 1
 ----
 id emails
-1 ["x@test.com", "new@test.com"]
+1 {'x@test.com', 'new@test.com'}
 
 # ---------------------------------------------------------------
 # Set removal (SET col = col - {...}) — JSONB text subtraction
@@ -96,7 +96,7 @@ query
 SELECT id, emails FROM lt_coll_set WHERE id = 1
 ----
 id emails
-1 ["new@test.com"]
+1 {'new@test.com'}
 
 # ---------------------------------------------------------------
 # Nested set (set<set<int>>) — works via JSONB nesting.
@@ -118,4 +118,4 @@ query
 SELECT id, emails FROM lt_coll_set WHERE id = 2
 ----
 id emails
-2 {}
+2 NULL

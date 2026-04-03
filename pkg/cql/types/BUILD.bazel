@@ -12,6 +12,7 @@ go_library(
         "//pkg/sql/sem/tree",
         "//pkg/sql/types",
         "//pkg/util/ipaddr",
+        "//pkg/util/json",
         "@com_github_cockroachdb_errors//:errors",
     ],
 )

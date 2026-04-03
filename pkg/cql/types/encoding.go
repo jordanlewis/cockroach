@@ -9,9 +9,11 @@ import (
 	"encoding/binary"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/util/ipaddr"
+	"github.com/cockroachdb/cockroach/pkg/util/json"
 	"github.com/cockroachdb/errors"
 )
 
@@ -60,9 +62,11 @@ func EncodeDatum(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
 	case CQLDecimal:
 		return encodeDecimal(d)
 	case CQLTuple, CQLList, CQLMap, CQLSet:
-		// Collection and tuple types are stored as JSONB and encoded as
-		// their JSON text representation on the wire.
-		return encodeText(d)
+		// Collection and tuple types are stored as JSONB. Format the
+		// text representation to match Cassandra's display conventions:
+		// sets use {}, tuples use (), lists use []. Empty collections
+		// are treated as NULL (Cassandra semantics).
+		return encodeCollection(d, cqlType)
 	default:
 		return nil, false, errors.Newf("unsupported CQL type for encoding: %s", cqlType)
 	}
@@ -92,6 +96,72 @@ func encodeText(d tree.Datum) ([]byte, bool, error) {
 	default:
 		return nil, false, errors.Newf("expected DString or DJSON, got %T", d)
 	}
+}
+
+// encodeCollection formats a DJSON datum as CQL collection text. Sets are
+// wrapped in {}, tuples in (), and lists in []. Empty collections are encoded
+// as NULL to match Cassandra semantics where empty collections equal null.
+func encodeCollection(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
+	v, ok := d.(*tree.DJSON)
+	if !ok {
+		return nil, false, errors.Newf(
+			"expected DJSON for collection type %s, got %T", cqlType, d,
+		)
+	}
+
+	j := v.JSON
+	jType := j.Type()
+
+	// Empty collections are NULL in Cassandra.
+	if (jType == json.ArrayJSONType || jType == json.ObjectJSONType) && j.Len() == 0 {
+		return nil, true, nil
+	}
+
+	switch cqlType {
+	case CQLSet:
+		return formatJSONArray(j, '{', '}')
+	case CQLTuple:
+		return formatJSONArray(j, '(', ')')
+	case CQLList:
+		return formatJSONArray(j, '[', ']')
+	default:
+		// Maps and unknown collection types: use JSON text as-is.
+		return []byte(j.String()), false, nil
+	}
+}
+
+// formatJSONArray formats a JSON array's elements separated by ", " and
+// wrapped with the given open/close brackets. String elements use single
+// quotes to match CQL display conventions.
+func formatJSONArray(j json.JSON, open, close byte) ([]byte, bool, error) {
+	n := j.Len()
+	var sb strings.Builder
+	sb.WriteByte(open)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		elem, err := j.FetchValIdx(i)
+		if err != nil {
+			return nil, false, errors.Wrap(err, "reading collection element")
+		}
+		sb.WriteString(jsonElemToCQL(elem))
+	}
+	sb.WriteByte(close)
+	return []byte(sb.String()), false, nil
+}
+
+// jsonElemToCQL converts a single JSON value to its CQL text representation.
+// Strings use single quotes; other types use their JSON representation.
+func jsonElemToCQL(j json.JSON) string {
+	if j.Type() == json.StringJSONType {
+		text, err := j.AsText()
+		if err != nil || text == nil {
+			return j.String()
+		}
+		return "'" + *text + "'"
+	}
+	return j.String()
 }
 
 func encodeInt(d tree.Datum) ([]byte, bool, error) {
