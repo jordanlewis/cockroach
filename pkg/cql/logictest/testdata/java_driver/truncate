@@ -45,3 +45,21 @@ query
 SELECT k, v FROM jd_trunc
 ----
 k v
+
+# ---------------------------------------------------------------
+# Keyspace-qualified TRUNCATE (from TruncateTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_trunc (k, v) VALUES (3, 'three')
+----
+
+exec
+TRUNCATE defaultdb.jd_trunc
+----
+
+# Verify table is empty after keyspace-qualified truncate.
+query
+SELECT k, v FROM jd_trunc
+----
+k v

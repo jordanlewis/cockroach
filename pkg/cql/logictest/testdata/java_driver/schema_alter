@@ -157,3 +157,88 @@ error
 ALTER MATERIALIZED VIEW baz WITH compression={'class':'LZ4Compressor'} AND default_time_to_live=86400
 ----
 at position 6: expected TABLE or KEYSPACE after ALTER, got "MATERIALIZED"
+
+# ---------------------------------------------------------------
+# Keyspace-qualified ALTER TABLE (from AlterTableTest).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_alt_ks (k int PRIMARY KEY, x text)
+----
+
+exec
+ALTER TABLE defaultdb.jd_alt_ks ADD w text
+----
+
+exec
+ALTER TABLE defaultdb.jd_alt_ks DROP w
+----
+
+exec
+ALTER TABLE defaultdb.jd_alt_ks ALTER x TYPE text
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE ADD STATIC column (from AlterTableTest).
+# Keyspace-qualified variant.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE defaultdb.jd_alt_ks ADD x text STATIC
+----
+at position 43: unexpected token "STATIC" after statement
+
+# ---------------------------------------------------------------
+# ALTER TABLE ADD multiple columns (from AlterTableTest).
+# Keyspace-qualified variant.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE defaultdb.jd_alt_ks ADD (c1 text, c2 float)
+----
+at position 36: expected identifier, got "("
+
+# ---------------------------------------------------------------
+# ALTER TABLE DROP multiple columns (from AlterTableTest).
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE defaultdb.jd_alt_ks DROP (x, y)
+----
+at position 37: expected identifier, got "("
+
+# ---------------------------------------------------------------
+# ALTER TABLE with vector type (from AlterTableTest).
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE jd_alt ALTER x TYPE vector<float, 3>
+----
+at position 38: unexpected token "<" after statement
+
+# ---------------------------------------------------------------
+# ALTER TYPE with multiple renames (from AlterTypeTest).
+# ---------------------------------------------------------------
+
+error
+ALTER TYPE jd_alt RENAME x TO y AND u TO v AND b TO a
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+
+# ---------------------------------------------------------------
+# ALTER TYPE with vector type (from AlterTypeTest).
+# ---------------------------------------------------------------
+
+error
+ALTER TYPE foo ALTER vec TYPE vector<float, 3>
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+
+# ---------------------------------------------------------------
+# ALTER MATERIALIZED VIEW with keyspace (from AlterMaterializedViewTest).
+# ---------------------------------------------------------------
+
+error
+ALTER MATERIALIZED VIEW defaultdb.baz WITH cdc=true
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "MATERIALIZED"

@@ -157,3 +157,34 @@ error
 CREATE TABLE IF NOT EXISTS jd_ct_compact3 (k int, c text, v text, PRIMARY KEY(k, c)) WITH COMPACT STORAGE AND CLUSTERING ORDER BY (c DESC) AND default_time_to_live=86400
 ----
 at position 98: expected '=', got "STORAGE"
+
+# ---------------------------------------------------------------
+# Additional compression variants with crc_check_chance
+# (from CreateTableTest).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_snappy_crc (k int PRIMARY KEY, v text) WITH compression={'class':'SnappyCompressor','chunk_length_kb':'2048','crc_check_chance':'0.25'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_deflate_crc (k int PRIMARY KEY, v text) WITH compression={'class':'DeflateCompressor','chunk_length_kb':'4096','crc_check_chance':'0.1'}
+----
+
+# ---------------------------------------------------------------
+# Vector column type (from CreateTableTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE IF NOT EXISTS jd_ct_vec (k int PRIMARY KEY, v vector<float, 3>)
+----
+at position 65: expected identifier, got "<"
+
+# ---------------------------------------------------------------
+# COMPACT STORAGE with default_time_to_live only (from CreateTableTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE IF NOT EXISTS jd_ct_compact_ttl (k int PRIMARY KEY, v text) WITH COMPACT STORAGE AND default_time_to_live=86400
+----
+at position 86: expected '=', got "STORAGE"

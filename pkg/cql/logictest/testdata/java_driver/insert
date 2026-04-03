@@ -148,3 +148,75 @@ SELECT bar, baz FROM jd_ins_json WHERE bar = 3
 ----
 bar baz
 3 NULL
+
+# ---------------------------------------------------------------
+# Keyspace-qualified INSERT (from RegularInsertTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO defaultdb.jd_ins (k, a, b) VALUES (13, 1, 2)
+----
+
+# ---------------------------------------------------------------
+# INSERT with multiple columns, keyspace-qualified (from RegularInsertTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO defaultdb.jd_ins (k, c, a, b) VALUES (14, 3, 1, 2)
+----
+
+# ---------------------------------------------------------------
+# INSERT JSON IF NOT EXISTS with USING TIMESTAMP (from JsonInsertTest).
+# ---------------------------------------------------------------
+
+# INSERT JSON IF NOT EXISTS USING TIMESTAMP is not supported by
+# the parser — the USING clause is not recognized after IF NOT EXISTS
+# for JSON inserts.
+error
+INSERT INTO jd_ins_json JSON '{"bar": 4}' IF NOT EXISTS USING TIMESTAMP 1
+----
+at position 56: unexpected token "USING" after statement
+
+# INSERT JSON DEFAULT UNSET IF NOT EXISTS USING TIMESTAMP is also
+# not supported for the same reason.
+error
+INSERT INTO jd_ins_json JSON '{"bar": 5}' DEFAULT UNSET IF NOT EXISTS USING TIMESTAMP 1
+----
+at position 70: unexpected token "USING" after statement
+
+# ---------------------------------------------------------------
+# Function call as value (from InsertIdempotenceTest).
+# Cassandra-specific functions like generate_id() are not supported.
+# ---------------------------------------------------------------
+
+error
+INSERT INTO jd_ins (k) VALUES (generate_id())
+----
+translating INSERT value: unsupported CQL function "generate_id"
+
+# ---------------------------------------------------------------
+# Arithmetic expression in VALUES (from InsertIdempotenceTest).
+# ---------------------------------------------------------------
+
+error
+INSERT INTO jd_ins (k) VALUES (1+1)
+----
+at position 32: expected ')', got "+"
+
+# ---------------------------------------------------------------
+# Tuple value in VALUES (from InsertIdempotenceTest).
+# ---------------------------------------------------------------
+
+error
+INSERT INTO jd_ins (k) VALUES ((1, 1))
+----
+at position 31: expected expression, got "("
+
+# ---------------------------------------------------------------
+# Vector literal in VALUES (from RegularInsertTest).
+# ---------------------------------------------------------------
+
+error
+INSERT INTO jd_ins (k) VALUES ([0.1, 0.2, 0.3])
+----
+cql-dml: value type jsonb doesn't match type int4 of column "k"

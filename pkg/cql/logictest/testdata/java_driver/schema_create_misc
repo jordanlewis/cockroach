@@ -76,3 +76,115 @@ error
 CREATE MATERIALIZED VIEW jd_mv2 AS SELECT x, y FROM jd_mv_base WHERE x IS NOT NULL AND y < 5 PRIMARY KEY(x)
 ----
 at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"
+
+# ---------------------------------------------------------------
+# CREATE TYPE with keyspace qualifier (from CreateTypeTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE defaultdb.jd_type_ks (single text)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+# ---------------------------------------------------------------
+# CREATE TYPE with many fields (from CreateTypeTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE jd_type_many (first text, second int, third blob, fourth boolean)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+# ---------------------------------------------------------------
+# CREATE TYPE with nested UDT (from CreateTypeTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE defaultdb.jd_type_udt (nested frozen<val>)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+# ---------------------------------------------------------------
+# CREATE TYPE with collections (from CreateTypeTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE defaultdb.jd_type_coll (names list<text>)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+error
+CREATE TYPE defaultdb.jd_type_map (map map<int, text>)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+# ---------------------------------------------------------------
+# CREATE TYPE with vector (from CreateTypeTest).
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE defaultdb.jd_type_vec (c1 int, vec vector<float, 3>)
+----
+at position 53: expected ',', got "<"
+
+# ---------------------------------------------------------------
+# Additional CREATE FUNCTION variants (from CreateFunctionTest).
+# ---------------------------------------------------------------
+
+error
+CREATE FUNCTION keyspace1.func1 (param1 int) CALLED ON NULL INPUT RETURNS text LANGUAGE java AS 'return Integer.toString(param1);'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "FUNCTION"
+
+error
+CREATE FUNCTION keyspace1.func3 (param1 int, param2 text, param3 boolean) RETURNS NULL ON NULL INPUT RETURNS text LANGUAGE java AS 'return Integer.toString(param1);'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "FUNCTION"
+
+error
+CREATE OR REPLACE FUNCTION keyspace1.func6 (param1 int) RETURNS NULL ON NULL INPUT RETURNS text LANGUAGE java AS 'return Integer.toString(param1);'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "OR"
+
+# ---------------------------------------------------------------
+# Additional CREATE AGGREGATE variants (from CreateAggregateTest).
+# ---------------------------------------------------------------
+
+error
+CREATE AGGREGATE keyspace1.agg1 (int) SFUNC sfunction STYPE ascii FINALFUNC finalfunction INITCOND (0,0)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "AGGREGATE"
+
+error
+CREATE AGGREGATE keyspace1.agg2 (int, text, boolean) SFUNC sfunction STYPE ascii FINALFUNC finalfunction INITCOND (0,0)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "AGGREGATE"
+
+error
+CREATE OR REPLACE AGGREGATE keyspace1.agg7 () SFUNC sfunction STYPE ascii FINALFUNC finalfunction INITCOND (0,0)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "OR"
+
+error
+CREATE AGGREGATE cycling.sum (int) SFUNC dsum STYPE int
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "AGGREGATE"
+
+# ---------------------------------------------------------------
+# Additional CREATE MATERIALIZED VIEW variants (from CreateMaterializedViewTest).
+# ---------------------------------------------------------------
+
+error
+CREATE MATERIALIZED VIEW baz AS SELECT * FROM bar WHERE x IS NOT NULL AND y IS NOT NULL PRIMARY KEY((x, y), a, b)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"
+
+error
+CREATE MATERIALIZED VIEW baz AS SELECT * FROM bar WHERE x IS NOT NULL PRIMARY KEY(x, a) WITH CLUSTERING ORDER BY (a DESC)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"
+
+error
+CREATE MATERIALIZED VIEW baz AS SELECT * FROM bar WHERE x IS NOT NULL PRIMARY KEY(x) WITH cdc=true AND comment='Hello'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"

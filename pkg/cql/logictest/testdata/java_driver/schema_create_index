@@ -114,3 +114,31 @@ DROP INDEX IF EXISTS jd_idx_y2
 exec
 DROP INDEX IF EXISTS jd_idx_ks
 ----
+
+# ---------------------------------------------------------------
+# Unnamed CREATE INDEX IF NOT EXISTS (from CreateIndexTest).
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX IF NOT EXISTS ON jd_idx (y)
+----
+at position 30: expected ON, got "jd_idx"
+
+# ---------------------------------------------------------------
+# Custom index type — CUST(m) (from CreateIndexTest).
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX jd_idx_cust ON jd_idx (CUST(m))
+----
+at position 40: expected ',', got "("
+
+# ---------------------------------------------------------------
+# CREATE INDEX with options (from CreateIndexTest).
+# Non-CUSTOM index with WITH clause.
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX jd_idx_opts ON jd_idx (y) WITH opt1=1 AND opt2='data'
+----
+at position 39: unexpected token "WITH" after statement

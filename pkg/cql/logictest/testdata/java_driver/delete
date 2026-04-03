@@ -138,3 +138,95 @@ SELECT k, v FROM jd_del_col WHERE k = 1
 ----
 k v
 1 NULL
+
+# ---------------------------------------------------------------
+# Keyspace-qualified column deletion (from DeleteSelectorTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_del_col (k, v) VALUES (2, 'world')
+----
+
+exec
+DELETE v FROM defaultdb.jd_del_col WHERE k = 2
+----
+
+query
+SELECT k, v FROM jd_del_col WHERE k = 2
+----
+k v
+2 NULL
+
+# ---------------------------------------------------------------
+# Field deletion — UDT field (from DeleteSelectorTest).
+# Dot notation in DELETE selector is unsupported.
+# ---------------------------------------------------------------
+
+error
+DELETE address.street FROM jd_del_col WHERE k = 1
+----
+at position 14: expected FROM, got "."
+
+# ---------------------------------------------------------------
+# Element deletion — subscript in DELETE selector (from DeleteSelectorTest).
+# ---------------------------------------------------------------
+
+error
+DELETE m[1] FROM jd_del_col WHERE k = 1
+----
+at position 8: expected FROM, got "["
+
+# ---------------------------------------------------------------
+# DELETE column with USING TIMESTAMP (from DeleteTimestampTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_del_col (k, v) VALUES (3, 'test')
+----
+
+exec
+DELETE v FROM jd_del_col USING TIMESTAMP 1 WHERE k = 3
+----
+
+query
+SELECT k, v FROM jd_del_col WHERE k = 3
+----
+k v
+3 NULL
+
+# ---------------------------------------------------------------
+# IF condition with field access (from DeleteFluentConditionTest).
+# ---------------------------------------------------------------
+
+error
+DELETE FROM jd_del_col WHERE k = 1 IF v.f = 1
+----
+at position 39: expected comparison operator, got "."
+
+# ---------------------------------------------------------------
+# IF condition with element access (from DeleteFluentConditionTest).
+# ---------------------------------------------------------------
+
+error
+DELETE FROM jd_del_col WHERE k = 1 IF v[1] = 1
+----
+at position 39: expected comparison operator, got "["
+
+# ---------------------------------------------------------------
+# DELETE with function in WHERE (from DeleteIdempotenceTest).
+# ---------------------------------------------------------------
+
+error
+DELETE FROM jd_del_col WHERE k = non_idempotent_func()
+----
+translating WHERE value: unsupported CQL function "non_idempotent_func"
+
+# ---------------------------------------------------------------
+# DELETE element from collection (from DeleteIdempotenceTest).
+# Element subscript in DELETE selector.
+# ---------------------------------------------------------------
+
+error
+DELETE l[0] FROM jd_del_col WHERE k = 1
+----
+at position 8: expected FROM, got "["

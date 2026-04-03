@@ -149,3 +149,27 @@ error
 DROP MATERIALIZED VIEW IF EXISTS bar
 ----
 at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "MATERIALIZED"
+
+# ---------------------------------------------------------------
+# Keyspace-qualified DROP for unsupported types (from Drop*Tests).
+# ---------------------------------------------------------------
+
+error
+DROP TYPE defaultdb.bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "TYPE"
+
+error
+DROP FUNCTION defaultdb.bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "FUNCTION"
+
+error
+DROP AGGREGATE defaultdb.bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "AGGREGATE"
+
+error
+DROP MATERIALIZED VIEW defaultdb.bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "MATERIALIZED"

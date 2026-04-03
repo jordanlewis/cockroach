@@ -243,3 +243,67 @@ error
 UPDATE jd_upd_coll SET l[0] = 99 WHERE k = 1
 ----
 cql-dml: unknown signature: jsonb_set(jsonb, int[], jsonb) (returning <jsonb>)
+
+# ---------------------------------------------------------------
+# Keyspace-qualified UPDATE (from UpdateFluentAssignmentTest).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_upd (k, v) VALUES (2, 10)
+----
+
+exec
+UPDATE defaultdb.jd_upd SET v = 42 WHERE k = 2
+----
+
+query
+SELECT k, v FROM jd_upd WHERE k = 2
+----
+k v
+2 42
+
+# ---------------------------------------------------------------
+# Field assignment — UDT field (from UpdateFluentAssignmentTest).
+# Dot notation in SET clause is unsupported.
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd SET address.street = 'Main St' WHERE k = 1
+----
+at position 25: expected '=', got "."
+
+# ---------------------------------------------------------------
+# IF condition with field access (from UpdateFluentConditionTest).
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd SET v = 50 WHERE k = 1 IF v.f = 1
+----
+at position 41: expected comparison operator, got "."
+
+# ---------------------------------------------------------------
+# IF condition with element access (from UpdateFluentConditionTest).
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd SET v = 50 WHERE k = 1 IF v[1] = 1
+----
+at position 41: expected comparison operator, got "["
+
+# ---------------------------------------------------------------
+# WHERE IS NOT NULL (from UpdateIdempotenceTest).
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd SET v = 42 WHERE k IS NOT NULL
+----
+at position 33: expected comparison operator, got "IS"
+
+# ---------------------------------------------------------------
+# UPDATE with function in WHERE (from UpdateIdempotenceTest).
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd SET v = 1 WHERE k = non_idempotent_func()
+----
+translating WHERE value: unsupported CQL function "non_idempotent_func"
