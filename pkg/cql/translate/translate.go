@@ -31,6 +31,49 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
+// TableMeta holds metadata about a CQL table needed for translations that
+// require schema context, such as PER PARTITION LIMIT.
+type TableMeta struct {
+	PartitionKeys []string // partition key columns from PRIMARY KEY
+	Columns       []string // all column names in declaration order
+}
+
+// SchemaInfo tracks table metadata accumulated from CREATE TABLE statements,
+// enabling query translations that require schema context (e.g. PER PARTITION
+// LIMIT needs partition key columns to generate a ROW_NUMBER window function).
+type SchemaInfo struct {
+	tables map[string]TableMeta
+}
+
+// NewSchemaInfo creates an empty SchemaInfo.
+func NewSchemaInfo() *SchemaInfo {
+	return &SchemaInfo{tables: make(map[string]TableMeta)}
+}
+
+// RecordTable stores metadata for a table. The key is the lowercase
+// unqualified or qualified table name.
+func (s *SchemaInfo) RecordTable(keyspace, table string, meta TableMeta) {
+	key := strings.ToLower(table)
+	if keyspace != "" {
+		s.tables[strings.ToLower(keyspace)+"."+key] = meta
+	}
+	// Always store unqualified so lookups work regardless of keyspace context.
+	s.tables[key] = meta
+}
+
+// LookupTable retrieves metadata for a table, trying qualified then
+// unqualified names.
+func (s *SchemaInfo) LookupTable(keyspace, table string) (TableMeta, bool) {
+	if keyspace != "" {
+		key := strings.ToLower(keyspace) + "." + strings.ToLower(table)
+		if meta, ok := s.tables[key]; ok {
+			return meta, true
+		}
+	}
+	meta, ok := s.tables[strings.ToLower(table)]
+	return meta, ok
+}
+
 // cqlFunctionToSQL maps lowercase CQL function names to their CockroachDB SQL
 // equivalents. Functions not in this map are unsupported.
 var cqlFunctionToSQL = map[string]string{
@@ -128,7 +171,16 @@ type Result struct {
 }
 
 // Translate converts a CQL AST statement into a CockroachDB SQL Result.
+// This is a convenience wrapper around TranslateWithSchema with no schema
+// context; PER PARTITION LIMIT will return an error without schema info.
 func Translate(stmt parser.Statement) (Result, error) {
+	return TranslateWithSchema(stmt, nil)
+}
+
+// TranslateWithSchema converts a CQL AST statement into a CockroachDB SQL
+// Result. When schema is non-nil, translations that require table metadata
+// (e.g. PER PARTITION LIMIT) can use it to look up partition key columns.
+func TranslateWithSchema(stmt parser.Statement, schema *SchemaInfo) (Result, error) {
 	switch s := stmt.(type) {
 	case *parser.UseStatement:
 		return translateUse(s)
@@ -139,7 +191,7 @@ func Translate(stmt parser.Statement) (Result, error) {
 	case *parser.InsertStatement:
 		return translateInsert(s)
 	case *parser.SelectStatement:
-		return translateSelect(s)
+		return translateSelect(s, schema)
 	case *parser.UpdateStatement:
 		return translateUpdate(s)
 	case *parser.DeleteStatement:
@@ -313,12 +365,12 @@ func translateInsert(s *parser.InsertStatement) (Result, error) {
 }
 
 // translateSelect maps CQL SELECT to CRDB SQL SELECT.
-func translateSelect(s *parser.SelectStatement) (Result, error) {
+func translateSelect(s *parser.SelectStatement, schema *SchemaInfo) (Result, error) {
 	if s.JSON {
-		return translateSelectJSON(s)
+		return translateSelectJSON(s, schema)
 	}
 	if s.PerPartitionLimit != nil {
-		return Result{}, errors.Newf("PER PARTITION LIMIT is not supported")
+		return translateSelectPPL(s, schema)
 	}
 
 	var sb strings.Builder
@@ -332,29 +384,8 @@ func translateSelect(s *parser.SelectStatement) (Result, error) {
 	}
 
 	// Column list.
-	for i, sel := range s.Columns {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		if sel.Expr != nil {
-			sqlExpr, _, err := exprToSQL(sel.Expr, &paramIdx)
-			if err != nil {
-				return Result{}, errors.Wrap(err, "translating selector")
-			}
-			sb.WriteString(sqlExpr)
-			if sel.Alias != "" {
-				sb.WriteString(" AS ")
-				sb.WriteString(quoteIdent(sel.Alias))
-			}
-		} else if sel.Column == "*" {
-			sb.WriteByte('*')
-		} else {
-			sb.WriteString(quoteIdent(sel.Column))
-			if sel.Alias != "" {
-				sb.WriteString(" AS ")
-				sb.WriteString(quoteIdent(sel.Alias))
-			}
-		}
+	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx); err != nil {
+		return Result{}, err
 	}
 
 	if err := writeFromAndClauses(&sb, s, &params, &paramIdx); err != nil {
@@ -415,6 +446,178 @@ func writeFromAndClauses(
 		}
 	}
 
+	return nil
+}
+
+// translateSelectPPL translates a SELECT with PER PARTITION LIMIT into a
+// subquery that uses ROW_NUMBER() OVER (PARTITION BY <pk_cols>) to limit
+// rows per partition. The generated SQL has the form:
+//
+//	SELECT <cols> FROM (
+//	  SELECT <cols>, row_number() OVER (PARTITION BY <pk>) AS "__cql_rn"
+//	  FROM <table> [WHERE ...] [GROUP BY ...]
+//	) AS "__cql_ppl" WHERE "__cql_rn" <= <N> [ORDER BY ...] [LIMIT <M>]
+func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, error) {
+	if schema == nil {
+		return Result{}, errors.Newf(
+			"PER PARTITION LIMIT requires schema info; table %q not registered",
+			s.Table)
+	}
+	meta, ok := schema.LookupTable(s.Keyspace, s.Table)
+	if !ok {
+		return Result{}, errors.Newf(
+			"PER PARTITION LIMIT: unknown table %q", s.Table)
+	}
+	if len(meta.PartitionKeys) == 0 {
+		return Result{}, errors.Newf(
+			"PER PARTITION LIMIT: no partition keys for table %q", s.Table)
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	isSelectStar := len(s.Columns) == 1 &&
+		s.Columns[0].Column == "*" &&
+		s.Columns[0].Expr == nil
+
+	// Outer SELECT: reference columns by name to exclude __cql_rn.
+	sb.WriteString("SELECT ")
+	if s.Distinct {
+		sb.WriteString("DISTINCT ")
+	}
+	if isSelectStar {
+		for i, col := range meta.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(col))
+		}
+	} else {
+		for i, sel := range s.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			if sel.Alias != "" {
+				sb.WriteString(quoteIdent(sel.Alias))
+			} else if sel.Expr == nil && sel.Column != "" {
+				sb.WriteString(quoteIdent(sel.Column))
+			} else {
+				return Result{}, errors.Newf(
+					"PER PARTITION LIMIT with expression selectors requires an AS alias")
+			}
+		}
+	}
+
+	// Inner subquery.
+	sb.WriteString(" FROM (SELECT ")
+	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx); err != nil {
+		return Result{}, err
+	}
+
+	// ROW_NUMBER window function partitioned by partition key columns.
+	sb.WriteString(`, row_number() OVER (PARTITION BY `)
+	for i, pk := range meta.PartitionKeys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(pk))
+	}
+	sb.WriteString(`) AS "__cql_rn"`)
+
+	// FROM, WHERE, GROUP BY for the inner query.
+	sb.WriteString(" FROM ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	if len(s.Where) > 0 {
+		sb.WriteString(" WHERE ")
+		if err := writeWhereClauses(&sb, s.Where, &params, &paramIdx); err != nil {
+			return Result{}, err
+		}
+	}
+	if len(s.GroupBy) > 0 {
+		sb.WriteString(" GROUP BY ")
+		for i, col := range s.GroupBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(col))
+		}
+	}
+	sb.WriteString(`) AS "__cql_ppl"`)
+
+	// Outer WHERE: filter by row number.
+	sb.WriteString(` WHERE "__cql_rn" <= `)
+	pplVal, pplParam, err := exprToSQL(s.PerPartitionLimit, &paramIdx)
+	if err != nil {
+		return Result{}, errors.Wrap(err, "translating PER PARTITION LIMIT value")
+	}
+	sb.WriteString(pplVal)
+	if pplParam != nil {
+		params = append(params, pplParam)
+	}
+
+	// ORDER BY on outer query.
+	if len(s.OrderBy) > 0 {
+		sb.WriteString(" ORDER BY ")
+		for i, ob := range s.OrderBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(ob.Column))
+			if ob.Desc {
+				sb.WriteString(" DESC")
+			}
+		}
+	}
+
+	// LIMIT on outer query.
+	if s.Limit != nil {
+		sb.WriteString(" LIMIT ")
+		sqlVal, param, err := exprToSQL(s.Limit, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating LIMIT value")
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
+}
+
+// writeSelectColumns writes the column list from a SELECT statement's
+// selectors. Shared by translateSelect and translateSelectPPL.
+func writeSelectColumns(
+	sb *strings.Builder, columns []parser.Selector, params *[]interface{}, paramIdx *int,
+) error {
+	for i, sel := range columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		if sel.Expr != nil {
+			sqlExpr, p, err := exprToSQL(sel.Expr, paramIdx)
+			if err != nil {
+				return errors.Wrap(err, "translating selector")
+			}
+			sb.WriteString(sqlExpr)
+			if sel.Alias != "" {
+				sb.WriteString(" AS ")
+				sb.WriteString(quoteIdent(sel.Alias))
+			}
+			if p != nil {
+				*params = append(*params, p)
+			}
+		} else if sel.Column == "*" {
+			sb.WriteByte('*')
+		} else {
+			sb.WriteString(quoteIdent(sel.Column))
+			if sel.Alias != "" {
+				sb.WriteString(" AS ")
+				sb.WriteString(quoteIdent(sel.Alias))
+			}
+		}
+	}
 	return nil
 }
 
@@ -976,7 +1179,7 @@ func jsonValueToSQL(v interface{}) string {
 // translateSelectJSON maps CQL SELECT JSON to CRDB SQL that returns results
 // as a JSON string column. For SELECT JSON *, wraps the query in a subquery
 // and applies row_to_json. For specific columns, uses jsonb_build_object.
-func translateSelectJSON(s *parser.SelectStatement) (Result, error) {
+func translateSelectJSON(s *parser.SelectStatement, schema *SchemaInfo) (Result, error) {
 	isSelectStar := len(s.Columns) == 1 &&
 		s.Columns[0].Column == "*" &&
 		s.Columns[0].Expr == nil
@@ -985,7 +1188,7 @@ func translateSelectJSON(s *parser.SelectStatement) (Result, error) {
 		// Build the inner SELECT without JSON.
 		inner := *s
 		inner.JSON = false
-		innerResult, err := translateSelect(&inner)
+		innerResult, err := translateSelect(&inner, schema)
 		if err != nil {
 			return Result{}, err
 		}

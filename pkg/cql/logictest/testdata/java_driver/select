@@ -226,18 +226,21 @@ SELECT * FROM jd_sel WHERE k CONTAINS KEY 1
 at position 29: expected comparison operator, got "CONTAINS"
 
 # ---------------------------------------------------------------
-# PER PARTITION LIMIT (unsupported).
+# PER PARTITION LIMIT — translated to ROW_NUMBER() window function.
+# All 3 rows share partition k=1, so PPL 1 returns 1 row.
 # ---------------------------------------------------------------
 
-error
+query
 SELECT * FROM jd_sel PER PARTITION LIMIT 1
 ----
-PER PARTITION LIMIT is not supported
+k c1 c2 c3 v
+1 1 1 1 a
 
-error
+query
 SELECT * FROM jd_sel PER PARTITION LIMIT 1 LIMIT 1
 ----
-PER PARTITION LIMIT is not supported
+k c1 c2 c3 v
+1 1 1 1 a
 
 # ---------------------------------------------------------------
 # Multiple ORDER BY columns (from SelectOrderingTest).

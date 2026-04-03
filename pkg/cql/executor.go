@@ -54,12 +54,13 @@ type ExecuteResult struct {
 // SQL executor. It parses CQL queries, translates them to SQL, executes
 // them via isql.DB, and encodes the results as CQL wire protocol frames.
 type Executor struct {
-	db isql.DB
+	db     isql.DB
+	schema *translate.SchemaInfo
 }
 
 // NewExecutor creates a new Executor backed by the given isql.DB.
 func NewExecutor(db isql.DB) *Executor {
-	return &Executor{db: db}
+	return &Executor{db: db, schema: translate.NewSchemaInfo()}
 }
 
 // ExecuteQuery parses and executes a CQL query, returning an
@@ -96,7 +97,7 @@ func (e *Executor) ExecuteQuery(
 	}
 
 	// Translate the CQL AST to SQL.
-	result, err := translate.Translate(stmt)
+	result, err := translate.TranslateWithSchema(stmt, e.schema)
 	if err != nil {
 		return errorResult(errCodeInvalid, err.Error())
 	}
@@ -122,7 +123,11 @@ func (e *Executor) ExecuteQuery(
 		if ks == "" {
 			ks = keyspace
 		}
-		return e.executeDDL(ctx, result, override, "CREATED", "TABLE", ks, s.Table)
+		ddlResult := e.executeDDL(ctx, result, override, "CREATED", "TABLE", ks, s.Table)
+		if !ddlResult.IsError {
+			e.recordTableSchema(s, ks)
+		}
+		return ddlResult
 	case *parser.InsertStatement:
 		return e.executeDML(ctx, result, override)
 	case *parser.UpdateStatement:
@@ -177,6 +182,20 @@ func (e *Executor) ExecuteQuery(
 	default:
 		return errorResult(errCodeServerError, "unsupported statement type")
 	}
+}
+
+// recordTableSchema extracts partition key and column metadata from a
+// CREATE TABLE statement and stores it in the executor's schema tracker.
+// This enables PER PARTITION LIMIT translations on subsequent SELECTs.
+func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace string) {
+	cols := make([]string, len(s.Columns))
+	for i, col := range s.Columns {
+		cols[i] = col.Name
+	}
+	e.schema.RecordTable(keyspace, s.Table, translate.TableMeta{
+		PartitionKeys: s.PrimaryKey.PartitionKeys,
+		Columns:       cols,
+	})
 }
 
 // executeDDL executes a DDL statement and returns a SchemaChange
@@ -260,7 +279,7 @@ func (e *Executor) executeBatch(
 ) ExecuteResult {
 	err := e.db.Txn(ctx, func(ctx context.Context, txn isql.Txn) error {
 		for _, innerStmt := range batch.Statements {
-			result, err := translate.Translate(innerStmt)
+			result, err := translate.TranslateWithSchema(innerStmt, e.schema)
 			if err != nil {
 				return err
 			}

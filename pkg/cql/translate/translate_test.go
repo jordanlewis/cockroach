@@ -350,6 +350,84 @@ func TestTranslateSelect(t *testing.T) {
 	}
 }
 
+func TestTranslateSelectPerPartitionLimit(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "users", TableMeta{
+		PartitionKeys: []string{"user_id"},
+		Columns:       []string{"user_id", "name", "email"},
+	})
+	schema.RecordTable("", "events", TableMeta{
+		PartitionKeys: []string{"tenant_id"},
+		Columns:       []string{"tenant_id", "event_time", "data"},
+	})
+	schema.RecordTable("", "metrics", TableMeta{
+		PartitionKeys: []string{"region", "host"},
+		Columns:       []string{"region", "host", "ts", "val"},
+	})
+
+	tests := []struct {
+		name       string
+		cql        string
+		want       string
+		wantParams int
+	}{
+		{
+			name: "select star ppl",
+			cql:  "SELECT * FROM users PER PARTITION LIMIT 1",
+			want: `SELECT "user_id", "name", "email" FROM (SELECT *, row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= 1`,
+		},
+		{
+			name: "select columns ppl",
+			cql:  "SELECT name, email FROM users PER PARTITION LIMIT 5",
+			want: `SELECT "name", "email" FROM (SELECT "name", "email", row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= 5`,
+		},
+		{
+			name: "ppl with where",
+			cql:  "SELECT * FROM events WHERE tenant_id = 'abc' PER PARTITION LIMIT 3",
+			want: `SELECT "tenant_id", "event_time", "data" FROM (SELECT *, row_number() OVER (PARTITION BY "tenant_id") AS "__cql_rn" FROM "events" WHERE "tenant_id" = 'abc') AS "__cql_ppl" WHERE "__cql_rn" <= 3`,
+		},
+		{
+			name: "ppl with limit",
+			cql:  "SELECT * FROM users PER PARTITION LIMIT 2 LIMIT 10",
+			want: `SELECT "user_id", "name", "email" FROM (SELECT *, row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= 2 LIMIT 10`,
+		},
+		{
+			name: "ppl with order by and limit",
+			cql:  "SELECT name FROM users PER PARTITION LIMIT 1 LIMIT 5",
+			want: `SELECT "name" FROM (SELECT "name", row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= 1 LIMIT 5`,
+		},
+		{
+			name: "compound partition key ppl",
+			cql:  "SELECT * FROM metrics PER PARTITION LIMIT 10",
+			want: `SELECT "region", "host", "ts", "val" FROM (SELECT *, row_number() OVER (PARTITION BY "region", "host") AS "__cql_rn" FROM "metrics") AS "__cql_ppl" WHERE "__cql_rn" <= 10`,
+		},
+		{
+			name:       "ppl with bind marker",
+			cql:        "SELECT * FROM users PER PARTITION LIMIT ?",
+			want:       `SELECT "user_id", "name", "email" FROM (SELECT *, row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= $1`,
+			wantParams: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := TranslateWithSchema(stmt, schema)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+			require.Len(t, result.Params, tt.wantParams)
+		})
+	}
+}
+
+func TestTranslateSelectPerPartitionLimitNoSchema(t *testing.T) {
+	stmt, err := parser.Parse("SELECT * FROM users PER PARTITION LIMIT 1")
+	require.NoError(t, err)
+	_, err = Translate(stmt)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PER PARTITION LIMIT requires schema info")
+}
+
 func TestTranslateUpdate(t *testing.T) {
 	tests := []struct {
 		name string

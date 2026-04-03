@@ -2,7 +2,8 @@
 #
 # LIMIT restricts the total number of rows returned. PER PARTITION
 # LIMIT restricts rows per partition. LIMIT is translated to SQL
-# LIMIT; PER PARTITION LIMIT is parsed but not translatable.
+# LIMIT; PER PARTITION LIMIT is translated to a ROW_NUMBER() window
+# function subquery.
 
 exec
 USE defaultdb
@@ -61,16 +62,25 @@ pk val
 2 two
 3 three
 
-# Unsupported: PER PARTITION LIMIT — CRDB does not support
-# per-partition row limits. Would require significant query
-# rewriting (e.g. lateral join with LIMIT per partition group).
-error
+# PER PARTITION LIMIT 1: each partition has exactly 1 row (pk is
+# the partition key and is unique), so all rows are returned.
+query rowsort
 SELECT * FROM sel_lim PER PARTITION LIMIT 1
 ----
-PER PARTITION LIMIT is not supported
+pk val
+1 one
+2 two
+3 three
+4 four
 
-# Unsupported: PER PARTITION LIMIT combined with regular LIMIT.
-error
+# PER PARTITION LIMIT combined with regular LIMIT. PPL 2 keeps
+# all rows (each partition has at most 1), then LIMIT 10 caps
+# the total (only 4 rows exist).
+query rowsort
 SELECT * FROM sel_lim PER PARTITION LIMIT 2 LIMIT 10
 ----
-PER PARTITION LIMIT is not supported
+pk val
+1 one
+2 two
+3 three
+4 four
