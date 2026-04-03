@@ -1404,6 +1404,44 @@ func (s *RaiserrorStmt) String() string {
 	return fmt.Sprintf("RAISERROR %d", s.ErrNum)
 }
 
+// ExecStmt represents EXEC[UTE] <procedure> [args]. [Both] EXEC is supported
+// by both SQL Server and Sybase ASE for calling stored procedures. Known
+// system procedures (sp_help, sp_helpdb) are caught by the catalog layer
+// before parsing; this node handles the remaining cases.
+type ExecStmt struct {
+	Procedure string
+	Args      []ExecArg
+}
+
+func (*ExecStmt) statementNode() {}
+
+func (s *ExecStmt) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "EXEC %s", formatIdent(s.Procedure))
+	for i, arg := range s.Args {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(" ")
+		b.WriteString(arg.String())
+	}
+	return b.String()
+}
+
+// ExecArg represents a single argument to an EXEC statement, either
+// positional or named (@param = value).
+type ExecArg struct {
+	Name  string // empty for positional args, includes @ prefix for named
+	Value Expr
+}
+
+func (a *ExecArg) String() string {
+	if a.Name != "" {
+		return fmt.Sprintf("%s = %s", a.Name, a.Value)
+	}
+	return a.Value.String()
+}
+
 // formatColumnRef formats a column reference that may contain dots
 // (e.g., t.name from UPDATE...FROM). Each part is individually quoted
 // if necessary.

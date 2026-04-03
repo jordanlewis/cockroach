@@ -173,6 +173,9 @@ const (
 	tokenWHILE
 	tokenBREAK
 	tokenCONTINUE
+
+	// EXEC/EXECUTE keyword for stored procedure calls.
+	tokenEXEC
 )
 
 var keywords = map[string]tokenType{
@@ -300,6 +303,10 @@ var keywords = map[string]tokenType{
 	"WHILE":    tokenWHILE,
 	"BREAK":    tokenBREAK,
 	"CONTINUE": tokenCONTINUE,
+
+	// EXEC/EXECUTE keywords.
+	"EXEC":    tokenEXEC,
+	"EXECUTE": tokenEXEC,
 }
 
 // token represents a single lexical token from T-SQL input.
@@ -495,13 +502,22 @@ func (l *lexer) scanNumber() token {
 }
 
 // scanIdent scans an identifier or keyword. T-SQL identifiers can start with
-// a letter, underscore, #, or @.
+// a letter, underscore, #, or @. Also handles the N'...' Unicode string
+// literal prefix: when the identifier is just "N" and immediately followed
+// by a single quote, it is treated as a string literal (the N prefix is
+// consumed but the value is returned as a regular tokenString).
 func (l *lexer) scanIdent() token {
 	start := l.pos
 	for l.pos < len(l.input) && isIdentByte(l.input[l.pos]) {
 		l.pos++
 	}
 	val := l.input[start:l.pos]
+
+	// N'...' Unicode string prefix — treat as a regular string literal.
+	if strings.EqualFold(val, "N") && l.pos < len(l.input) && l.input[l.pos] == '\'' {
+		return l.scanString()
+	}
+
 	upper := strings.ToUpper(val)
 	if typ, ok := keywords[upper]; ok {
 		return token{typ: typ, val: val, pos: start}

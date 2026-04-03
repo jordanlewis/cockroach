@@ -776,6 +776,9 @@ func (e *Executor) execParsedStmt(
 	case *parser.PrintStmt:
 		// PRINT is silently acknowledged (CockroachDB has no print channel).
 		return nil
+	case *parser.ExecStmt:
+		return writeErrorToken(tw, 2812, 1, 16,
+			fmt.Sprintf("unsupported: stored procedure '%s' is not available in CockroachDB TDS", s.Procedure))
 	default:
 		// Regular statement: translate then execute.
 		crdbSQL, err := translate.Statement(stmt)

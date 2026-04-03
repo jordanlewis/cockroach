@@ -81,23 +81,23 @@ SELECT name FROM sysobjects WHERE type = 'U' ORDER BY name
 # sp_help and sp_helpdb are handled by catalog layer.
 # EXEC/EXECUTE prefix is optional for sp_ procs in the catalog regex.
 
-# sp_tables — not recognized by catalog, EXEC not supported by parser.
-exec error=(parse error)
+# sp_tables — not recognized by catalog, parsed but unsupported.
+exec error=(unsupported)
 EXEC sp_tables
 ----
 
 # sp_columns — not recognized by catalog.
-exec error=(parse error)
+exec error=(unsupported)
 EXEC sp_columns 'test_tbl'
 ----
 
 # sp_helptext — not recognized by catalog.
-exec error=(parse error)
+exec error=(unsupported)
 EXEC sp_helptext 'sp_help'
 ----
 
-# === Dynamic SQL (not yet supported by parser) ===
+# === Dynamic SQL (parsed but unsupported) ===
 
-exec error=(parse error)
+exec error=(unsupported)
 EXEC sp_executesql N'SELECT 1'
 ----

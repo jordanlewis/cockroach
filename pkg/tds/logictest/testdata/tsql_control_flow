@@ -106,7 +106,7 @@ EXECUTE sp_help 'users'
 
 # --- EXEC with named parameters ---
 
-exec error=(parse error)
+exec error=(unsupported)
 EXEC sp_getuser @id = 1, @name = 'test'
 ----
 

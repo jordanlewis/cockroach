@@ -1410,3 +1410,25 @@ func TestTranslateComputeQueries(t *testing.T) {
 		"SELECT region, SUM(amount) FROM sales WHERE amount > 0 GROUP BY region ORDER BY region ASC",
 		queries[0])
 }
+
+func TestTranslateExecUnsupported(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "simple", input: "EXEC sp_tables"},
+		{name: "with args", input: "EXEC sp_columns 'test'"},
+		{name: "named params", input: "EXEC sp_test @id = 1"},
+		{name: "n-string", input: "EXEC sp_executesql N'SELECT 1'"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch, err := parser.Parse(tc.input)
+			require.NoError(t, err)
+			_, err = Statement(batch.Stmts[0])
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unsupported")
+		})
+	}
+}

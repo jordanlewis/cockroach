@@ -143,11 +143,11 @@ RAISERROR 18001
 # Error handling: EXEC statement
 # Source: thda/tds stmt_test.go (TestError)
 # In real Sybase, "exec bad" produces error 2812: "Could not
-# find stored procedure 'bad'." Our T-SQL parser does not yet
-# support the EXEC statement.
+# find stored procedure 'bad'." EXEC is parsed but stored
+# procedures are unsupported.
 # ============================================================
 
-exec error=(unexpected token)
+exec error=(unsupported)
 EXEC bad
 ----
 

@@ -176,6 +176,10 @@ func Statement(stmt parser.Statement) (string, error) {
 		return "", nil
 	case *parser.RaiserrorStmt:
 		return "", nil
+	case *parser.ExecStmt:
+		return "", fmt.Errorf(
+			"unsupported: stored procedure '%s' is not available in CockroachDB TDS",
+			s.Procedure)
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}

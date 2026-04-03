@@ -1865,4 +1865,102 @@ func TestParseRaiserrorNoMessage(t *testing.T) {
 		t.Errorf("expected empty message, got %q", rs.Message)
 	}
 }
+func TestParseExec(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		procedure string
+		argCount  int
+	}{
+		{
+			name:      "no args",
+			input:     "EXEC sp_tables",
+			procedure: "sp_tables",
+			argCount:  0,
+		},
+		{
+			name:      "execute keyword",
+			input:     "EXECUTE sp_help",
+			procedure: "sp_help",
+			argCount:  0,
+		},
+		{
+			name:      "positional string arg",
+			input:     "EXEC sp_columns 'test_tbl'",
+			procedure: "sp_columns",
+			argCount:  1,
+		},
+		{
+			name:      "positional n-string arg",
+			input:     "EXEC sp_executesql N'SELECT 1'",
+			procedure: "sp_executesql",
+			argCount:  1,
+		},
+		{
+			name:      "named parameters",
+			input:     "EXEC sp_getuser @id = 1, @name = 'test'",
+			procedure: "sp_getuser",
+			argCount:  2,
+		},
+		{
+			name:      "dotted procedure name",
+			input:     "EXEC dbo.sp_help 'users'",
+			procedure: "dbo.sp_help",
+			argCount:  1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch, err := Parse(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(batch.Stmts) != 1 {
+				t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+			}
+			es, ok := batch.Stmts[0].(*ExecStmt)
+			if !ok {
+				t.Fatalf("expected *ExecStmt, got %T", batch.Stmts[0])
+			}
+			if es.Procedure != tc.procedure {
+				t.Errorf("expected procedure=%q, got %q",
+					tc.procedure, es.Procedure)
+			}
+			if len(es.Args) != tc.argCount {
+				t.Errorf("expected %d args, got %d", tc.argCount, len(es.Args))
+			}
+		})
+	}
+}
+
+func TestParseExecNamedParams(t *testing.T) {
+	batch, err := Parse("EXEC sp_test @x = 1, @y = 'hello'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	es := batch.Stmts[0].(*ExecStmt)
+	if len(es.Args) != 2 {
+		t.Fatalf("expected 2 args, got %d", len(es.Args))
+	}
+	if es.Args[0].Name != "@x" {
+		t.Errorf("expected arg[0].Name=@x, got %q", es.Args[0].Name)
+	}
+	if es.Args[1].Name != "@y" {
+		t.Errorf("expected arg[1].Name=@y, got %q", es.Args[1].Name)
+	}
+}
+
+func TestParseExecString(t *testing.T) {
+	batch, err := Parse("EXEC sp_test @id = 1, @name = 'test'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	es := batch.Stmts[0].(*ExecStmt)
+	got := es.String()
+	if !strings.Contains(got, "EXEC sp_test") {
+		t.Errorf("String() should contain 'EXEC sp_test', got %q", got)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

@@ -23,8 +23,9 @@
 //   - ALTER TABLE, CREATE INDEX, CREATE/DROP VIEW
 //   - BEGIN/COMMIT/ROLLBACK TRAN, SAVE TRAN
 //   - CAST(expr AS type), CONVERT(type, expr), ISNULL, GETDATE
+//   - EXEC[UTE] procedure calls (with positional and named args)
 //   - IDENTITY columns, DEFAULT, computed columns (AS expr)
-//   - Bracket-quoted identifiers [name], @@system variables
+//   - Bracket-quoted identifiers [name], @@system variables, N'...' strings
 //
 // [SQL Server] (Microsoft SQL Server specific):
 //
@@ -136,6 +137,8 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseMerge()
 	case tokenRAISERROR:
 		return p.parseRaiserror()
+	case tokenEXEC:
+		return p.parseExec()
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -1261,6 +1264,68 @@ func (p *parser) parseRaiserror() (*RaiserrorStmt, error) {
 		}
 		stmt.Message = msgTok.val
 	}
+	return stmt, nil
+}
+
+// parseExec parses: EXEC[UTE] <procedure> [<arg1>, <arg2>, ...]
+// Arguments can be positional expressions or named (@param = expr).
+func (p *parser) parseExec() (*ExecStmt, error) {
+	p.lex.next() // consume EXEC/EXECUTE
+
+	// Procedure name: a dotted identifier (e.g., dbo.sp_help or sp_tables).
+	name, err := p.parseTableName()
+	if err != nil {
+		return nil, p.error(fmt.Sprintf(
+			"expected procedure name after EXEC, got %q", p.lex.peek().val))
+	}
+	stmt := &ExecStmt{Procedure: name}
+
+	// Parse optional arguments (comma-separated).
+	for {
+		tok := p.lex.peek()
+		if tok.typ == tokenEOF || tok.typ == tokenSemicolon || tok.typ == tokenGO {
+			break
+		}
+
+		// Check for named parameter: @name = expr
+		if tok.typ == tokenIdent && len(tok.val) > 0 && tok.val[0] == '@' {
+			// Peek ahead to see if this is @name = expr
+			p.lex.next() // consume @name
+			paramName := tok.val
+			if p.lex.peek().typ == tokenEq {
+				p.lex.next() // consume =
+				val, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				stmt.Args = append(stmt.Args, ExecArg{
+					Name:  paramName,
+					Value: val,
+				})
+			} else {
+				// It's a positional @variable argument, not named.
+				// Re-wrap it as an IdentExpr.
+				stmt.Args = append(stmt.Args, ExecArg{
+					Value: &IdentExpr{Parts: []string{paramName}},
+				})
+			}
+		} else {
+			// Positional argument: parse as expression.
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Args = append(stmt.Args, ExecArg{Value: val})
+		}
+
+		// Consume comma separator if present.
+		if p.lex.peek().typ == tokenComma {
+			p.lex.next()
+		} else {
+			break
+		}
+	}
+
 	return stmt, nil
 }
 

@@ -91,7 +91,7 @@ All 7 DML extension features are now fully supported:
   (→ RETURNING) on INSERT/UPDATE/DELETE, UPDATE...FROM...JOIN,
   DELETE...JOIN (→ DELETE USING). See dml_extended tests.
 
-#### EXEC Statement and Stored Procedures (5 errors)
+#### EXEC Statement and Stored Procedures (5 errors — PARSED)
 
 | File | Count | Features |
 |------|-------|----------|
@@ -99,10 +99,11 @@ All 7 DML extension features are now fully supported:
 | system_metadata | 1 | EXEC sp_executesql (dynamic SQL) |
 | tsql_control_flow | 1 | EXEC with named parameters (@id = 1) |
 
-**Implementation note:** EXEC without sp_help/sp_helpdb is not handled
-by the catalog layer and falls through to the parser, which doesn't
-support the EXEC statement. Catalog needs more sp_ entries or parser
-needs general EXEC support.
+**Status:** EXEC/EXECUTE is now parsed correctly (with positional and
+named arguments, N-string prefixes). Stored procedures other than
+sp_help/sp_helpdb are not implemented — EXEC returns "unsupported"
+at execution time. These remain as expected errors (unsupported, not
+parse errors).
 
 #### APPLY Operators (2 errors)
 
@@ -249,9 +250,11 @@ DELETE...JOIN, MERGE) are now implemented.
 ROW_NUMBER(), RANK(), and SUM() OVER with PARTITION BY now parse,
 translate, and execute correctly through the TDS wire protocol.
 
-### Convoy E: EXEC + System Procedures (LOW priority, 5 errors)
+### Convoy E: EXEC + System Procedures (PARSED — 5 unsupported errors)
 
-More sp_ procedures in catalog layer. General EXEC statement support.
+EXEC/EXECUTE now parses correctly with positional args, named params,
+and N-string prefixes. Stored procedures beyond sp_help/sp_helpdb
+return "unsupported" at execution time.
 
 ### Convoy F: Remaining Parser Gaps (LOW priority, 9 errors)
 
