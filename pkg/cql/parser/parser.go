@@ -1281,7 +1281,7 @@ func (p *parser) parseMapLiteral() (map[string]string, error) {
 			return nil, err
 		}
 		vt := p.lex.next()
-		if vt.kind != tokString {
+		if vt.kind != tokString && vt.kind != tokInteger {
 			return nil, fmt.Errorf("at position %d: expected string value in map, got %q", vt.pos, vt.val)
 		}
 		m[kt.val] = vt.val
@@ -1917,7 +1917,7 @@ func (p *parser) parseOperator() (string, error) {
 
 // parseCreateIndex parses:
 //
-//	CREATE [CUSTOM] INDEX [IF NOT EXISTS] <name> ON [<ks>.]<table>
+//	CREATE [CUSTOM] INDEX [IF NOT EXISTS] [<name>] ON [<ks>.]<table>
 //	  (<col> | KEYS(<col>) | VALUES(<col>) | ENTRIES(<col>) | FULL(<col>))
 //	  [USING '<class>']
 func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) {
@@ -1926,11 +1926,15 @@ func (p *parser) parseCreateIndex(isCustom bool) (*CreateIndexStatement, error) 
 
 	stmt.IfNotExists = p.tryIfNotExists()
 
-	name, err := p.expectIdent()
-	if err != nil {
-		return nil, err
+	// The index name is optional. If the next token is the ON keyword,
+	// there is no explicit name.
+	if !isKeyword(p.lex.peek(), "ON") {
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.IndexName = name
 	}
-	stmt.IndexName = name
 
 	if err := p.expectKeyword("ON"); err != nil {
 		return nil, err

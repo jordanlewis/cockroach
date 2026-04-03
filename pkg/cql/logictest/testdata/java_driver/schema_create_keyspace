@@ -49,13 +49,12 @@ CREATE KEYSPACE IF NOT EXISTS jd_ks4 WITH replication={'class':'SimpleStrategy',
 at position 110: expected durable_writes, got "awesome_feature"
 
 # ---------------------------------------------------------------
-# Java driver integer form for map values (parser error).
+# Java driver integer form for map values (now accepted).
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE KEYSPACE IF NOT EXISTS jd_ks_intval WITH replication={'class':'SimpleStrategy','replication_factor':5}
 ----
-at position 107: expected string value in map, got "5"
 
 # ---------------------------------------------------------------
 # Duplicate CREATE KEYSPACE without IF NOT EXISTS (should error).
@@ -80,5 +79,9 @@ DROP KEYSPACE IF EXISTS jd_ks2
 
 exec
 DROP KEYSPACE IF EXISTS jd_ks3
+----
+
+exec
+DROP KEYSPACE IF EXISTS jd_ks_intval
 ----
 

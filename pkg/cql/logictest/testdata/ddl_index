@@ -61,6 +61,11 @@ exec
 CREATE INDEX IF NOT EXISTS lt_idx_users_email_idx ON lt_idx_users (email)
 ----
 
+# Unnamed index (auto-generated name by CRDB).
+exec
+CREATE INDEX ON lt_idx_users (email)
+----
+
 # Index with a qualified table name (keyspace.table).
 exec
 CREATE INDEX lt_idx_qual_idx ON defaultdb.lt_idx_users (email)

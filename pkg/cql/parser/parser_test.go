@@ -311,6 +311,43 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestParseCreateIndexUnnamed(t *testing.T) {
+	stmt, err := Parse("CREATE INDEX ON users (email)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ci, ok := stmt.(*CreateIndexStatement)
+	if !ok {
+		t.Fatalf("expected *CreateIndexStatement, got %T", stmt)
+	}
+	if ci.IndexName != "" {
+		t.Errorf("IndexName = %q, want empty", ci.IndexName)
+	}
+	if ci.Table != "users" {
+		t.Errorf("Table = %q, want %q", ci.Table, "users")
+	}
+	if len(ci.Columns) != 1 || ci.Columns[0].Name != "email" {
+		t.Errorf("Columns = %+v, want [{Name: email}]", ci.Columns)
+	}
+}
+
+func TestParseCreateIndexUnnamedIfNotExists(t *testing.T) {
+	stmt, err := Parse("CREATE INDEX IF NOT EXISTS ON users (email)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ci := stmt.(*CreateIndexStatement)
+	if ci.IndexName != "" {
+		t.Errorf("IndexName = %q, want empty", ci.IndexName)
+	}
+	if !ci.IfNotExists {
+		t.Errorf("IfNotExists = false, want true")
+	}
+	if ci.Table != "users" {
+		t.Errorf("Table = %q, want %q", ci.Table, "users")
+	}
+}
+
 func TestParseBoolAndNullLiterals(t *testing.T) {
 	input := `INSERT INTO t (a, b, c) VALUES (true, false, null)`
 	stmt, err := Parse(input)

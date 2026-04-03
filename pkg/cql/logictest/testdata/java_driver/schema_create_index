@@ -17,13 +17,12 @@ CREATE TABLE IF NOT EXISTS jd_idx (k int PRIMARY KEY, y text, m map<text, int>, 
 ----
 
 # ---------------------------------------------------------------
-# Unnamed CREATE INDEX (unsupported — parser requires index name).
+# Unnamed CREATE INDEX (auto-generated name by CRDB).
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE INDEX ON jd_idx (y)
 ----
-at position 16: expected ON, got "jd_idx"
 
 # ---------------------------------------------------------------
 # Named CREATE INDEX.

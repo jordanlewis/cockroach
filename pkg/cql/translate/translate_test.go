@@ -129,6 +129,16 @@ func TestTranslateCreateIndex(t *testing.T) {
 			want: `CREATE INDEX "idx_q" ON "ks1"."users" ("email")`,
 		},
 		{
+			name: "unnamed index",
+			cql:  "CREATE INDEX ON users (email)",
+			want: `CREATE INDEX ON "users" ("email")`,
+		},
+		{
+			name: "unnamed index if not exists",
+			cql:  "CREATE INDEX IF NOT EXISTS ON users (email)",
+			want: `CREATE INDEX IF NOT EXISTS ON "users" ("email")`,
+		},
+		{
 			name:    "collection function KEYS rejected",
 			cql:     "CREATE INDEX idx_k ON t (KEYS(col))",
 			wantErr: "collection index function KEYS() is not supported",

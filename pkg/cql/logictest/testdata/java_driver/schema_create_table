@@ -108,11 +108,10 @@ exec
 CREATE TABLE IF NOT EXISTS jd_ct_deflate_opts (k int PRIMARY KEY, v text) WITH compression={'class':'DeflateCompressor','chunk_length_in_kb':'4096'}
 ----
 
-# Java driver integer form errors.
-error
+# Java driver integer form (now accepted).
+exec
 CREATE TABLE IF NOT EXISTS jd_ct_int_err (k int PRIMARY KEY, v text) WITH compression={'class':'LZ4Compressor','chunk_length_in_kb':1024}
 ----
-at position 132: expected string value in map, got "1024"
 
 # ---------------------------------------------------------------
 # CREATE TABLE with caching options.
