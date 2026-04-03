@@ -668,7 +668,7 @@ func TestTranslateFunctionMappings(t *testing.T) {
 		{
 			name:     "DATENAME",
 			input:    "SELECT DATENAME(month, '2026-06-15')",
-			expected: "SELECT to_char('2026-06-15'::TIMESTAMPTZ, 'Month')",
+			expected: "SELECT btrim(to_char('2026-06-15'::TIMESTAMPTZ, 'Month'))",
 		},
 		{
 			name:     "YEAR",

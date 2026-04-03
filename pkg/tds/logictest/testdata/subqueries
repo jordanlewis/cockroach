@@ -25,54 +25,74 @@ INSERT INTO sq_emp (id, name, dept, salary) VALUES (4, 'dave', 'sales', 110)
 
 # --- Scalar subquery in SELECT ---
 
-query error=(parse error)
+query
 SELECT name, (SELECT MAX(salary) FROM sq_emp) AS max_sal FROM sq_emp WHERE id = 1
 ----
+alice  120
 
 # --- Subquery in WHERE with IN ---
 
-query error=(parse error)
-SELECT name FROM sq_emp WHERE dept IN (SELECT DISTINCT dept FROM sq_emp WHERE salary > 100)
+query
+SELECT name FROM sq_emp WHERE dept IN (SELECT DISTINCT dept FROM sq_emp WHERE salary > 100) ORDER BY name
 ----
+alice
+bob
+carol
+dave
 
 # --- Correlated subquery ---
 
-query error=(parse error)
-SELECT name, salary FROM sq_emp e WHERE salary = (SELECT MAX(salary) FROM sq_emp WHERE dept = e.dept)
+query
+SELECT name, salary FROM sq_emp e WHERE salary = (SELECT MAX(salary) FROM sq_emp WHERE dept = e.dept) ORDER BY name
 ----
+bob  120
+dave  110
 
 # --- EXISTS subquery ---
 
-query error=(parse error)
-SELECT name FROM sq_emp e WHERE EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary)
+query
+SELECT name FROM sq_emp e WHERE EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary) ORDER BY name
 ----
+alice
+carol
 
 # --- NOT EXISTS subquery ---
 
-query error=(parse error)
-SELECT name FROM sq_emp e WHERE NOT EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary)
+query
+SELECT name FROM sq_emp e WHERE NOT EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary) ORDER BY name
 ----
+bob
+dave
 
 # --- Derived table (subquery in FROM) ---
 
-query error=(parse error)
+query
 SELECT d.dept, d.avg_salary FROM (SELECT dept, AVG(salary) AS avg_salary FROM sq_emp GROUP BY dept) d ORDER BY d.dept
 ----
+eng  110
+sales  100
 
 # --- Subquery with comparison operators ---
 
-query error=(parse error)
-SELECT name FROM sq_emp WHERE salary > (SELECT AVG(salary) FROM sq_emp)
+query
+SELECT name FROM sq_emp WHERE salary > (SELECT AVG(salary) FROM sq_emp) ORDER BY name
 ----
+bob
+dave
 
 # --- ANY / SOME ---
 
-query error=(parse error)
-SELECT name FROM sq_emp WHERE salary > ANY (SELECT salary FROM sq_emp WHERE dept = 'sales')
+query
+SELECT name FROM sq_emp WHERE salary > ANY (SELECT salary FROM sq_emp WHERE dept = 'sales') ORDER BY name
 ----
+alice
+bob
+dave
 
 # --- ALL ---
 
-query error=(parse error)
-SELECT name FROM sq_emp WHERE salary >= ALL (SELECT salary FROM sq_emp WHERE dept = 'sales')
+query
+SELECT name FROM sq_emp WHERE salary >= ALL (SELECT salary FROM sq_emp WHERE dept = 'sales') ORDER BY name
 ----
+bob
+dave

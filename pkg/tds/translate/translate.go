@@ -1060,7 +1060,7 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 			part := identName(e.Args[0])
 			date := translateExpr(e.Args[1])
 			format := mapDatenamePart(part)
-			return fmt.Sprintf("to_char(%s::TIMESTAMPTZ, '%s')", date, format)
+			return fmt.Sprintf("btrim(to_char(%s::TIMESTAMPTZ, '%s'))", date, format)
 		}
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("DATENAME(%s)", strings.Join(args, ", "))

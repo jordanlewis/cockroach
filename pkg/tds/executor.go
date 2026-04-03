@@ -242,6 +242,12 @@ func (e *Executor) executeStatement(
 		}
 		return e.executeSelect(ctx, crdbSQL, tw)
 
+	case *parser.CompoundSelectStmt:
+		return e.executeSelect(ctx, crdbSQL, tw)
+
+	case *parser.WithStmt:
+		return e.executeSelect(ctx, crdbSQL, tw)
+
 	case *parser.BeginTranStmt:
 		return e.executeBeginTran(ctx, tw)
 

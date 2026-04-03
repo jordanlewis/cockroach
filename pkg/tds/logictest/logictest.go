@@ -443,6 +443,20 @@ func decodeTypedValue(b []byte, ti tdswire.TypeInfo) string {
 	// DECIMAL/NUMERIC — sign byte + LE unscaled integer.
 	case tdswire.TypeDecimalN, tdswire.TypeNumericN:
 		return decodeDecimal(b, ti)
+
+	// DATETIME — 4-byte day count since 1900-01-01 + 4-byte time in
+	// 1/300s units. DateTimeN uses the same encoding at 8 bytes.
+	case tdswire.TypeDateTime:
+		return decodeDateTime(b)
+	case tdswire.TypeDateTimeN:
+		if len(b) == 4 {
+			return decodeSmallDateTime(b)
+		}
+		return decodeDateTime(b)
+
+	// DATE — 3-byte unsigned LE day count since 0001-01-01.
+	case tdswire.TypeDateN:
+		return decodeDate(b)
 	}
 
 	// Fallback: try UTF-16LE heuristic, then raw bytes.
@@ -508,6 +522,47 @@ func decodeDecimal(b []byte, ti tdswire.TypeInfo) string {
 		return sign + intPart
 	}
 	return sign + intPart + "." + fracPart
+}
+
+// tdsEpoch is the TDS datetime epoch: January 1, 1900.
+var tdsEpoch = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// decodeDateTime decodes an 8-byte TDS DATETIME value: 4-byte day count
+// since 1900-01-01, then 4-byte time-of-day in 1/300-second units.
+func decodeDateTime(b []byte) string {
+	if len(b) < 8 {
+		return ""
+	}
+	days := int32(binary.LittleEndian.Uint32(b[:4]))
+	threeHundredths := int32(binary.LittleEndian.Uint32(b[4:8]))
+	t := tdsEpoch.AddDate(0, 0, int(days))
+	t = t.Add(time.Duration(threeHundredths) * time.Second / 300)
+	return t.Format("2006-01-02 15:04:05-07")
+}
+
+// decodeSmallDateTime decodes a 4-byte TDS SMALLDATETIME: 2-byte day
+// count since 1900-01-01, then 2-byte minutes since midnight.
+func decodeSmallDateTime(b []byte) string {
+	if len(b) < 4 {
+		return ""
+	}
+	days := binary.LittleEndian.Uint16(b[:2])
+	minutes := binary.LittleEndian.Uint16(b[2:4])
+	t := tdsEpoch.AddDate(0, 0, int(days))
+	t = t.Add(time.Duration(minutes) * time.Minute)
+	return t.Format("2006-01-02 15:04:05-07")
+}
+
+// decodeDate decodes a 3-byte TDS DATE value: unsigned LE day count
+// since 0001-01-01.
+func decodeDate(b []byte) string {
+	if len(b) < 3 {
+		return ""
+	}
+	days := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16
+	epoch := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+	t := epoch.AddDate(0, 0, int(days))
+	return t.Format("2006-01-02")
 }
 
 func decodeUTF16LEOrRaw(b []byte) string {

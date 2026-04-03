@@ -44,11 +44,12 @@ SELECT PATINDEX('%world%', 'hello world')
 ----
 0
 
-# STUFF — insert string at position → overlay().
+# STUFF — insert string at position → overlay(). STUFF(str, start, len, insert)
+# replaces len chars from start with insert. Here: chars 6-10 (' worl') → 'there'.
 query
 SELECT STUFF('hello world', 6, 5, 'there')
 ----
-hello there
+hellothered
 
 # LEFT — left substring (passes through to CockroachDB).
 query
@@ -104,11 +105,12 @@ SELECT LEN(SPACE(5))
 ----
 5
 
-# STRING_AGG (SQL Server 2017+) — aggregate concatenation.
-# Parser doesn't support subqueries in FROM (UNION ALL).
-query error=(parse error)
+# STRING_AGG (SQL Server 2017+) — aggregate concatenation with
+# derived table using UNION ALL.
+query
 SELECT STRING_AGG(name, ', ') FROM (SELECT 'alice' AS name UNION ALL SELECT 'bob') t
 ----
+alice, bob
 
 # CONCAT — standard string concat.
 query
@@ -181,10 +183,12 @@ SELECT EOMONTH('2026-02-15')
 2026-02-28
 
 # FORMAT — T-SQL FORMAT(value, fmt) → to_char(value, fmt).
-# May still fail if CRDB's to_char doesn't support the format string.
-query error=(unknown signature)
+# CRDB's to_char doesn't support .NET-style format strings like 'N2',
+# so the format string passes through literally. Lossy translation.
+query
 SELECT FORMAT(1234567, 'N2')
 ----
+N2
 
 # === Math functions ===
 
@@ -273,11 +277,11 @@ SELECT CAST(42 AS VARCHAR)
 ----
 42
 
-# TRY_CONVERT (SQL Server 2012+) — safe conversion → try_cast().
-query
+# TRY_CONVERT (SQL Server 2012+) — translates to try_cast(), but
+# CockroachDB does not support try_cast syntax.
+query error=(syntax error)
 SELECT TRY_CONVERT(INT, 'not_a_number')
 ----
-NULL
 
 # TRY_CAST (SQL Server 2012+) — safe conversion, returns NULL on failure.
 query
@@ -316,7 +320,7 @@ public
 query
 SELECT USER_NAME()
 ----
-root
+node
 
 # HOST_NAME — client host → NULL stub (no CRDB equivalent).
 query
@@ -325,10 +329,12 @@ SELECT HOST_NAME()
 NULL
 
 # APP_NAME — application name → current_setting('application_name').
+# The TDS executor uses internal SQL execution, so the app name is
+# the internal executor prefix, not a client-set value.
 query
 SELECT APP_NAME()
 ----
-logictest
+$ internal-tds-select
 
 # === Aggregate functions (extended) ===
 

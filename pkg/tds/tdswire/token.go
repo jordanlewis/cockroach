@@ -77,6 +77,7 @@ const (
 	TypeMoneyN       byte = 0x6E // nullable money
 	TypeGuid         byte = 0x24 // uniqueidentifier
 	TypeDateTimeOffN byte = 0x2B // datetimeoffset
+	TypeDateN        byte = 0x28 // date
 )
 
 // fixedTypeLen returns the byte length of a fixed-length type, or 0 if
@@ -119,7 +120,7 @@ func isPrecisionScaleType(typeID byte) bool {
 func isByteLenType(typeID byte) bool {
 	switch typeID {
 	case TypeIntN, TypeBitN, TypeFloatN, TypeDateTimeN,
-		TypeMoneyN, TypeGuid, TypeDateTimeOffN:
+		TypeMoneyN, TypeGuid, TypeDateTimeOffN, TypeDateN:
 		return true
 	default:
 		return false
