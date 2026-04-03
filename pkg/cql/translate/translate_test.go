@@ -502,12 +502,12 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "toTimestamp",
 			cql:  "SELECT toTimestamp(uid) FROM t",
-			want: `SELECT CAST("uid" AS TIMESTAMPTZ) FROM "t"`,
+			want: `SELECT now()::TIMESTAMPTZ FROM "t"`,
 		},
 		{
 			name: "toDate",
 			cql:  "SELECT toDate(ts) FROM t",
-			want: `SELECT CAST("ts" AS DATE) FROM "t"`,
+			want: `SELECT CAST(CAST("ts" AS DATE) AS TIMESTAMPTZ) FROM "t"`,
 		},
 		{
 			name: "toUnixTimestamp",
@@ -517,12 +517,12 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "dateOf",
 			cql:  "SELECT dateOf(uid) FROM t",
-			want: `SELECT CAST("uid" AS TIMESTAMPTZ) FROM "t"`,
+			want: `SELECT now()::TIMESTAMPTZ FROM "t"`,
 		},
 		{
 			name: "unixTimestampOf",
 			cql:  "SELECT unixTimestampOf(uid) FROM t",
-			want: `SELECT CAST(extract(epoch FROM "uid") AS INT8) FROM "t"`,
+			want: `SELECT CAST(extract(epoch FROM now()) AS INT8) FROM "t"`,
 		},
 		{
 			name: "minTimeuuid",
@@ -557,7 +557,7 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "textAsBlob",
 			cql:  "SELECT textAsBlob(val) FROM t",
-			want: `SELECT CAST("val" AS BYTES) FROM "t"`,
+			want: `SELECT CAST(CAST("val" AS STRING) AS BYTES) FROM "t"`,
 		},
 		{
 			name: "blobAsText",
@@ -567,7 +567,7 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "intAsBlob",
 			cql:  "SELECT intAsBlob(pk) FROM t",
-			want: `SELECT CAST("pk" AS BYTES) FROM "t"`,
+			want: `SELECT CAST(CAST("pk" AS STRING) AS BYTES) FROM "t"`,
 		},
 		{
 			name: "blobAsInt",

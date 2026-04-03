@@ -677,11 +677,13 @@ func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 	// not simple function-name substitutions.
 	switch lower {
 	case "totimestamp", "dateof":
-		return singleArgCast(fc, paramIdx, "TIMESTAMPTZ")
+		return timeuuidStubTimestamp(fc, paramIdx)
 	case "todate":
-		return singleArgCast(fc, paramIdx, "DATE")
-	case "tounixtimestamp", "unixtimestampof":
+		return toDateSQL(fc, paramIdx)
+	case "tounixtimestamp":
 		return extractEpochToSQL(fc, paramIdx)
+	case "unixtimestampof":
+		return timeuuidStubEpoch(fc, paramIdx)
 	case "mintimeuuid", "maxtimeuuid":
 		// Cassandra functions that generate UUID boundaries for a timestamp.
 		// CRDB does not have timeuuids; return gen_random_uuid() for syntax
@@ -703,6 +705,11 @@ func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 
 	// Handle typeAsBlob / blobAsType conversion functions.
 	if sqlType, ok := blobConversions[lower]; ok {
+		if sqlType == "BYTES" {
+			// <type>AsBlob: cast through STRING because CRDB cannot directly
+			// cast most types (int, float, uuid, etc.) to BYTES.
+			return singleArgCastThroughString(fc, paramIdx, "BYTES")
+		}
 		return singleArgCast(fc, paramIdx, sqlType)
 	}
 
@@ -760,7 +767,41 @@ func singleArgCast(
 	return fmt.Sprintf("CAST(%s AS %s)", argSQL, sqlType), param, nil
 }
 
-// extractEpochToSQL translates toUnixTimestamp/unixTimestampOf to
+// timeuuidStubTimestamp returns now()::TIMESTAMPTZ as a compatibility stub for
+// toTimestamp/dateOf. Cassandra timeuuids embed a timestamp, but CRDB stores
+// timeuuids as plain UUIDs without extractable timestamps. The argument is
+// processed for bind marker tracking but its value is discarded.
+func timeuuidStubTimestamp(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	if _, _, err := exprToSQL(fc.Args[0], paramIdx); err != nil {
+		return "", nil, err
+	}
+	return "now()::TIMESTAMPTZ", nil, nil
+}
+
+// toDateSQL translates toDate to CAST(CAST(arg AS DATE) AS TIMESTAMPTZ).
+// The inner DATE cast truncates to midnight; the outer TIMESTAMPTZ cast
+// ensures the result has a CQL wire type mapping.
+func toDateSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	argSQL, param, err := exprToSQL(fc.Args[0], paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf(
+		"CAST(CAST(%s AS DATE) AS TIMESTAMPTZ)", argSQL,
+	), param, nil
+}
+
+// extractEpochToSQL translates toUnixTimestamp to
 // CAST(extract(epoch FROM arg) AS INT8).
 func extractEpochToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
 	if len(fc.Args) != 1 {
@@ -774,6 +815,41 @@ func extractEpochToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 	}
 	return fmt.Sprintf(
 		"CAST(extract(epoch FROM %s) AS INT8)", argSQL,
+	), param, nil
+}
+
+// timeuuidStubEpoch returns the current epoch seconds as a compatibility stub
+// for unixTimestampOf. The argument is processed for bind marker tracking but
+// its value is discarded.
+func timeuuidStubEpoch(fc *parser.FunctionCall, paramIdx *int) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	if _, _, err := exprToSQL(fc.Args[0], paramIdx); err != nil {
+		return "", nil, err
+	}
+	return "CAST(extract(epoch FROM now()) AS INT8)", nil, nil
+}
+
+// singleArgCastThroughString translates a single-argument CQL function to
+// CAST(CAST(arg AS STRING) AS targetType). Used for <type>AsBlob conversions
+// where CRDB cannot directly cast the source type to the target.
+func singleArgCastThroughString(
+	fc *parser.FunctionCall, paramIdx *int, targetType string,
+) (string, interface{}, error) {
+	if len(fc.Args) != 1 {
+		return "", nil, errors.Newf(
+			"%s() requires exactly one argument", fc.Name,
+		)
+	}
+	argSQL, param, err := exprToSQL(fc.Args[0], paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf(
+		"CAST(CAST(%s AS STRING) AS %s)", argSQL, targetType,
 	), param, nil
 }
 

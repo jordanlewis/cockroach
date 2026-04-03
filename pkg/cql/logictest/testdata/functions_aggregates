@@ -38,17 +38,15 @@ exec
 SELECT COUNT(val) FROM agg_t
 ----
 
-# SUM(column) — CRDB returns DECIMAL, no CQL type mapping yet.
-error
+# SUM(column) — CRDB returns DECIMAL, mapped to CQL decimal type.
+exec
 SELECT SUM(val) FROM agg_t
 ----
-mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
-# AVG(column) — CRDB returns DECIMAL, no CQL type mapping yet.
-error
+# AVG(column) — CRDB returns DECIMAL, mapped to CQL decimal type.
+exec
 SELECT AVG(val) FROM agg_t
 ----
-mapping column "avg": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # MIN(column).
 exec
@@ -60,22 +58,20 @@ exec
 SELECT MAX(val) FROM agg_t
 ----
 
-# Multiple aggregates — SUM returns DECIMAL, fails type mapping.
-error
+# Multiple aggregates — SUM returns DECIMAL, mapped to CQL decimal.
+exec
 SELECT COUNT(*), SUM(val) FROM agg_t
 ----
-mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # Aggregate with alias (AS).
 exec
 SELECT COUNT(*) AS total FROM agg_t
 ----
 
-# Aggregate with WHERE clause — SUM returns DECIMAL.
-error
+# Aggregate with WHERE clause — SUM returns DECIMAL, mapped to CQL decimal.
+exec
 SELECT SUM(val) FROM agg_t WHERE pk = 1
 ----
-mapping column "sum": no CQL type mapping for CRDB type DECIMAL (family 3)
 
 # Aggregate on text column.
 exec

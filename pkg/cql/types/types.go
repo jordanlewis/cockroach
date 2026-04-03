@@ -126,6 +126,10 @@ func (t CQLType) CRDBType() (*types.T, error) {
 		return types.Bytes, nil
 	case CQLInet:
 		return types.INet, nil
+	case CQLDecimal:
+		return types.Decimal, nil
+	case CQLVarint:
+		return types.Int, nil
 	default:
 		return nil, errors.Newf("unsupported CQL type: %s (0x%04x)", t, uint16(t))
 	}
@@ -164,6 +168,10 @@ func CQLTypeFromCRDB(t *types.T) (CQLType, error) {
 		// JSONB columns are used to store CQL collection types (list,
 		// set, map). On the wire they are encoded as varchar (JSON text).
 		return CQLVarchar, nil
+	case types.DecimalFamily:
+		return CQLDecimal, nil
+	case types.DateFamily:
+		return CQLTimestamp, nil
 	default:
 		return 0, errors.Newf(
 			"no CQL type mapping for CRDB type %s (family %d)", t.SQLString(), t.Family(),

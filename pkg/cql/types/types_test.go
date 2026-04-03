@@ -94,6 +94,9 @@ func TestCQLTypeFromCRDB(t *testing.T) {
 		{types.Timestamp, CQLTimestamp},
 		{types.Uuid, CQLUuid},
 		{types.INet, CQLInet},
+		{types.Jsonb, CQLVarchar},
+		{types.Decimal, CQLDecimal},
+		{types.Date, CQLTimestamp},
 	}
 	for _, tt := range tests {
 		got, err := CQLTypeFromCRDB(tt.crdb)
@@ -102,7 +105,7 @@ func TestCQLTypeFromCRDB(t *testing.T) {
 	}
 
 	// Unsupported CRDB type.
-	_, err := CQLTypeFromCRDB(types.Jsonb)
+	_, err := CQLTypeFromCRDB(types.Oid)
 	require.Error(t, err)
 }
 

@@ -8,6 +8,7 @@ package types
 import (
 	"encoding/binary"
 	"math"
+	"math/big"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/util/ipaddr"
@@ -46,6 +47,8 @@ func EncodeDatum(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
 		return encodeBlob(d)
 	case CQLInet:
 		return encodeInet(d)
+	case CQLDecimal:
+		return encodeDecimal(d)
 	default:
 		return nil, false, errors.Newf("unsupported CQL type for encoding: %s", cqlType)
 	}
@@ -174,6 +177,89 @@ func encodeInet(d tree.Datum) ([]byte, bool, error) {
 	var buf [16]byte
 	binary.BigEndian.PutUint64(buf[:8], ip.Addr.Hi)
 	binary.BigEndian.PutUint64(buf[8:], ip.Addr.Lo)
+	return buf[:], false, nil
+}
+
+// encodeDecimal encodes a CRDB decimal as CQL decimal: 4-byte big-endian scale
+// followed by the unscaled value as a variable-length two's complement
+// big-endian integer (matching the CQL native protocol varint encoding).
+func encodeDecimal(d tree.Datum) ([]byte, bool, error) {
+	dec, ok := d.(*tree.DDecimal)
+	if !ok {
+		return nil, false, errors.Newf("expected DDecimal, got %T", d)
+	}
+
+	// CQL decimal wire format: [int] scale + [varint] unscaled_value.
+	// apd.Decimal: value = (-1)^Negative * Coeff * 10^Exponent.
+	var scale int32
+	unscaled := new(big.Int)
+	coeff := dec.Decimal.Coeff.MathBigInt()
+
+	if dec.Decimal.Exponent >= 0 {
+		// No fractional part (e.g. 1200 = 12 * 10^2): scale=0, unscaled=coeff*10^exp.
+		scale = 0
+		exp := new(big.Int).Exp(
+			big.NewInt(10), big.NewInt(int64(dec.Decimal.Exponent)), nil,
+		)
+		unscaled.Mul(coeff, exp)
+	} else {
+		// Fractional (e.g. 123.45 = 12345 * 10^-2): scale=2, unscaled=12345.
+		scale = -dec.Decimal.Exponent
+		unscaled.Set(coeff)
+	}
+
+	if dec.Decimal.Negative {
+		unscaled.Neg(unscaled)
+	}
+
+	varintBytes := bigIntToTwosComplement(unscaled)
+	buf := make([]byte, 4+len(varintBytes))
+	binary.BigEndian.PutUint32(buf[:4], uint32(scale))
+	copy(buf[4:], varintBytes)
+	return buf, false, nil
+}
+
+// bigIntToTwosComplement converts a big.Int to its two's complement big-endian
+// byte representation, matching Java's BigInteger.toByteArray().
+func bigIntToTwosComplement(n *big.Int) []byte {
+	if n.Sign() == 0 {
+		return []byte{0}
+	}
+	if n.Sign() > 0 {
+		b := n.Bytes()
+		if b[0]&0x80 != 0 {
+			// High bit set — prepend a zero byte so it reads as positive.
+			return append([]byte{0}, b...)
+		}
+		return b
+	}
+	// Negative: two's complement is the bitwise complement of (|n| - 1).
+	abs := new(big.Int).Neg(n)
+	abs.Sub(abs, big.NewInt(1))
+	b := abs.Bytes()
+	for i := range b {
+		b[i] = ^b[i]
+	}
+	if len(b) == 0 || b[0]&0x80 == 0 {
+		return append([]byte{0xff}, b...)
+	}
+	return b
+}
+
+// encodeDate encodes a CRDB date as CQL timestamp: 8-byte big-endian
+// milliseconds since Unix epoch (midnight of that date).
+func encodeDate(d tree.Datum) ([]byte, bool, error) {
+	date, ok := d.(*tree.DDate)
+	if !ok {
+		return nil, false, errors.Newf("expected DDate, got %T", d)
+	}
+	t, err := date.ToTime()
+	if err != nil {
+		return nil, false, errors.Wrap(err, "converting DDate to time")
+	}
+	millis := t.UnixMilli()
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(millis))
 	return buf[:], false, nil
 }
 
