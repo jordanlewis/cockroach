@@ -848,8 +848,9 @@ func translateUpdate(s *parser.UpdateStatement, schema *SchemaInfo) (Result, err
 			sb.WriteString(", ")
 		}
 		if a.Subscript != nil {
-			// Map subscript assignment: col['key'] = val →
-			// "col" = jsonb_set("col", ARRAY[key], to_jsonb(val))
+			// Subscript assignment: col['key'] = val or col[0] = val →
+			// "col" = jsonb_set("col", ARRAY[key::TEXT], to_jsonb(val))
+			// jsonb_set requires a text[] path, so we cast the index.
 			keySQL, _, err := exprToSQL(a.Subscript, &paramIdx)
 			if err != nil {
 				return Result{}, errors.Wrap(err, "translating subscript key")
@@ -860,7 +861,7 @@ func translateUpdate(s *parser.UpdateStatement, schema *SchemaInfo) (Result, err
 			}
 			col := quoteIdent(a.Column)
 			sb.WriteString(fmt.Sprintf(
-				"%s = jsonb_set(%s, ARRAY[%s], to_jsonb(%s))",
+				"%s = jsonb_set(%s, ARRAY[CAST(%s AS TEXT)], to_jsonb(%s))",
 				col, col, keySQL, valSQL,
 			))
 			if param != nil {
@@ -1065,16 +1066,30 @@ func translateDelete(s *parser.DeleteStatement) (Result, error) {
 	paramIdx := 1
 
 	if len(s.Columns) > 0 {
-		// Column-level DELETE → UPDATE ... SET col = NULL.
+		// Column-level DELETE → UPDATE ... SET col = NULL (or JSONB key removal
+		// for subscripted targets like col['key']).
 		sb.WriteString("UPDATE ")
 		sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
 		sb.WriteString(" SET ")
-		for i, col := range s.Columns {
+		for i, target := range s.Columns {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			sb.WriteString(quoteIdent(col))
-			sb.WriteString(" = NULL")
+			col := quoteIdent(target.Column)
+			if target.Subscript != nil {
+				// DELETE col['key'] → col = col - 'key' (JSONB key/element removal).
+				keySQL, param, err := exprToSQL(target.Subscript, &paramIdx)
+				if err != nil {
+					return Result{}, errors.Wrap(err, "translating DELETE subscript")
+				}
+				sb.WriteString(fmt.Sprintf("%s = %s - %s", col, col, keySQL))
+				if param != nil {
+					params = append(params, param)
+				}
+			} else {
+				sb.WriteString(col)
+				sb.WriteString(" = NULL")
+			}
 		}
 	} else {
 		sb.WriteString("DELETE FROM ")
@@ -1208,6 +1223,13 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		return functionCallToSQL(v, paramIdx)
 	case *parser.CastExpr:
 		return castExprToSQL(v, paramIdx)
+	case *parser.SubscriptExpr:
+		// CQL col[index] → CRDB "col"->index for JSONB element access.
+		idxSQL, param, err := exprToSQL(v.Index, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("%s->%s", quoteIdent(v.Column), idxSQL), param, nil
 	case *parser.FieldAccessExpr:
 		// CQL col.field → CRDB ("col")."field" for composite type field access.
 		return fmt.Sprintf("(%s).%s", quoteIdent(v.Column), quoteIdent(v.Field)), nil, nil
@@ -2102,12 +2124,20 @@ func collectionBinaryToSQL(
 		}
 		return fmt.Sprintf("%s || %s", col, valSQL), param, nil
 	}
-	// op == "-": removal. For SetLiteral values, chain individual text
-	// removals (works for map key removal). For other types, use the
-	// generic JSONB subtraction.
-	if set, ok := value.(*parser.SetLiteral); ok && len(set.Values) > 0 {
+	// op == "-": removal. For SetLiteral and ListLiteral values, chain
+	// individual element removals. For sets this removes map keys; for
+	// lists this removes matching values from the JSON array. Other types
+	// fall through to generic JSONB subtraction.
+	var elems []parser.Expr
+	switch v := value.(type) {
+	case *parser.SetLiteral:
+		elems = v.Values
+	case *parser.ListLiteral:
+		elems = v.Values
+	}
+	if len(elems) > 0 {
 		result := col
-		for _, elem := range set.Values {
+		for _, elem := range elems {
 			elemSQL, _, err := exprToSQL(elem, paramIdx)
 			if err != nil {
 				return "", nil, err

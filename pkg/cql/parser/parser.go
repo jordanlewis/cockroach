@@ -511,14 +511,26 @@ func (p *parser) parseDelete() (*DeleteStatement, error) {
 
 	stmt := &DeleteStatement{}
 
-	// Optional column list between DELETE and FROM.
+	// Optional column list between DELETE and FROM. Supports subscript
+	// notation for map entry or list element removal: DELETE col['key'] FROM ...
 	if !isKeyword(p.lex.peek(), "FROM") {
 		for {
 			col, err := p.expectIdent()
 			if err != nil {
 				return nil, err
 			}
-			stmt.Columns = append(stmt.Columns, col)
+			target := DeleteTarget{Column: col}
+			if p.lex.peek().kind == tokLBracket {
+				p.lex.next() // consume [
+				target.Subscript, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expectToken(tokRBracket); err != nil {
+					return nil, err
+				}
+			}
+			stmt.Columns = append(stmt.Columns, target)
 			if p.lex.peek().kind != tokComma {
 				break
 			}
@@ -1665,6 +1677,30 @@ func (p *parser) parseOneSelector() (Selector, error) {
 		return sel, nil
 	}
 
+	// Check for subscript access: col[index] (list or map element access).
+	if p.lex.peek().kind == tokLBracket {
+		p.lex.next() // consume [
+		idx, err := p.parseExpr()
+		if err != nil {
+			return Selector{}, err
+		}
+		if err := p.expectToken(tokRBracket); err != nil {
+			return Selector{}, err
+		}
+		sel := Selector{
+			Expr: &SubscriptExpr{Column: name, Index: idx},
+		}
+		if isKeyword(p.lex.peek(), "AS") {
+			p.lex.next() // consume AS
+			alias, err := p.expectIdent()
+			if err != nil {
+				return Selector{}, err
+			}
+			sel.Alias = alias
+		}
+		return sel, nil
+	}
+
 	// Check for field access: col.field (UDT composite field access).
 	if p.lex.peek().kind == tokDot {
 		p.lex.next() // consume dot
@@ -1712,8 +1748,22 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 
 		wc := WhereClause{Column: col}
 
+		// Check for subscript access: col[index] op val (e.g. tags[0] = 'x').
+		if p.lex.peek().kind == tokLBracket {
+			p.lex.next() // consume [
+			idx, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(tokRBracket); err != nil {
+				return nil, err
+			}
+			wc.ColumnExpr = &SubscriptExpr{Column: col, Index: idx}
+			wc.Column = ""
+		}
+
 		// Check if the left side is a function call (e.g. token(pk)).
-		if p.lex.peek().kind == tokLParen {
+		if wc.ColumnExpr == nil && p.lex.peek().kind == tokLParen {
 			var expr Expr
 			if strings.EqualFold(col, "CAST") {
 				expr, err = p.parseCastExpr()
@@ -1859,6 +1909,18 @@ func (p *parser) parseFuncArgExpr() (Expr, error) {
 					return p.parseCastExpr()
 				}
 				return p.parseFunctionCall(name)
+			}
+			// Check for subscript access: col[index].
+			if p.lex.peek().kind == tokLBracket {
+				p.lex.next() // consume [
+				idx, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expectToken(tokRBracket); err != nil {
+					return nil, err
+				}
+				return &SubscriptExpr{Column: name, Index: idx}, nil
 			}
 			return &ColumnRef{Name: name}, nil
 		}

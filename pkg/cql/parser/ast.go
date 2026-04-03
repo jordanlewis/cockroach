@@ -158,18 +158,27 @@ type Assignment struct {
 	Value     Expr
 }
 
+// DeleteTarget is a single column reference in a column-level DELETE,
+// optionally with a subscript for map entry removal:
+// DELETE col FROM ... or DELETE col['key'] FROM ....
+type DeleteTarget struct {
+	Column    string
+	Subscript Expr // non-nil for col[key] (map entry or list element removal)
+}
+
 // DeleteStatement represents
 // DELETE [<cols>] FROM [<ks>.]<table> [USING TIMESTAMP ...] WHERE <conds>
 // [IF <conds>|IF EXISTS].
 //
 // When Columns is non-empty, this is a column-level DELETE (Cassandra
 // tombstone semantics): the named columns are set to NULL rather than
-// removing the entire row.
+// removing the entire row. When a column has a Subscript, only the
+// specified map entry or list element is removed.
 type DeleteStatement struct {
 	Table    string
-	Keyspace string       // empty when unqualified
-	Columns  []string     // column-level DELETE; empty means whole-row DELETE
-	Using    *UsingClause // USING TIMESTAMP, nil if absent
+	Keyspace string         // empty when unqualified
+	Columns  []DeleteTarget // column-level DELETE; empty means whole-row DELETE
+	Using    *UsingClause   // USING TIMESTAMP, nil if absent
 	Where    []WhereClause
 	IfExists bool
 	IfConds  []WhereClause // IF col = val conditions (empty when not conditional)
@@ -521,6 +530,16 @@ type AlterTypeAlterField struct {
 }
 
 func (*AlterTypeAlterField) alterTypeOp() {}
+
+// SubscriptExpr represents element access on a collection: col[index].
+// For lists, Index is an integer (positional access); for maps, Index is
+// the map key expression (key lookup). Translates to CRDB's JSONB -> operator.
+type SubscriptExpr struct {
+	Column string
+	Index  Expr
+}
+
+func (*SubscriptExpr) exprNode() {}
 
 // FieldAccessExpr represents a composite type field access: col.field.
 // In CQL this appears as column.field_name in SELECT lists.

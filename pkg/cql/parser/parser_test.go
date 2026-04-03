@@ -689,8 +689,11 @@ func TestParseDeleteColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	del := stmt.(*DeleteStatement)
-	if len(del.Columns) != 2 || del.Columns[0] != "name" || del.Columns[1] != "val" {
+	if len(del.Columns) != 2 || del.Columns[0].Column != "name" || del.Columns[1].Column != "val" {
 		t.Errorf("columns = %v, want [name val]", del.Columns)
+	}
+	if del.Columns[0].Subscript != nil || del.Columns[1].Subscript != nil {
+		t.Error("expected nil subscripts for plain column-level delete")
 	}
 	if del.Table != "t" {
 		t.Errorf("table = %q, want %q", del.Table, "t")
@@ -698,6 +701,93 @@ func TestParseDeleteColumns(t *testing.T) {
 	if len(del.Where) != 1 || del.Where[0].Column != "pk" {
 		t.Errorf("where = %+v, want pk = 1", del.Where)
 	}
+}
+
+func TestParseSubscriptExpr(t *testing.T) {
+	t.Run("select list element", func(t *testing.T) {
+		stmt, err := Parse("SELECT tags[0] FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel := stmt.(*SelectStatement)
+		if len(sel.Columns) != 1 {
+			t.Fatalf("expected 1 selector, got %d", len(sel.Columns))
+		}
+		sub, ok := sel.Columns[0].Expr.(*SubscriptExpr)
+		if !ok {
+			t.Fatalf("expected *SubscriptExpr, got %T", sel.Columns[0].Expr)
+		}
+		if sub.Column != "tags" {
+			t.Errorf("column = %q, want %q", sub.Column, "tags")
+		}
+		idx, ok := sub.Index.(*IntegerLiteral)
+		if !ok || idx.Value != 0 {
+			t.Errorf("index = %v, want IntegerLiteral(0)", sub.Index)
+		}
+	})
+
+	t.Run("select map element", func(t *testing.T) {
+		stmt, err := Parse("SELECT metadata['key'] FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel := stmt.(*SelectStatement)
+		sub := sel.Columns[0].Expr.(*SubscriptExpr)
+		if sub.Column != "metadata" {
+			t.Errorf("column = %q, want %q", sub.Column, "metadata")
+		}
+		key, ok := sub.Index.(*StringLiteral)
+		if !ok || key.Value != "key" {
+			t.Errorf("index = %v, want StringLiteral(key)", sub.Index)
+		}
+	})
+
+	t.Run("select subscript with alias", func(t *testing.T) {
+		stmt, err := Parse("SELECT tags[0] AS first_tag FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel := stmt.(*SelectStatement)
+		if sel.Columns[0].Alias != "first_tag" {
+			t.Errorf("alias = %q, want %q", sel.Columns[0].Alias, "first_tag")
+		}
+	})
+
+	t.Run("where with subscript", func(t *testing.T) {
+		stmt, err := Parse("SELECT * FROM t WHERE metadata['key'] = 'value'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel := stmt.(*SelectStatement)
+		if len(sel.Where) != 1 {
+			t.Fatalf("expected 1 where clause, got %d", len(sel.Where))
+		}
+		sub, ok := sel.Where[0].ColumnExpr.(*SubscriptExpr)
+		if !ok {
+			t.Fatalf("expected *SubscriptExpr, got %T", sel.Where[0].ColumnExpr)
+		}
+		if sub.Column != "metadata" {
+			t.Errorf("column = %q, want %q", sub.Column, "metadata")
+		}
+	})
+
+	t.Run("delete with subscript", func(t *testing.T) {
+		stmt, err := Parse("DELETE metadata['key'] FROM t WHERE pk = 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		del := stmt.(*DeleteStatement)
+		if len(del.Columns) != 1 {
+			t.Fatalf("expected 1 column, got %d", len(del.Columns))
+		}
+		if del.Columns[0].Column != "metadata" {
+			t.Errorf("column = %q, want %q", del.Columns[0].Column, "metadata")
+		}
+		key, ok := del.Columns[0].Subscript.(*StringLiteral)
+		if !ok || key.Value != "key" {
+			t.Errorf("subscript = %v, want StringLiteral(key)", del.Columns[0].Subscript)
+		}
+	})
 }
 
 func TestParseSelectFullSyntax(t *testing.T) {

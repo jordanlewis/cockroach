@@ -103,11 +103,10 @@ exec
 UPDATE jd_upd_coll SET l = [0] + l WHERE k = 1
 ----
 
-# List subtraction is not supported (JSONB - JSONB not available).
-error
+# List subtraction: removes matching values from the JSON array.
+exec
 UPDATE jd_upd_coll SET l = l - [3] WHERE k = 1
 ----
-cql-dml: unsupported binary operator: <jsonb> - <jsonb> (returning <jsonb>)
 
 # ---------------------------------------------------------------
 # Collection set add/remove.
@@ -231,11 +230,9 @@ UPDATE jd_upd_map_text SET m['color'] = 'blue' WHERE k = 1
 
 # ---------------------------------------------------------------
 # List subscript assignment (from UpdateFluentAssignmentTest).
-# List subscript uses jsonb_set with integer path which requires
-# text[] not int[] — currently unsupported by CQL translation.
+# Translates to jsonb_set with text[] path via CAST(index AS TEXT).
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE jd_upd_coll SET l[0] = 99 WHERE k = 1
 ----
-cql-dml: unknown signature: jsonb_set(jsonb, int[], jsonb) (returning <jsonb>)

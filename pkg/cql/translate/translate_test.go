@@ -1031,6 +1031,135 @@ func TestCqlFuncAlias(t *testing.T) {
 		})
 	}
 }
+func TestTranslateCollectionSubtraction(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "list subtraction single element",
+			cql:  "UPDATE t SET tags = tags - ['tag1'] WHERE id = 1",
+			want: `UPDATE "t" SET "tags" = ("tags" - 'tag1') WHERE "id" = 1`,
+		},
+		{
+			name: "list subtraction multiple elements",
+			cql:  "UPDATE t SET tags = tags - ['tag1', 'tag2'] WHERE id = 1",
+			want: `UPDATE "t" SET "tags" = (("tags" - 'tag1') - 'tag2') WHERE "id" = 1`,
+		},
+		{
+			name: "set subtraction single element",
+			cql:  "UPDATE t SET labels = labels - {'old'} WHERE id = 1",
+			want: `UPDATE "t" SET "labels" = ("labels" - 'old') WHERE "id" = 1`,
+		},
+		{
+			name: "set subtraction multiple elements",
+			cql:  "UPDATE t SET labels = labels - {'a', 'b'} WHERE id = 1",
+			want: `UPDATE "t" SET "labels" = (("labels" - 'a') - 'b') WHERE "id" = 1`,
+		},
+		{
+			name: "list addition",
+			cql:  "UPDATE t SET tags = tags + ['new'] WHERE id = 1",
+			want: `UPDATE "t" SET "tags" = "tags" || jsonb_build_array('new') WHERE "id" = 1`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestTranslateSubscriptAccess(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "select list element by index",
+			cql:  "SELECT tags[0] FROM t",
+			want: `SELECT "tags"->0 FROM "t"`,
+		},
+		{
+			name: "select map element by key",
+			cql:  "SELECT metadata['key'] FROM t",
+			want: `SELECT "metadata"->'key' FROM "t"`,
+		},
+		{
+			name: "select subscript with alias",
+			cql:  "SELECT tags[0] AS first_tag FROM t",
+			want: `SELECT "tags"->0 AS "first_tag" FROM "t"`,
+		},
+		{
+			name: "where with map subscript",
+			cql:  "SELECT * FROM t WHERE metadata['key'] = 'value'",
+			want: `SELECT * FROM "t" WHERE "metadata"->'key' = 'value'`,
+		},
+		{
+			name: "where with list subscript",
+			cql:  "SELECT * FROM t WHERE tags[0] = 'first'",
+			want: `SELECT * FROM "t" WHERE "tags"->0 = 'first'`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+func TestTranslateSubscriptMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "set map element",
+			cql:  "UPDATE t SET metadata['key'] = 'val' WHERE id = 1",
+			want: `UPDATE "t" SET "metadata" = jsonb_set("metadata", ARRAY[CAST('key' AS TEXT)], to_jsonb('val')) WHERE "id" = 1`,
+		},
+		{
+			name: "set list element by index",
+			cql:  "UPDATE t SET tags[0] = 'new' WHERE id = 1",
+			want: `UPDATE "t" SET "tags" = jsonb_set("tags", ARRAY[CAST(0 AS TEXT)], to_jsonb('new')) WHERE "id" = 1`,
+		},
+		{
+			name: "delete map entry",
+			cql:  "DELETE metadata['key'] FROM t WHERE id = 1",
+			want: `UPDATE "t" SET "metadata" = "metadata" - 'key' WHERE "id" = 1`,
+		},
+		{
+			name: "delete list element by index",
+			cql:  "DELETE tags[0] FROM t WHERE id = 1",
+			want: `UPDATE "t" SET "tags" = "tags" - 0 WHERE "id" = 1`,
+		},
+		{
+			name: "column-level delete still works",
+			cql:  "DELETE name FROM t WHERE id = 1",
+			want: `UPDATE "t" SET "name" = NULL WHERE "id" = 1`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := Translate(stmt)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
 func TestTranslateRoundTrip(t *testing.T) {
 	// Verify that parsing a CQL statement and translating it produces valid SQL.
 	cqlStatements := []string{
