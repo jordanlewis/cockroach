@@ -523,6 +523,67 @@ func TestTranslateUpdate(t *testing.T) {
 	}
 }
 
+func TestTranslateCounterUpdate(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "counters", TableMeta{
+		PartitionKeys: []string{"id"},
+		Columns:       []string{"id", "c"},
+	})
+	schema.RecordTable("", "stats", TableMeta{
+		PartitionKeys:  []string{"partition"},
+		ClusteringKeys: []string{"row"},
+		Columns:        []string{"partition", "row", "reads", "writes"},
+	})
+
+	tests := []struct {
+		name string
+		cql  string
+		want string
+	}{
+		{
+			name: "counter increment",
+			cql:  "UPDATE counters SET c = c + 1 WHERE id = 1",
+			want: `INSERT INTO "counters" ("id", "c") VALUES (1, 1) ON CONFLICT ("id") DO UPDATE SET "c" = "counters"."c" + 1`,
+		},
+		{
+			name: "counter decrement",
+			cql:  "UPDATE counters SET c = c - 1 WHERE id = 1",
+			want: `INSERT INTO "counters" ("id", "c") VALUES (1, 0 - 1) ON CONFLICT ("id") DO UPDATE SET "c" = "counters"."c" - 1`,
+		},
+		{
+			name: "counter increment by N",
+			cql:  "UPDATE counters SET c = c + 5 WHERE id = 'key1'",
+			want: `INSERT INTO "counters" ("id", "c") VALUES ('key1', 5) ON CONFLICT ("id") DO UPDATE SET "c" = "counters"."c" + 5`,
+		},
+		{
+			name: "composite key counter",
+			cql:  "UPDATE stats SET reads = reads + 1, writes = writes + 3 WHERE partition = 'p1' AND row = 1",
+			want: `INSERT INTO "stats" ("partition", "row", "reads", "writes") VALUES ('p1', 1, 1, 3) ON CONFLICT ("partition", "row") DO UPDATE SET "reads" = "stats"."reads" + 1, "writes" = "stats"."writes" + 3`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := parser.Parse(tt.cql)
+			require.NoError(t, err)
+			result, err := TranslateWithSchema(stmt, schema)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, result.SQL)
+		})
+	}
+}
+
+// TestTranslateCounterUpdateFallback verifies that counter UPDATEs fall
+// back to plain UPDATE when schema info is not available.
+func TestTranslateCounterUpdateFallback(t *testing.T) {
+	cql := "UPDATE counters SET c = c + 1 WHERE id = 1"
+	stmt, err := parser.Parse(cql)
+	require.NoError(t, err)
+	// Without schema, falls back to plain UPDATE.
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t, `UPDATE "counters" SET "c" = "c" + 1 WHERE "id" = 1`, result.SQL)
+}
+
 func TestTranslateDelete(t *testing.T) {
 	tests := []struct {
 		name string

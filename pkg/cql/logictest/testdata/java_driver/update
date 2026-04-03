@@ -60,12 +60,8 @@ k v1 v2
 
 # ---------------------------------------------------------------
 # Counter increment/decrement.
-# CRDB requires the row to exist before UPDATE; insert initial row.
+# Counter UPDATEs have upsert semantics: row is created if missing.
 # ---------------------------------------------------------------
-
-exec
-INSERT INTO jd_upd_counter (k, c) VALUES (1, 0)
-----
 
 exec
 UPDATE jd_upd_counter SET c = c + 1 WHERE k = 1

@@ -815,11 +815,26 @@ func writeWhereClauses(
 // available and the table has static columns, a propagation UPDATE is
 // generated to synchronize static values across all partition rows.
 //
+// Counter UPDATEs (where all assignments are counter increment/decrement
+// expressions like c = c + 1) are translated to INSERT ON CONFLICT DO UPDATE
+// to provide Cassandra's upsert semantics: the row is created if it doesn't
+// exist, starting from 0.
+//
 // CQL UPDATE with IF EXISTS or IF conditions uses conditional logic. IF EXISTS
 // is a no-op guard (SQL UPDATE WHERE is already a no-op for missing rows).
 // IF conditions are appended as additional WHERE predicates so the UPDATE
 // only executes when the conditions are satisfied.
 func translateUpdate(s *parser.UpdateStatement, schema *SchemaInfo) (Result, error) {
+	// Counter UPDATEs get upsert semantics when schema info is available.
+	// Cassandra counter UPDATEs implicitly create the row if it doesn't
+	// exist; a plain SQL UPDATE would be a no-op on missing rows.
+	if isCounterUpdate(s) && schema != nil {
+		meta, ok := schema.LookupTable(s.Keyspace, s.Table)
+		if ok && len(meta.PartitionKeys)+len(meta.ClusteringKeys) > 0 {
+			return translateCounterUpdate(s, meta)
+		}
+	}
+
 	var sb strings.Builder
 	var params []interface{}
 	paramIdx := 1
@@ -890,6 +905,145 @@ func translateUpdate(s *parser.UpdateStatement, schema *SchemaInfo) (Result, err
 	}
 
 	return result, nil
+}
+
+// isCounterUpdate returns true if all SET assignments in the UPDATE are
+// counter increment/decrement expressions (e.g. c = c + 1). Collection
+// appends (c = c + [1,2]) are excluded — those use JSONB concatenation,
+// not counter semantics.
+func isCounterUpdate(s *parser.UpdateStatement) bool {
+	if len(s.Assignments) == 0 {
+		return false
+	}
+	for _, a := range s.Assignments {
+		ce, ok := a.Value.(*parser.CounterExpr)
+		if !ok {
+			return false
+		}
+		if isCollectionExpr(ce.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+// translateCounterUpdate translates a CQL counter UPDATE into an INSERT
+// ON CONFLICT DO UPDATE for upsert semantics. In Cassandra, counter
+// UPDATEs create the row implicitly if it doesn't exist (starting from
+// 0); a plain SQL UPDATE would be a no-op on missing rows.
+//
+// For example:
+//
+//	UPDATE counters SET c = c + 1 WHERE id = 1
+//
+// becomes:
+//
+//	INSERT INTO "counters" ("id", "c") VALUES (1, 1)
+//	  ON CONFLICT ("id") DO UPDATE SET "c" = "counters"."c" + 1
+func translateCounterUpdate(s *parser.UpdateStatement, meta TableMeta) (Result, error) {
+	pkCols := make([]string, 0, len(meta.PartitionKeys)+len(meta.ClusteringKeys))
+	pkCols = append(pkCols, meta.PartitionKeys...)
+	pkCols = append(pkCols, meta.ClusteringKeys...)
+
+	// Map WHERE clause columns to their value expressions for PK lookup.
+	whereMap := make(map[string]parser.Expr, len(s.Where))
+	for _, w := range s.Where {
+		if w.Operator == "=" {
+			whereMap[strings.ToLower(w.Column)] = w.Value
+		}
+	}
+
+	var sb strings.Builder
+	var params []interface{}
+	paramIdx := 1
+
+	sb.WriteString("INSERT INTO ")
+	sb.WriteString(qualifiedTable(s.Keyspace, s.Table))
+	sb.WriteString(" (")
+
+	// Column list: PK columns followed by counter columns.
+	for i, pk := range pkCols {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(pk))
+	}
+	for _, a := range s.Assignments {
+		sb.WriteString(", ")
+		sb.WriteString(quoteIdent(a.Column))
+	}
+
+	sb.WriteString(") VALUES (")
+
+	// PK values extracted from WHERE clause.
+	for i, pk := range pkCols {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		val, ok := whereMap[strings.ToLower(pk)]
+		if !ok {
+			return Result{}, errors.Newf(
+				"counter UPDATE requires = condition for primary key column %q", pk)
+		}
+		sqlVal, param, err := exprToSQL(val, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating counter WHERE value")
+		}
+		sb.WriteString(sqlVal)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	// Counter initial values (row starts from 0, so + N → N, - N → 0 - N).
+	for _, a := range s.Assignments {
+		sb.WriteString(", ")
+		ce := a.Value.(*parser.CounterExpr)
+		valSQL, param, err := exprToSQL(ce.Value, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating counter value")
+		}
+		if ce.Op == "-" {
+			sb.WriteString("0 - ")
+		}
+		sb.WriteString(valSQL)
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	sb.WriteString(") ON CONFLICT (")
+
+	for i, pk := range pkCols {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(quoteIdent(pk))
+	}
+
+	sb.WriteString(") DO UPDATE SET ")
+
+	// Counter increment/decrement referencing the existing row via the
+	// table name qualifier.
+	tblRef := quoteIdent(s.Table)
+	for i, a := range s.Assignments {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		ce := a.Value.(*parser.CounterExpr)
+		col := quoteIdent(a.Column)
+		valSQL, param, err := exprToSQL(ce.Value, &paramIdx)
+		if err != nil {
+			return Result{}, errors.Wrap(err, "translating counter update value")
+		}
+		sb.WriteString(fmt.Sprintf(
+			"%s = %s.%s %s %s", col, tblRef, col, ce.Op, valSQL))
+		if param != nil {
+			params = append(params, param)
+		}
+	}
+
+	return Result{SQL: sb.String(), Params: params}, nil
 }
 
 // translateDelete maps CQL DELETE to CRDB SQL.

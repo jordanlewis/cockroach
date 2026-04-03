@@ -2,8 +2,10 @@
 #
 # Counter columns are a special Cassandra type that supports atomic
 # increment/decrement via UPDATE. The counter type is mapped to INT8
-# in CRDB. Counter expressions (c = c + 1, c = c - 1) are now
-# supported by the parser and translated to SQL arithmetic.
+# in CRDB. Counter expressions (c = c + 1, c = c - 1) are translated
+# to INSERT ON CONFLICT DO UPDATE for upsert semantics, matching
+# Cassandra's behavior where counter UPDATEs create the row if it
+# doesn't exist.
 
 exec
 USE defaultdb
@@ -15,12 +17,8 @@ exec
 CREATE TABLE IF NOT EXISTS counter_table (id int PRIMARY KEY, c counter)
 ----
 
-# Insert initial row (CRDB requires the row to exist for UPDATE).
-exec
-INSERT INTO counter_table (id, c) VALUES (1, 0)
-----
-
-# UPDATE with counter increment is now supported.
+# Counter UPDATE on a non-existent row creates the row (upsert).
+# No INSERT needed — matches Cassandra's counter semantics.
 exec
 UPDATE counter_table SET c = c + 1 WHERE id = 1
 ----
@@ -52,3 +50,25 @@ SELECT id, c FROM counter_table WHERE id = 1
 ----
 id c
 1 1
+
+# Counter UPDATE by a larger value on a new row.
+exec
+UPDATE counter_table SET c = c + 10 WHERE id = 2
+----
+
+query
+SELECT id, c FROM counter_table WHERE id = 2
+----
+id c
+2 10
+
+# Decrement on a non-existent row creates with negative value.
+exec
+UPDATE counter_table SET c = c - 3 WHERE id = 3
+----
+
+query
+SELECT id, c FROM counter_table WHERE id = 3
+----
+id c
+3 -3

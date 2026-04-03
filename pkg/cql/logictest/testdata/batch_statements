@@ -37,16 +37,13 @@ a b
 3 three
 
 # COUNTER BATCH for counter updates.
-# In CRDB, counter columns are INT8. Rows must exist before
-# counter increment (unlike Cassandra's implicit upsert).
+# Counter UPDATEs have upsert semantics: the row is created if it
+# doesn't exist, matching Cassandra's behavior.
 exec
 CREATE TABLE IF NOT EXISTS counters (id int PRIMARY KEY, c counter)
 ----
 
-exec
-INSERT INTO counters (id, c) VALUES (1, 0)
-----
-
+# Counter UPDATE in a batch creates the row (upsert).
 exec
 BEGIN COUNTER BATCH UPDATE counters SET c = c + 1 WHERE id = 1 APPLY BATCH
 ----
