@@ -1,0 +1,78 @@
+# Subquery and derived table tests.
+# Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
+# Most subqueries require parser support for nested SELECTs.
+
+# Set up test data.
+exec
+CREATE TABLE sq_emp (id INT, name VARCHAR(50), dept VARCHAR(20), salary INT)
+----
+
+exec
+INSERT INTO sq_emp (id, name, dept, salary) VALUES (1, 'alice', 'eng', 100)
+----
+
+exec
+INSERT INTO sq_emp (id, name, dept, salary) VALUES (2, 'bob', 'eng', 120)
+----
+
+exec
+INSERT INTO sq_emp (id, name, dept, salary) VALUES (3, 'carol', 'sales', 90)
+----
+
+exec
+INSERT INTO sq_emp (id, name, dept, salary) VALUES (4, 'dave', 'sales', 110)
+----
+
+# --- Scalar subquery in SELECT ---
+
+query error=(parse error)
+SELECT name, (SELECT MAX(salary) FROM sq_emp) AS max_sal FROM sq_emp WHERE id = 1
+----
+
+# --- Subquery in WHERE with IN ---
+
+query error=(parse error)
+SELECT name FROM sq_emp WHERE dept IN (SELECT DISTINCT dept FROM sq_emp WHERE salary > 100)
+----
+
+# --- Correlated subquery ---
+
+query error=(parse error)
+SELECT name, salary FROM sq_emp e WHERE salary = (SELECT MAX(salary) FROM sq_emp WHERE dept = e.dept)
+----
+
+# --- EXISTS subquery ---
+
+query error=(parse error)
+SELECT name FROM sq_emp e WHERE EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary)
+----
+
+# --- NOT EXISTS subquery ---
+
+query error=(parse error)
+SELECT name FROM sq_emp e WHERE NOT EXISTS (SELECT 1 FROM sq_emp WHERE dept = e.dept AND salary > e.salary)
+----
+
+# --- Derived table (subquery in FROM) ---
+
+query error=(parse error)
+SELECT d.dept, d.avg_salary FROM (SELECT dept, AVG(salary) AS avg_salary FROM sq_emp GROUP BY dept) d ORDER BY d.dept
+----
+
+# --- Subquery with comparison operators ---
+
+query error=(parse error)
+SELECT name FROM sq_emp WHERE salary > (SELECT AVG(salary) FROM sq_emp)
+----
+
+# --- ANY / SOME ---
+
+query error=(parse error)
+SELECT name FROM sq_emp WHERE salary > ANY (SELECT salary FROM sq_emp WHERE dept = 'sales')
+----
+
+# --- ALL ---
+
+query error=(parse error)
+SELECT name FROM sq_emp WHERE salary >= ALL (SELECT salary FROM sq_emp WHERE dept = 'sales')
+----

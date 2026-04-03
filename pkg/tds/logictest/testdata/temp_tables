@@ -1,0 +1,62 @@
+# Temp table and table variable tests.
+# Sources: T-SQL reference documentation, go-mssqldb tests (BSD-3-Clause).
+#
+# Note: The TDS parser accepts # and ## prefixed identifiers (they are
+# valid ident chars). CockroachDB creates them as regular tables with
+# those names — there is no temp table session scoping.
+
+# === Local temp tables (#temp) ===
+
+# The parser handles # in identifiers, so CREATE TABLE #temp succeeds.
+# CockroachDB creates a normal table (no temp table semantics).
+exec
+CREATE TABLE #temp_local (id INT, val VARCHAR(50))
+----
+
+exec
+INSERT INTO #temp_local (id, val) VALUES (1, 'temp value')
+----
+
+query colnames
+SELECT id, val FROM #temp_local
+----
+id  val
+1  temp value
+
+exec
+DROP TABLE #temp_local
+----
+
+# === Global temp tables (##temp) ===
+
+exec
+CREATE TABLE ##temp_global (id INT, val VARCHAR(50))
+----
+
+exec
+INSERT INTO ##temp_global (id, val) VALUES (1, 'global temp')
+----
+
+query colnames
+SELECT id, val FROM ##temp_global
+----
+id  val
+1  global temp
+
+exec
+DROP TABLE ##temp_global
+----
+
+# === Table variables (@table) — not supported by parser ===
+
+exec error=(parse error)
+DECLARE @t TABLE (id INT, name VARCHAR(50))
+----
+
+# === SELECT INTO (create table from query) — not supported ===
+# Parser parses SELECT but INTO is not a recognized clause,
+# causing a parse error on the trailing tokens.
+
+exec error=(parse error)
+SELECT id, name INTO #new_temp FROM (SELECT 1 AS id, 'test' AS name) src
+----

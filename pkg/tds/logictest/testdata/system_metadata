@@ -1,0 +1,101 @@
+# System tables, metadata views, and system variables tests.
+# Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
+
+# === System variables (@@variables) ===
+
+# @@VERSION — already tested, works (handled by catalog layer).
+
+# @@ROWCOUNT — translated to current_setting() which fails in CRDB.
+query error=(unrecognized configuration parameter)
+SELECT @@ROWCOUNT
+----
+
+# @@ERROR — unsupported @@variable, translated to NULL.
+# Returns NULL since the translator uses NULL fallback for unknown @@ vars.
+query
+SELECT @@ERROR
+----
+NULL
+
+# @@IDENTITY — translated to lastval().
+# Fails because there's no previous NEXTVAL call in this session.
+query error=(lastval)
+SELECT @@IDENTITY
+----
+
+# SCOPE_IDENTITY() — passes through as unknown function.
+query error=(unknown function)
+SELECT SCOPE_IDENTITY()
+----
+
+# @@TRANCOUNT — unsupported @@variable, returns NULL.
+query
+SELECT @@TRANCOUNT
+----
+NULL
+
+# @@SPID — unsupported @@variable, returns NULL.
+query
+SELECT @@SPID
+----
+NULL
+
+# @@SERVERNAME — unsupported @@variable, returns NULL.
+query
+SELECT @@SERVERNAME
+----
+NULL
+
+# @@LANGUAGE — unsupported @@variable, returns NULL.
+query
+SELECT @@LANGUAGE
+----
+NULL
+
+# @@MAX_CONNECTIONS — unsupported @@variable, returns NULL.
+query
+SELECT @@MAX_CONNECTIONS
+----
+NULL
+
+# === Legacy system tables (sysobjects, syscolumns) ===
+# These are caught by the catalog layer and translated to pg_catalog queries.
+# Column names get translated (name→relname in SELECT), but ORDER BY name
+# is NOT translated (bug in replaceBareColumnRef — only handles SELECT list).
+
+# sysobjects query for user tables — translated to pg_class.
+# Note: ORDER BY name fails because the catalog translation doesn't
+# replace bare column refs in ORDER BY clauses.
+query error=(does not exist)
+SELECT name FROM sysobjects WHERE type = 'U' ORDER BY name
+----
+
+# Note: sysobjects queries without ORDER BY would succeed and return
+# many rows from pg_catalog.pg_class (all CockroachDB internal tables).
+# Testing exact row counts is impractical since the system table set varies.
+
+# === sp_ system procedures ===
+
+# sp_help and sp_helpdb are handled by catalog layer.
+# EXEC/EXECUTE prefix is optional for sp_ procs in the catalog regex.
+
+# sp_tables — not recognized by catalog, EXEC not supported by parser.
+exec error=(parse error)
+EXEC sp_tables
+----
+
+# sp_columns — not recognized by catalog.
+exec error=(parse error)
+EXEC sp_columns 'test_tbl'
+----
+
+# sp_helptext — not recognized by catalog.
+exec error=(parse error)
+EXEC sp_helptext 'sp_help'
+----
+
+# === Dynamic SQL (not yet supported by parser) ===
+
+exec error=(parse error)
+EXEC sp_executesql N'SELECT 1'
+----

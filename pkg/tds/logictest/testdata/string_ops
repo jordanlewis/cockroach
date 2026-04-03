@@ -1,0 +1,136 @@
+# String operation tests: concatenation, LIKE patterns, collation.
+# Sources: T-SQL reference documentation, go-mssqldb tests (BSD-3-Clause).
+
+# === String concatenation with + (translated to ||) ===
+
+query
+SELECT 'hello' + ' ' + 'world'
+----
+hello world
+
+query
+SELECT 'a' + 'b' + 'c' + 'd'
+----
+abcd
+
+# Concatenation with NULL should yield NULL (T-SQL behavior).
+# CockroachDB's || also returns NULL when either operand is NULL.
+query
+SELECT 'hello' + NULL
+----
+NULL
+
+# === Empty string ===
+# Empty strings are encoded as NULL in TDS wire protocol (zero-length
+# NVARCHAR maps to SQL NULL).
+
+query
+SELECT ''
+----
+NULL
+
+query
+SELECT '' + 'test'
+----
+test
+
+# === LIKE patterns ===
+
+exec
+CREATE TABLE like_test (id INT, val VARCHAR(100))
+----
+
+exec
+INSERT INTO like_test (id, val) VALUES (1, 'hello world')
+----
+
+exec
+INSERT INTO like_test (id, val) VALUES (2, 'hello there')
+----
+
+exec
+INSERT INTO like_test (id, val) VALUES (3, 'goodbye world')
+----
+
+exec
+INSERT INTO like_test (id, val) VALUES (4, 'test_underscore')
+----
+
+exec
+INSERT INTO like_test (id, val) VALUES (5, 'HELLO WORLD')
+----
+
+# % wildcard — match any string.
+query colnames
+SELECT id, val FROM like_test WHERE val LIKE 'hello%' ORDER BY id
+----
+id  val
+1  hello world
+2  hello there
+
+# _ wildcard — match single character.
+query colnames
+SELECT id, val FROM like_test WHERE val LIKE 'hell_ world' ORDER BY id
+----
+id  val
+1  hello world
+
+# Leading % — suffix match.
+query colnames
+SELECT id, val FROM like_test WHERE val LIKE '%world' ORDER BY id
+----
+id  val
+1  hello world
+3  goodbye world
+
+# Contains pattern.
+query colnames
+SELECT id, val FROM like_test WHERE val LIKE '%llo%' ORDER BY id
+----
+id  val
+1  hello world
+2  hello there
+
+# NOT LIKE.
+query colnames
+SELECT id, val FROM like_test WHERE val NOT LIKE 'hello%' ORDER BY id
+----
+id  val
+3  goodbye world
+4  test_underscore
+5  HELLO WORLD
+
+# === NOT IN ===
+
+query colnames
+SELECT id FROM like_test WHERE id NOT IN (1, 3, 5) ORDER BY id
+----
+id
+2
+4
+
+# === NOT BETWEEN ===
+
+query colnames
+SELECT id FROM like_test WHERE id NOT BETWEEN 2 AND 4 ORDER BY id
+----
+id
+1
+5
+
+# === String comparison ===
+
+query
+SELECT 'abc' WHERE 'abc' = 'abc'
+----
+abc
+
+query
+SELECT 'yes' WHERE 'abc' < 'def'
+----
+yes
+
+query
+SELECT 'yes' WHERE 'abc' <> 'def'
+----
+yes

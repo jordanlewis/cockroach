@@ -1,0 +1,117 @@
+# JOIN tests: INNER, LEFT, RIGHT, FULL, CROSS, self-join, multi-table.
+# Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
+# JOINs are not yet supported by the TDS parser.
+
+# Set up test tables.
+exec
+CREATE TABLE j_customers (id INT, name VARCHAR(50), city VARCHAR(50))
+----
+
+exec
+INSERT INTO j_customers (id, name, city) VALUES (1, 'alice', 'new york')
+----
+
+exec
+INSERT INTO j_customers (id, name, city) VALUES (2, 'bob', 'boston')
+----
+
+exec
+INSERT INTO j_customers (id, name, city) VALUES (3, 'carol', 'chicago')
+----
+
+exec
+CREATE TABLE j_orders (id INT, customer_id INT, product VARCHAR(50), amount INT)
+----
+
+exec
+INSERT INTO j_orders (id, customer_id, product, amount) VALUES (1, 1, 'widget', 100)
+----
+
+exec
+INSERT INTO j_orders (id, customer_id, product, amount) VALUES (2, 1, 'gadget', 200)
+----
+
+exec
+INSERT INTO j_orders (id, customer_id, product, amount) VALUES (3, 2, 'widget', 150)
+----
+
+exec
+INSERT INTO j_orders (id, customer_id, product, amount) VALUES (4, 99, 'gizmo', 50)
+----
+
+# --- INNER JOIN ---
+
+query error=(parse error)
+SELECT c.name, o.product, o.amount FROM j_customers c INNER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+
+# --- LEFT JOIN ---
+
+query error=(parse error)
+SELECT c.name, o.product FROM j_customers c LEFT JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+
+# --- LEFT OUTER JOIN (explicit OUTER keyword) ---
+
+query error=(parse error)
+SELECT c.name, o.product FROM j_customers c LEFT OUTER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name
+----
+
+# --- RIGHT JOIN ---
+
+query error=(parse error)
+SELECT c.name, o.product FROM j_customers c RIGHT JOIN j_orders o ON c.id = o.customer_id ORDER BY o.id
+----
+
+# --- FULL OUTER JOIN ---
+
+query error=(parse error)
+SELECT c.name, o.product FROM j_customers c FULL OUTER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+
+# --- CROSS JOIN ---
+
+query error=(parse error)
+SELECT c.name, o.product FROM j_customers c CROSS JOIN j_orders o WHERE c.id = 1 ORDER BY o.product
+----
+
+# --- Self-join ---
+
+query error=(parse error)
+SELECT a.name AS emp, b.name AS mgr FROM j_customers a INNER JOIN j_customers b ON a.id = b.id + 1
+----
+
+# --- Multi-table JOIN ---
+
+exec
+CREATE TABLE j_products (id INT, name VARCHAR(50), category VARCHAR(50))
+----
+
+exec
+INSERT INTO j_products (id, name, category) VALUES (1, 'widget', 'hardware')
+----
+
+exec
+INSERT INTO j_products (id, name, category) VALUES (2, 'gadget', 'electronics')
+----
+
+query error=(parse error)
+SELECT c.name, p.name AS product, p.category, o.amount FROM j_customers c INNER JOIN j_orders o ON c.id = o.customer_id INNER JOIN j_products p ON o.product = p.name ORDER BY c.name, p.name
+----
+
+# --- JOIN with aggregate ---
+
+query error=(parse error)
+SELECT c.name, COUNT(o.id) AS order_count, SUM(o.amount) AS total FROM j_customers c LEFT JOIN j_orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY c.name
+----
+
+# --- Old-style join (comma-separated FROM with WHERE) ---
+# This uses the existing comma-separated FROM which is already supported.
+
+query colnames
+SELECT j_customers.name, j_orders.product FROM j_customers, j_orders WHERE j_customers.id = j_orders.customer_id ORDER BY j_customers.name, j_orders.product
+----
+name  product
+alice  gadget
+alice  widget
+bob  widget

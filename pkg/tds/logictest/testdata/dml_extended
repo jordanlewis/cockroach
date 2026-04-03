@@ -1,0 +1,83 @@
+# Extended DML tests: INSERT...SELECT, multi-row INSERT, MERGE, OUTPUT.
+# Sources: T-SQL reference documentation, go-mssqldb test patterns (BSD-3).
+
+# Set up test data for DML operations.
+exec
+CREATE TABLE src_tbl (id INT, val VARCHAR(50))
+----
+
+exec
+INSERT INTO src_tbl (id, val) VALUES (1, 'alpha')
+----
+
+exec
+INSERT INTO src_tbl (id, val) VALUES (2, 'beta')
+----
+
+exec
+INSERT INTO src_tbl (id, val) VALUES (3, 'gamma')
+----
+
+exec
+CREATE TABLE dst_tbl (id INT, val VARCHAR(50))
+----
+
+# --- Multi-row INSERT (single VALUES with multiple rows) ---
+
+exec
+CREATE TABLE multi_ins (id INT, name VARCHAR(50))
+----
+
+exec
+INSERT INTO multi_ins (id, name) VALUES (1, 'one'), (2, 'two'), (3, 'three')
+----
+
+query colnames
+SELECT id, name FROM multi_ins ORDER BY id
+----
+id  name
+1  one
+2  two
+3  three
+
+# --- INSERT ... SELECT (not yet supported by parser) ---
+
+exec error=(parse error)
+INSERT INTO dst_tbl (id, val) SELECT id, val FROM src_tbl WHERE id <= 2
+----
+
+# --- MERGE statement (not yet supported by parser) ---
+
+exec error=(parse error)
+MERGE INTO dst_tbl AS target USING src_tbl AS source ON target.id = source.id WHEN MATCHED THEN UPDATE SET val = source.val WHEN NOT MATCHED THEN INSERT (id, val) VALUES (source.id, source.val)
+----
+
+# --- OUTPUT clause on INSERT (not yet supported by parser) ---
+
+exec error=(parse error)
+INSERT INTO dst_tbl (id, val) OUTPUT inserted.id, inserted.val VALUES (10, 'test')
+----
+
+# --- OUTPUT clause on DELETE (not yet supported by parser) ---
+
+exec error=(parse error)
+DELETE FROM src_tbl OUTPUT deleted.id, deleted.val WHERE id = 3
+----
+
+# --- OUTPUT clause on UPDATE (not yet supported by parser) ---
+
+exec error=(parse error)
+UPDATE src_tbl SET val = 'updated' OUTPUT inserted.id, inserted.val WHERE id = 1
+----
+
+# --- UPDATE with FROM/JOIN (T-SQL extension, not yet supported) ---
+
+exec error=(parse error)
+UPDATE dst_tbl SET val = s.val FROM dst_tbl d INNER JOIN src_tbl s ON d.id = s.id
+----
+
+# --- DELETE with JOIN (T-SQL extension, not yet supported) ---
+
+exec error=(parse error)
+DELETE d FROM dst_tbl d INNER JOIN src_tbl s ON d.id = s.id WHERE s.val = 'alpha'
+----

@@ -1,0 +1,139 @@
+# T-SQL control flow and variable tests: DECLARE, SET, IF/ELSE, WHILE,
+# BEGIN/END, TRY/CATCH, GOTO, EXEC.
+# Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
+# None of these are currently supported by the parser.
+
+# --- DECLARE variable ---
+
+exec error=(parse error)
+DECLARE @x INT
+----
+
+# --- DECLARE with initialization ---
+
+exec error=(parse error)
+DECLARE @name VARCHAR(50) = 'test'
+----
+
+# --- SET variable ---
+
+exec error=(parse error)
+DECLARE @x INT; SET @x = 42
+----
+
+# --- SELECT into variable ---
+
+exec error=(parse error)
+DECLARE @cnt INT; SELECT @cnt = COUNT(*) FROM (SELECT 1 AS a) t
+----
+
+# --- IF / ELSE ---
+
+exec error=(parse error)
+IF 1 = 1 SELECT 'true'
+----
+
+exec error=(parse error)
+IF 1 = 2 SELECT 'true' ELSE SELECT 'false'
+----
+
+# --- IF with BEGIN/END blocks ---
+
+exec error=(parse error)
+IF 1 = 1 BEGIN SELECT 'first'; SELECT 'second' END
+----
+
+# --- IF EXISTS ---
+
+exec error=(parse error)
+IF EXISTS (SELECT 1) SELECT 'exists'
+----
+
+# --- WHILE loop ---
+
+exec error=(parse error)
+DECLARE @i INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1 END
+----
+
+# --- WHILE with BREAK ---
+
+exec error=(parse error)
+DECLARE @i INT = 0; WHILE 1 = 1 BEGIN SET @i = @i + 1; IF @i >= 3 BREAK END
+----
+
+# --- WHILE with CONTINUE ---
+
+exec error=(parse error)
+DECLARE @i INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1; IF @i = 3 CONTINUE; SELECT @i END
+----
+
+# --- BEGIN TRY / BEGIN CATCH ---
+
+exec error=(parse error)
+BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH
+----
+
+# --- GOTO ---
+
+exec error=(parse error)
+GOTO done; SELECT 'skipped'; done: SELECT 'reached'
+----
+
+# --- EXEC / EXECUTE (stored procedure call) ---
+
+# EXEC sp_help is handled by catalog layer (not a parse error).
+# sp_help translates to INFORMATION_SCHEMA queries.
+exec
+EXEC sp_help
+----
+
+# EXECUTE sp_help with argument — also handled by catalog.
+exec
+EXECUTE sp_help 'users'
+----
+
+# --- EXEC with named parameters ---
+
+exec error=(parse error)
+EXEC sp_getuser @id = 1, @name = 'test'
+----
+
+# --- RETURN statement ---
+
+exec error=(parse error)
+RETURN 0
+----
+
+# --- RAISERROR ---
+
+exec error=(parse error)
+RAISERROR('Test error', 16, 1)
+----
+
+# --- THROW (SQL Server 2012+) ---
+
+exec error=(parse error)
+THROW 50000, 'Custom error', 1
+----
+
+# --- PRINT ---
+
+exec error=(parse error)
+PRINT 'Hello from T-SQL'
+----
+
+# --- WAITFOR ---
+
+exec error=(parse error)
+WAITFOR DELAY '00:00:01'
+----
+
+# --- SET NOCOUNT ---
+# Caught by executor SET catch-all, silently acknowledged.
+
+exec
+SET NOCOUNT ON
+----
+
+# Note: SET QUOTED_IDENTIFIER, SET ANSI_NULLS, SET TEXTSIZE, SET ARITHABORT
+# are already tested in the 'catalog' test file and work (silently acknowledged).

@@ -1,0 +1,313 @@
+# Extended T-SQL function tests.
+# Sources: T-SQL reference documentation, go-mssqldb tests (BSD-3-Clause),
+# Babelfish test patterns (Apache 2.0).
+
+# === Functions that currently work (pass-through to CockroachDB) ===
+
+# UPPER / LOWER (pass-through, already tested in functions file).
+
+# COUNT, SUM, MIN, MAX, AVG (pass-through, already tested in aggregates file).
+
+# COALESCE (standard SQL, should pass through).
+query
+SELECT COALESCE(NULL, NULL, 'third')
+----
+third
+
+# ABS (pass-through).
+query
+SELECT ABS(-42)
+----
+42
+
+# === String functions — need translation or pass-through ===
+
+# LEN (T-SQL) — not yet translated to length().
+query error=(unknown function)
+SELECT LEN('hello')
+----
+
+# CHARINDEX — T-SQL string search function.
+query error=(unknown function)
+SELECT CHARINDEX('world', 'hello world')
+----
+
+# PATINDEX — pattern index search.
+query error=(unknown function)
+SELECT PATINDEX('%world%', 'hello world')
+----
+
+# STUFF — insert string at position.
+query error=(unknown function)
+SELECT STUFF('hello world', 6, 5, 'there')
+----
+
+# LEFT — left substring (passes through to CockroachDB).
+query
+SELECT LEFT('hello', 3)
+----
+hel
+
+# RIGHT — right substring (passes through to CockroachDB).
+query
+SELECT RIGHT('hello', 3)
+----
+llo
+
+# SUBSTRING (standard SQL, should work in CockroachDB).
+query
+SELECT SUBSTRING('hello world', 7, 5)
+----
+world
+
+# REPLACE (should pass through to CockroachDB).
+query
+SELECT REPLACE('hello world', 'world', 'there')
+----
+hello there
+
+# LTRIM / RTRIM (should pass through).
+query
+SELECT LTRIM('  hello')
+----
+hello
+
+query
+SELECT RTRIM('hello  ')
+----
+hello
+
+# REPLICATE — repeat string N times.
+query error=(unknown function)
+SELECT REPLICATE('ab', 3)
+----
+
+# REVERSE — reverse string.
+query
+SELECT REVERSE('hello')
+----
+olleh
+
+# SPACE — generate N spaces.
+query error=(unknown function)
+SELECT SPACE(5)
+----
+
+# STRING_AGG (SQL Server 2017+) — aggregate concatenation.
+# Parser doesn't support subqueries in FROM (UNION ALL).
+query error=(parse error)
+SELECT STRING_AGG(name, ', ') FROM (SELECT 'alice' AS name UNION ALL SELECT 'bob') t
+----
+
+# CONCAT — standard string concat.
+query
+SELECT CONCAT('hello', ' ', 'world')
+----
+hello world
+
+# === Date/time functions ===
+
+# GETDATE() — already works, tested in functions file.
+
+# DATEADD — add interval to date.
+query error=(unknown function)
+SELECT DATEADD(day, 1, '2026-01-01')
+----
+
+# DATEDIFF — difference between dates.
+query error=(unknown function)
+SELECT DATEDIFF(day, '2026-01-01', '2026-01-31')
+----
+
+# DATEPART — extract part of date.
+query error=(unknown function)
+SELECT DATEPART(year, '2026-06-15')
+----
+
+# DATENAME — name of date part.
+query error=(unknown function)
+SELECT DATENAME(month, '2026-06-15')
+----
+
+# YEAR / MONTH / DAY — shorthand date part extraction.
+query error=(unknown function)
+SELECT YEAR('2026-06-15')
+----
+
+query error=(unknown function)
+SELECT MONTH('2026-06-15')
+----
+
+query error=(unknown function)
+SELECT DAY('2026-06-15')
+----
+
+# SYSDATETIME (SQL Server 2008+).
+query error=(unknown function)
+SELECT SYSDATETIME()
+----
+
+# GETUTCDATE — UTC version of GETDATE.
+query error=(unknown function)
+SELECT GETUTCDATE()
+----
+
+# EOMONTH — end of month.
+query error=(unknown function)
+SELECT EOMONTH('2026-02-15')
+----
+
+# FORMAT — CRDB has format() but with different signature than T-SQL.
+query error=(unknown signature)
+SELECT FORMAT(1234567, 'N2')
+----
+
+# === Math functions ===
+
+# CEILING (should pass through).
+query
+SELECT CEILING(4.2)
+----
+5
+
+# FLOOR (should pass through).
+query
+SELECT FLOOR(4.8)
+----
+4
+
+# ROUND — pass-through. Note: T-SQL float literals pass through as
+# CRDB floats; ROUND on floats may produce different precision than
+# T-SQL. Use integer-result ROUND to verify the function works.
+query
+SELECT ROUND(4.5, 0)
+----
+5
+
+# POWER (should pass through).
+query
+SELECT POWER(2, 10)
+----
+1024
+
+# SQRT (pass through, needs explicit float for CRDB).
+# Note: T-SQL float literal 144.0 becomes "144" via %g formatting,
+# causing ambiguous call. Use CONVERT to explicitly cast.
+query
+SELECT SQRT(CONVERT(FLOAT, 144))
+----
+12
+
+# SIGN (should pass through).
+query
+SELECT SIGN(-5)
+----
+-1
+
+# LOG — T-SQL LOG() is natural log, but CRDB's log() is base-10.
+# This semantic mismatch means LOG passes through but returns wrong
+# results. Needs translation to ln(). Also needs explicit DECIMAL
+# cast because CRDB's log() is ambiguous on int.
+query error=(ambiguous call)
+SELECT LOG(10)
+----
+
+# LOG10 — base-10 log (unknown function in CRDB).
+query error=(unknown function)
+SELECT LOG10(1000)
+----
+
+# === Conditional functions ===
+
+# IIF (SQL Server 2012+) — inline IF.
+query error=(unknown function)
+SELECT IIF(1 = 1, 'yes', 'no')
+----
+
+# CHOOSE (SQL Server 2012+) — index-based choice.
+query error=(unknown function)
+SELECT CHOOSE(2, 'first', 'second', 'third')
+----
+
+# NULLIF (standard SQL, should work).
+query
+SELECT NULLIF(1, 1)
+----
+NULL
+
+query
+SELECT NULLIF(1, 2)
+----
+1
+
+# === Type conversion ===
+
+# CAST — standard SQL (parser treats CAST as a function call, but
+# the AS keyword inside the parens causes a parse error).
+query error=(parse error)
+SELECT CAST(42 AS VARCHAR)
+----
+
+# TRY_CONVERT (SQL Server 2012+) — safe conversion.
+# Parser treats TRY_CONVERT as a function call with two args.
+# Passes through to CRDB which doesn't have TRY_CONVERT.
+query error=(unknown function)
+SELECT TRY_CONVERT(INT, 'not_a_number')
+----
+
+# TRY_CAST (SQL Server 2012+).
+# Parser treats TRY_CAST as a function call but AS inside parens
+# causes a parse error (AS is a keyword, not valid in expression).
+query error=(parse error)
+SELECT TRY_CAST('not_a_number' AS INT)
+----
+
+# === System functions ===
+
+# NEWID — generate UUID.
+query error=(unknown function)
+SELECT NEWID()
+----
+
+# OBJECT_ID — get object ID by name.
+query error=(unknown function)
+SELECT OBJECT_ID('users')
+----
+
+# DB_NAME — current database name.
+query error=(unknown function)
+SELECT DB_NAME()
+----
+
+# SCHEMA_NAME — current schema name.
+query error=(unknown function)
+SELECT SCHEMA_NAME()
+----
+
+# USER_NAME — current user.
+query error=(unknown function)
+SELECT USER_NAME()
+----
+
+# HOST_NAME — client host.
+query error=(unknown function)
+SELECT HOST_NAME()
+----
+
+# APP_NAME — application name.
+query error=(unknown function)
+SELECT APP_NAME()
+----
+
+# === Aggregate functions (extended) ===
+
+# COUNT_BIG — 64-bit count.
+query error=(unknown function)
+SELECT COUNT_BIG(*)
+----
+
+# STDEV / STDEVP / VAR / VARP — statistical aggregates.
+# STDEV may pass through (CRDB has stddev but not stdev).
+query error=(unknown function)
+SELECT STDEV(1)
+----
