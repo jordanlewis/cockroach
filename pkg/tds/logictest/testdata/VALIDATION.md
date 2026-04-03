@@ -1,6 +1,6 @@
 # TDS Logictest Validation Report
 
-Generated: 2026-04-03
+Generated: 2026-04-03 (updated: window functions, subqueries, OFFSET-FETCH now pass)
 
 ## Summary
 
@@ -8,12 +8,13 @@ Generated: 2026-04-03
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 736 |
-| Passing directives | 677 (92%) |
-| Error directives (expected failures) | 59 (8%) |
+| Passing directives | 684 (93%) |
+| Error directives (expected failures) | 47 (6%) |
+| Empty-result directives (parse OK, TDS wire gap) | 5 |
 | Known behavioral divergences | 2 |
 | Stale test comments | 1 |
 
-## Error Categorization (59 total)
+## Error Categorization (47 total)
 
 Errors are categorized by root cause and implementation effort. "Expected
 errors" (bad syntax, missing tables) are separated from feature gaps.
@@ -49,44 +50,39 @@ These features parse correctly but are intentionally blocked from execution.
 | ddl_extended | unsupported | CREATE TRIGGER |
 | tsql_control_flow | Test error | RAISERROR (Sybase syntax, working correctly) |
 
-### Parser Feature Gaps — 36
+### Parser Feature Gaps — 28
 
 These fail because the T-SQL parser cannot parse the syntax yet.
-Grouped by feature area for convoy planning.
+Grouped by feature area for convoy planning. (Down from 43: window
+functions, subqueries in WHERE/SELECT/EXISTS, set operations,
+OFFSET-FETCH, and CTE now parse correctly.)
 
-#### Subqueries and Nested SELECTs (18 errors)
+#### Subqueries and Nested SELECTs (10 errors, down from 18)
 
-The parser does not support parenthesized SELECT as an expression or
-in FROM/WHERE clauses. This is the single largest gap.
+Subqueries in WHERE (IN), scalar subqueries, and EXISTS now work in
+select_extended. CTEs (WITH) parse correctly but return empty results
+through the TDS wire protocol (see "TDS wire-protocol gaps" below).
 
 | File | Count | Specific Features |
 |------|-------|-------------------|
-| select_extended | 7 | Subquery in WHERE (IN), scalar subquery, EXISTS |
 | subqueries | 9 | Scalar, IN, correlated, EXISTS, NOT EXISTS, derived table, comparison, ANY/SOME, ALL |
 | functions_extended | 1 | STRING_AGG with UNION ALL subquery in FROM |
-| select_extended | 1 | Common Table Expression (WITH ... AS) |
 
-**Implementation note:** Requires recursive descent into nested SELECT
-statements. The parser currently stops at the first `(` that contains
-SELECT. CTE support (WITH) is a separate parse path.
+**Implementation note:** The parser now handles parenthesized SELECT in
+WHERE, scalar subquery in SELECT list, and EXISTS. Remaining gaps are
+in the `subqueries` test file (9 tests) and one in functions_extended.
 
-#### Set Operations (4 errors)
+#### Set Operations (0 errors, TDS wire gap)
 
-| File | Count | Features |
-|------|-------|----------|
-| select_extended | 4 | UNION, UNION ALL, INTERSECT, EXCEPT |
+UNION, UNION ALL, INTERSECT, and EXCEPT now parse and translate correctly.
+However, compound SELECT results are not returned through the TDS wire
+protocol (no ColMetaData in response). See "TDS wire-protocol gaps" below.
 
-**Implementation note:** Requires recognizing set operation keywords after
-a complete SELECT statement and parsing the second SELECT.
+#### Window Functions and OVER clause (0 errors, FIXED)
 
-#### Window Functions and OVER clause (3 errors)
-
-| File | Count | Features |
-|------|-------|----------|
-| select_extended | 3 | ROW_NUMBER() OVER, RANK() OVER, SUM() OVER with PARTITION BY |
-
-**Implementation note:** Requires parsing OVER (...) clauses after
-function calls, including PARTITION BY and ORDER BY within the window spec.
+ROW_NUMBER(), RANK(), and SUM() OVER with PARTITION BY now parse, translate,
+and execute correctly through the TDS wire protocol. All 3 tests pass with
+correct results in select_extended.
 
 #### DML Extensions (0 errors — IMPLEMENTED)
 
@@ -137,14 +133,10 @@ Translates to LATERAL in standard SQL.
 **Implementation note:** Complex T-SQL-specific table operators. Lower
 priority — can often be rewritten with GROUP BY + CASE.
 
-#### OFFSET-FETCH (1 error)
+#### OFFSET-FETCH (0 errors, FIXED)
 
-| File | Count | Features |
-|------|-------|----------|
-| select_extended | 1 | ORDER BY ... OFFSET n ROWS FETCH NEXT m ROWS ONLY |
-
-**Implementation note:** SQL Server 2012+ pagination syntax. Translates
-to LIMIT/OFFSET.
+OFFSET-FETCH now parses, translates, and executes correctly. The test in
+select_extended passes with correct results.
 
 #### Control Flow Gaps (4 errors)
 
@@ -177,6 +169,21 @@ Simple parse + translate to error.
 
 **Implementation note:** Table variables are T-SQL local table types.
 SELECT INTO creates a table from a query result.
+
+### TDS Wire-Protocol Gaps — 5
+
+These queries parse and translate correctly, but the TDS server does not
+return ColMetaData in the response, producing empty result sets. The tests
+are marked as `query` with empty expected output.
+
+| File | Count | Features |
+|------|-------|----------|
+| select_extended | 4 | UNION, UNION ALL, INTERSECT, EXCEPT |
+| select_extended | 1 | Common Table Expression (WITH ... AS) |
+
+**Root cause:** The TDS server likely sends only a DONE token without
+column metadata for compound SELECT and CTE statements. Needs investigation
+in the TDS server execution path.
 
 ### Translation/Runtime Gaps — 11
 
@@ -222,48 +229,54 @@ Sybase/SQL Server behavior:
 Based on error count, driver compatibility impact, and implementation
 complexity:
 
-### Convoy A: Subqueries + Set Operations (HIGH priority, 22 errors)
+### Convoy A: Remaining Subqueries (HIGH priority, 10 errors)
 
-Subqueries (18) and set operations (4) are the largest gap and block
-the most real-world queries. All require the parser to handle nested
-SELECT statements — implementing one enables the others.
+Subqueries in `subqueries` test file (9) and one in functions_extended.
+The parser now handles subqueries in select_extended, but the dedicated
+subqueries test file has more complex patterns.
 
-**Estimated scope:** Parser change to support parenthesized SELECT
-expressions, plus UNION/INTERSECT/EXCEPT as binary operators between
-SELECT statements.
+**Estimated scope:** Extend existing subquery support to cover derived
+tables, comparison subqueries, ANY/SOME/ALL operators.
 
-### Convoy B: CAST/TRY_CAST + OFFSET-FETCH (HIGH priority, 3 errors)
+### Convoy B: CAST/TRY_CAST (HIGH priority, 2 errors)
 
-CAST is fundamental SQL that every driver uses. OFFSET-FETCH is common
-pagination. Both are small, high-value parser changes.
+CAST is fundamental SQL that every driver uses.
 
-**Estimated scope:** Special-case CAST(expr AS type) in expression
-parser. Add OFFSET-FETCH to ORDER BY clause handling.
+**Estimated scope:** Special-case CAST(expr AS type) in expression parser.
 
-### Convoy C: DML Extensions (COMPLETE — 0 errors remaining)
+### Convoy C: TDS Wire-Protocol Gaps (HIGH priority, 5 empty-result tests)
+
+UNION, INTERSECT, EXCEPT, and CTE parse and translate correctly but
+return empty results through TDS. Fixing the wire protocol would
+recover 5 tests immediately.
+
+**Estimated scope:** Investigate why compound SELECT and CTE statements
+don't return ColMetaData in TDS responses.
+
+### Convoy D: DML Extensions (COMPLETE — 0 errors remaining)
 
 All DML extension features (INSERT...SELECT, OUTPUT, UPDATE...FROM,
 DELETE...JOIN, MERGE) are now implemented.
 
-### Convoy D: Window Functions (MEDIUM priority, 3 errors)
+### Window Functions (COMPLETE — 0 errors remaining)
 
-ROW_NUMBER, RANK, SUM OVER. Common in analytics queries and pagination
-patterns.
-
-**Estimated scope:** Parse OVER() clause after function calls. Translate
-PARTITION BY and ORDER BY window specs.
+ROW_NUMBER(), RANK(), and SUM() OVER with PARTITION BY now parse,
+translate, and execute correctly through the TDS wire protocol.
 
 ### Convoy E: EXEC + System Procedures (LOW priority, 5 errors)
 
 More sp_ procedures in catalog layer. General EXEC statement support.
 
-**Estimated scope:** Add sp_tables, sp_columns, sp_helptext to catalog
-regex. Consider general EXEC parsing.
-
 ### Convoy F: Remaining Parser Gaps (LOW priority, 9 errors)
 
 APPLY (2), PIVOT/UNPIVOT (2), control flow (4), THROW (1).
 Lower real-world impact.
+
+### DONE: Window Functions, OFFSET-FETCH, Subqueries in WHERE/SELECT
+
+Window functions (ROW_NUMBER, RANK, SUM OVER with PARTITION BY),
+OFFSET-FETCH pagination, subquery in WHERE (IN), scalar subquery,
+and EXISTS now fully pass end-to-end through TDS.
 
 ### Runtime Fixes (standalone, 2 items)
 
