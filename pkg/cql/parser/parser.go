@@ -553,7 +553,8 @@ func (p *parser) parseDelete() (*DeleteStatement, error) {
 }
 
 // parseAssignments parses SET <col> = <val> [, <col> = <val>, ...].
-// Also handles counter expressions: col = col + val, col = col - val.
+// Also handles counter expressions (col = col + val), collection
+// operations, and subscript assignments (col[key] = val).
 func (p *parser) parseAssignments() ([]Assignment, error) {
 	var assignments []Assignment
 	for {
@@ -561,16 +562,33 @@ func (p *parser) parseAssignments() ([]Assignment, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Check for subscript: col[key] = val (map element update).
+		var subscript Expr
+		if p.lex.peek().kind == tokLBracket {
+			p.lex.next() // consume [
+			subscript, err = p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(tokRBracket); err != nil {
+				return nil, err
+			}
+		}
+
 		if err := p.expectToken(tokEq); err != nil {
 			return nil, err
 		}
 
-		// Check for counter expression: col = ident +/- val.
 		val, err := p.parseAssignmentValue()
 		if err != nil {
 			return nil, err
 		}
-		assignments = append(assignments, Assignment{Column: col, Value: val})
+		assignments = append(assignments, Assignment{
+			Column:    col,
+			Subscript: subscript,
+			Value:     val,
+		})
 		if p.lex.peek().kind != tokComma {
 			break
 		}
@@ -580,13 +598,12 @@ func (p *parser) parseAssignments() ([]Assignment, error) {
 }
 
 // parseAssignmentValue parses the right-hand side of a SET assignment.
-// This is either a simple expression or a counter expression
-// (ident + val / ident - val).
+// Handles counter/collection expressions: ident +/- expr (append,
+// remove) and expr +/- ident (prepend).
 func (p *parser) parseAssignmentValue() (Expr, error) {
-	// Look ahead for counter pattern: ident +/- expr
+	// Look ahead for counter/collection pattern: ident +/- expr.
 	if p.lex.peek().kind == tokIdent {
 		next := p.lex.peek()
-		// Check the token after the identifier.
 		saved := p.lex.cur
 		p.lex.next() // consume ident
 		if p.lex.peek().kind == tokPlus || p.lex.peek().kind == tokMinus {
@@ -608,7 +625,33 @@ func (p *parser) parseAssignmentValue() (Expr, error) {
 		// Not a counter expression; backtrack and parse as normal expr.
 		p.lex.cur = saved
 	}
-	return p.parseExpr()
+
+	// Parse the left-hand expression.
+	left, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for binary collection operation: expr +/- expr (e.g.
+	// [1,2] + col for list prepend).
+	if p.lex.peek().kind == tokPlus || p.lex.peek().kind == tokMinus {
+		op := p.lex.next()
+		right, err := p.parseFuncArgExpr()
+		if err != nil {
+			return nil, err
+		}
+		opStr := "+"
+		if op.kind == tokMinus {
+			opStr = "-"
+		}
+		return &CollectionOpExpr{
+			Left:  left,
+			Op:    opStr,
+			Right: right,
+		}, nil
+	}
+
+	return left, nil
 }
 
 // parseAlter parses ALTER TABLE and ALTER KEYSPACE statements.

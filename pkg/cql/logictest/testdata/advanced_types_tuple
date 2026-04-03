@@ -1,39 +1,37 @@
 # Tuples and frozen collection types.
 #
-# The parser accepts tuple<T,...> and frozen<T> type syntax, but the
-# translator does not yet map these to CRDB SQL types. These tests
-# document the expected errors.
+# The parser accepts tuple<T,...> and frozen<T> type syntax. Tuple
+# columns are not yet supported. Frozen collection columns map to
+# JSONB (same as unfrozen collections — CRDB does not enforce
+# immutability).
 
 exec
 USE defaultdb
 ----
 
-# Tuple column type.
+# Tuple column type — unsupported.
 error
 CREATE TABLE tuple_table (id int PRIMARY KEY, coords tuple<int, int>)
 ----
 unsupported CQL type "tuple" for column "coords"
 
-# Frozen tuple column type.
-error
+# Frozen tuple column type — frozen<> maps to JSONB, even though
+# tuple operations are not yet supported.
+exec
 CREATE TABLE frozen_tuple_table (id int PRIMARY KEY, coords frozen<tuple<int, int>>)
 ----
-unsupported CQL type "frozen" for column "coords"
 
-# Frozen map column type.
-error
+# Frozen map column type — maps to JSONB.
+exec
 CREATE TABLE frozen_map_table (id int PRIMARY KEY, data frozen<map<text, text>>)
 ----
-unsupported CQL type "frozen" for column "data"
 
-# Frozen set column type.
-error
+# Frozen set column type — maps to JSONB.
+exec
 CREATE TABLE frozen_set_table (id int PRIMARY KEY, tags frozen<set<text>>)
 ----
-unsupported CQL type "frozen" for column "tags"
 
-# Frozen list column type.
-error
+# Frozen list column type — maps to JSONB.
+exec
 CREATE TABLE frozen_list_table (id int PRIMARY KEY, items frozen<list<int>>)
 ----
-unsupported CQL type "frozen" for column "items"

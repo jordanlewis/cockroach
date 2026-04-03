@@ -28,11 +28,11 @@ CREATE TABLE udt_table (id int PRIMARY KEY, addr address)
 ----
 unsupported CQL type "address" for column "addr"
 
-# Frozen UDT column type.
-error
+# Frozen UDT column type — frozen<> maps to JSONB even for UDTs.
+# Table creation succeeds but UDT data operations are not supported.
+exec
 CREATE TABLE frozen_udt_table (id int PRIMARY KEY, addr frozen<address>)
 ----
-unsupported CQL type "frozen" for column "addr"
 
 # Nested UDTs (a UDT containing another UDT).
 error

@@ -160,6 +160,10 @@ func CQLTypeFromCRDB(t *types.T) (CQLType, error) {
 		return CQLUuid, nil
 	case types.INetFamily:
 		return CQLInet, nil
+	case types.JsonFamily:
+		// JSONB columns are used to store CQL collection types (list,
+		// set, map). On the wire they are encoded as varchar (JSON text).
+		return CQLVarchar, nil
 	default:
 		return 0, errors.Newf(
 			"no CQL type mapping for CRDB type %s (family %d)", t.SQLString(), t.Family(),

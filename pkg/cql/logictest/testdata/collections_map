@@ -1,115 +1,155 @@
 # Collection type: map.
 #
 # CQL maps are key-value collections (e.g., map<text, int>). They
-# support element insertion, update by key, and element removal.
-# The parser accepts map<K,V> type syntax and map literal syntax
-# ({key: val, ...}), but the translator does not yet map these to
-# CRDB SQL types. These tests document the expected errors.
+# are stored as JSONB objects in CockroachDB. Map literals
+# ({key: val, ...}) translate to jsonb_build_object() calls; merge
+# and key removal use JSONB || and - operators.
 
 exec
 USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# CREATE TABLE with map column — unsupported type.
+# CREATE TABLE with map columns — maps map<K,V> to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_map (id int PRIMARY KEY, attrs map<text, text>)
 ----
-unsupported CQL type "map" for column "attrs"
 
-# Bare map type (without angle brackets).
+# Bare map type (without angle brackets) is still a parser error.
 error
 CREATE TABLE lt_coll_map2 (id int, data map, PRIMARY KEY (id))
 ----
 at position 40: map type requires type parameters (e.g. map<text, int>)
 
 # Map with int values.
-error
+exec
 CREATE TABLE lt_coll_map3 (id int PRIMARY KEY, scores map<text, int>)
 ----
-unsupported CQL type "map" for column "scores"
 
 # Map with boolean values.
-error
+exec
 CREATE TABLE lt_coll_map4 (id int PRIMARY KEY, flags map<text, boolean>)
 ----
-unsupported CQL type "map" for column "flags"
 
 # ---------------------------------------------------------------
-# Frozen map column — unsupported frozen modifier.
+# Frozen map column — frozen<T> also maps to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_fmap (id int PRIMARY KEY, data frozen<map<text, text>>)
 ----
-unsupported CQL type "frozen" for column "data"
 
 # ---------------------------------------------------------------
-# INSERT with map literal — translator rejects map expression.
-#
-# CQL map literals use braces with colon-separated entries:
-# {'key1': 'val1', 'key2': 'val2'}. The parser accepts this
-# syntax but the translator cannot convert it to SQL.
+# INSERT with map literal — translates to jsonb_build_object().
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO lt_coll_map (id, attrs) VALUES (1, {'color': 'red', 'size': 'large'})
 ----
-translating INSERT value: unsupported expression type: *parser.MapExprLiteral
+
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 1
+----
+id attrs
+1 {"color": "red", "size": "large"}
 
 # ---------------------------------------------------------------
-# UPDATE with map literal — translator rejects map expression.
+# UPDATE with map literal — full replacement.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE lt_coll_map SET attrs = {'key': 'val'} WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.MapExprLiteral
+
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 1
+----
+id attrs
+1 {"key": "val"}
 
 # ---------------------------------------------------------------
-# Map element insertion (SET col[key] = val) — subscript
-# assignment unsupported.
+# Map element insertion (SET col[key] = val) — jsonb_set.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE lt_coll_map SET attrs['newkey'] = 'newval' WHERE id = 1
 ----
-at position 28: expected '=', got "["
 
-# ---------------------------------------------------------------
-# Map append (SET col = col + {...}) — binary expressions unsupported.
-# ---------------------------------------------------------------
-
-error
-UPDATE lt_coll_map SET attrs = attrs + {'extra': 'val'} WHERE id = 1
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.MapExprLiteral
+id attrs
+1 {"key": "val", "newkey": "newval"}
 
 # ---------------------------------------------------------------
-# Map key removal (SET col = col - {...}) — binary expressions unsupported.
+# Map append (SET col = col + {...}) — JSONB merge via ||.
 # ---------------------------------------------------------------
 
-error
-UPDATE lt_coll_map SET attrs = attrs - {'unwanted'} WHERE id = 1
+exec
+UPDATE lt_coll_map SET attrs = attrs + {'extra': 'val2'} WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.SetLiteral
+
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 1
+----
+id attrs
+1 {"extra": "val2", "key": "val", "newkey": "newval"}
 
 # ---------------------------------------------------------------
-# Nested map (map<text, map<text, int>>) — unsupported.
+# Map key removal (SET col = col - {...}) — JSONB key removal.
+# CQL syntax: col = col - {'key'} removes the key from the map.
+# Translates to JSONB subtraction: "col" - jsonb_build_array('key').
 # ---------------------------------------------------------------
 
-error
+exec
+UPDATE lt_coll_map SET attrs = attrs - {'extra'} WHERE id = 1
+----
+
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 1
+----
+id attrs
+1 {"key": "val", "newkey": "newval"}
+
+# ---------------------------------------------------------------
+# Nested map (map<text, map<text, int>>) — works via JSONB nesting.
+# ---------------------------------------------------------------
+
+exec
 CREATE TABLE lt_coll_nested_map (id int PRIMARY KEY, nested map<text, map<text, int>>)
 ----
-unsupported CQL type "map" for column "nested"
+
+exec
+INSERT INTO lt_coll_nested_map (id, nested) VALUES (1, {'outer': {'inner': 42}})
+----
+
+query
+SELECT id, nested FROM lt_coll_nested_map WHERE id = 1
+----
+id nested
+1 {"outer": {"inner": 42}}
 
 # ---------------------------------------------------------------
-# Map used as clustering key — unsupported type.
+# Map used as clustering key — CRDB accepts JSONB in PK but it
+# is generally not recommended for collections.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_map_ck (pk int, ck map<text, int>, val text, PRIMARY KEY (pk, ck))
 ----
-unsupported CQL type "map" for column "ck"
+
+# ---------------------------------------------------------------
+# Empty map literal.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lt_coll_map (id, attrs) VALUES (2, {})
+----
+
+query
+SELECT id, attrs FROM lt_coll_map WHERE id = 2
+----
+id attrs
+2 {}

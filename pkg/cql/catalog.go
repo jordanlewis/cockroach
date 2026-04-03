@@ -624,6 +624,8 @@ func crdbTypeToCQLTypeName(crdbType string) string {
 		return "blob"
 	case t == "inet":
 		return "inet"
+	case t == "jsonb":
+		return "text"
 	default:
 		return "text"
 	}

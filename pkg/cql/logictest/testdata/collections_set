@@ -1,95 +1,121 @@
 # Collection type: set.
 #
 # CQL sets are sorted collections of unique elements (e.g.,
-# set<text>). They support add and remove operations. The parser
-# accepts set<T> type syntax and set literal syntax ({...}), but
-# the translator does not yet map these to CRDB SQL types. These
-# tests document the expected errors.
+# set<text>). They are stored as JSONB arrays in CockroachDB.
+# Set literals ({val, ...}) translate to jsonb_build_array() calls;
+# add uses JSONB concatenation (||), removal uses JSONB subtraction.
 
 exec
 USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# CREATE TABLE with set column — unsupported type.
+# CREATE TABLE with set columns — maps set<T> to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_set (id int PRIMARY KEY, emails set<text>)
 ----
-unsupported CQL type "set" for column "emails"
 
-# Bare set type (without angle brackets).
+# Bare set type (without angle brackets) is still a parser error.
 error
 CREATE TABLE lt_coll_set2 (id int, data set, PRIMARY KEY (id))
 ----
 at position 40: set type requires type parameters (e.g. set<text>)
 
 # Set of integers.
-error
+exec
 CREATE TABLE lt_coll_set3 (id int PRIMARY KEY, nums set<int>)
 ----
-unsupported CQL type "set" for column "nums"
 
 # Set of UUIDs.
-error
+exec
 CREATE TABLE lt_coll_set4 (id int PRIMARY KEY, ids set<uuid>)
 ----
-unsupported CQL type "set" for column "ids"
 
 # ---------------------------------------------------------------
-# Frozen set column — unsupported frozen modifier.
+# Frozen set column — frozen<T> also maps to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_fset (id int PRIMARY KEY, tags frozen<set<text>>)
 ----
-unsupported CQL type "frozen" for column "tags"
 
 # ---------------------------------------------------------------
-# INSERT with set literal — translator rejects set expression.
-#
-# CQL set literals use braces: {'a', 'b'}. The parser accepts
-# this syntax but the translator cannot convert it to SQL.
+# INSERT with set literal — translates to jsonb_build_array().
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO lt_coll_set (id, emails) VALUES (1, {'a@example.com', 'b@example.com'})
 ----
-translating INSERT value: unsupported expression type: *parser.SetLiteral
+
+query
+SELECT id, emails FROM lt_coll_set WHERE id = 1
+----
+id emails
+1 ["a@example.com", "b@example.com"]
 
 # ---------------------------------------------------------------
-# UPDATE with set literal — translator rejects set expression.
+# UPDATE with set literal — full replacement.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE lt_coll_set SET emails = {'x@test.com'} WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.SetLiteral
+
+query
+SELECT id, emails FROM lt_coll_set WHERE id = 1
+----
+id emails
+1 ["x@test.com"]
 
 # ---------------------------------------------------------------
-# Set add (SET col = col + {...}) — binary expressions unsupported.
+# Set add (SET col = col + {...}) — JSONB concatenation.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE lt_coll_set SET emails = emails + {'new@test.com'} WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.SetLiteral
 
-# ---------------------------------------------------------------
-# Set removal (SET col = col - {...}) — binary expressions unsupported.
-# ---------------------------------------------------------------
-
-error
-UPDATE lt_coll_set SET emails = emails - {'old@test.com'} WHERE id = 1
+query
+SELECT id, emails FROM lt_coll_set WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.SetLiteral
+id emails
+1 ["x@test.com", "new@test.com"]
 
 # ---------------------------------------------------------------
-# Nested set (set<set<int>>) — unsupported.
+# Set removal (SET col = col - {...}) — JSONB text subtraction
+# removes matching string elements from the array.
 # ---------------------------------------------------------------
 
-error
+exec
+UPDATE lt_coll_set SET emails = emails - {'x@test.com'} WHERE id = 1
+----
+
+query
+SELECT id, emails FROM lt_coll_set WHERE id = 1
+----
+id emails
+1 ["new@test.com"]
+
+# ---------------------------------------------------------------
+# Nested set (set<set<int>>) — works via JSONB nesting.
+# ---------------------------------------------------------------
+
+exec
 CREATE TABLE lt_coll_nested_set (id int PRIMARY KEY, groups set<set<int>>)
 ----
-unsupported CQL type "set" for column "groups"
+
+# ---------------------------------------------------------------
+# Empty set literal.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lt_coll_set (id, emails) VALUES (2, {})
+----
+
+query
+SELECT id, emails FROM lt_coll_set WHERE id = 2
+----
+id emails
+2 {}

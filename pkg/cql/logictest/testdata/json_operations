@@ -84,12 +84,13 @@ SELECT JSON * FROM json_t WHERE id = 1
 # does not map to a CQL wire type.
 # ---------------------------------------------------------------
 
-# toJson on a column — translates to to_jsonb() but CRDB returns JSONB,
-# which is not mapped to a CQL wire type.
-error
+# toJson on a column — translates to to_jsonb(). JSONB is mapped to
+# varchar on the wire (JSON text representation).
+query
 SELECT toJson(name) FROM json_t WHERE id = 1
 ----
-mapping column "to_jsonb": no CQL type mapping for CRDB type JSONB (family 18)
+to_jsonb
+"alice"
 
 # toJson on the entire row via * — not a valid function argument.
 error
@@ -110,11 +111,12 @@ exec
 INSERT INTO json_t (id, name) VALUES (20, fromJson('"frank"'))
 ----
 
-# fromJson in SELECT — produces JSONB which has no CQL wire type mapping.
-error
+# fromJson in SELECT — JSONB is mapped to varchar on the wire.
+query
 SELECT fromJson(name) FROM json_t WHERE id = 20
 ----
-mapping column "name": no CQL type mapping for CRDB type JSONB (family 18)
+name
+"frank"
 
 # ---------------------------------------------------------------
 # CAST operations

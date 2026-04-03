@@ -102,6 +102,12 @@ var cqlTypeToCRDBSQL = map[string]string{
 	"counter":   "INT8",
 	"varint":    "INT8",
 	"decimal":   "DECIMAL",
+	// Collection types are stored as JSONB. Lists and sets become JSON
+	// arrays; maps become JSON objects.
+	"list":   "JSONB",
+	"set":    "JSONB",
+	"map":    "JSONB",
+	"frozen": "JSONB",
 }
 
 // Result holds the output of translating a CQL statement. SQL is the primary
@@ -493,15 +499,36 @@ func translateUpdate(s *parser.UpdateStatement) (Result, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(quoteIdent(a.Column))
-		sb.WriteString(" = ")
-		sqlVal, param, err := exprToSQL(a.Value, &paramIdx)
-		if err != nil {
-			return Result{}, errors.Wrap(err, "translating SET value")
-		}
-		sb.WriteString(sqlVal)
-		if param != nil {
-			params = append(params, param)
+		if a.Subscript != nil {
+			// Map subscript assignment: col['key'] = val →
+			// "col" = jsonb_set("col", ARRAY[key], to_jsonb(val))
+			keySQL, _, err := exprToSQL(a.Subscript, &paramIdx)
+			if err != nil {
+				return Result{}, errors.Wrap(err, "translating subscript key")
+			}
+			valSQL, param, err := exprToSQL(a.Value, &paramIdx)
+			if err != nil {
+				return Result{}, errors.Wrap(err, "translating subscript value")
+			}
+			col := quoteIdent(a.Column)
+			sb.WriteString(fmt.Sprintf(
+				"%s = jsonb_set(%s, ARRAY[%s], to_jsonb(%s))",
+				col, col, keySQL, valSQL,
+			))
+			if param != nil {
+				params = append(params, param)
+			}
+		} else {
+			sb.WriteString(quoteIdent(a.Column))
+			sb.WriteString(" = ")
+			sqlVal, param, err := exprToSQL(a.Value, &paramIdx)
+			if err != nil {
+				return Result{}, errors.Wrap(err, "translating SET value")
+			}
+			sb.WriteString(sqlVal)
+			if param != nil {
+				params = append(params, param)
+			}
 		}
 	}
 
@@ -596,11 +623,39 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		*paramIdx++
 		return placeholder, placeholder, nil
 	case *parser.CounterExpr:
+		// Collection operations use JSONB concatenation (||) instead of
+		// arithmetic +/-. Detect by checking the value expression type.
+		if isCollectionExpr(v.Value) {
+			return collectionBinaryToSQL(v.Column, v.Op, v.Value, paramIdx)
+		}
 		valSQL, param, err := exprToSQL(v.Value, paramIdx)
 		if err != nil {
 			return "", nil, err
 		}
 		return fmt.Sprintf("%s %s %s", quoteIdent(v.Column), v.Op, valSQL), param, nil
+	case *parser.CollectionOpExpr:
+		leftSQL, lParam, err := exprToSQL(v.Left, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		rightSQL, rParam, err := exprToSQL(v.Right, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		var param interface{}
+		if lParam != nil {
+			param = lParam
+		}
+		if rParam != nil {
+			param = rParam
+		}
+		return fmt.Sprintf("%s || %s", leftSQL, rightSQL), param, nil
+	case *parser.ListLiteral:
+		return listLiteralToSQL(v, paramIdx)
+	case *parser.SetLiteral:
+		return setLiteralToSQL(v, paramIdx)
+	case *parser.MapExprLiteral:
+		return mapLiteralToSQL(v, paramIdx)
 	case *parser.ColumnRef:
 		return quoteIdent(v.Name), nil, nil
 	case *parser.StarExpr:
@@ -1024,4 +1079,124 @@ func translateBatch(s *parser.BatchStatement) (Result, error) {
 	}
 	sb.WriteString("; COMMIT")
 	return Result{SQL: sb.String(), Params: allParams}, nil
+}
+
+// isCollectionExpr returns true if the expression is a collection
+// literal (list, set, or map).
+func isCollectionExpr(e parser.Expr) bool {
+	switch e.(type) {
+	case *parser.ListLiteral, *parser.SetLiteral, *parser.MapExprLiteral:
+		return true
+	default:
+		return false
+	}
+}
+
+// collectionBinaryToSQL translates a counter-style binary expression
+// into a JSONB collection operation. For +, uses JSONB concatenation
+// (||). For -, handles map key removal by extracting string values
+// from a SetLiteral and chaining text removals.
+func collectionBinaryToSQL(
+	column, op string, value parser.Expr, paramIdx *int,
+) (string, interface{}, error) {
+	col := quoteIdent(column)
+	if op == "+" {
+		valSQL, param, err := exprToSQL(value, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("%s || %s", col, valSQL), param, nil
+	}
+	// op == "-": removal. For SetLiteral values, chain individual text
+	// removals (works for map key removal). For other types, use the
+	// generic JSONB subtraction.
+	if set, ok := value.(*parser.SetLiteral); ok && len(set.Values) > 0 {
+		result := col
+		for _, elem := range set.Values {
+			elemSQL, _, err := exprToSQL(elem, paramIdx)
+			if err != nil {
+				return "", nil, err
+			}
+			result = fmt.Sprintf("(%s - %s)", result, elemSQL)
+		}
+		return result, nil, nil
+	}
+	valSQL, param, err := exprToSQL(value, paramIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf("%s - %s", col, valSQL), param, nil
+}
+
+// listLiteralToSQL translates a CQL list literal [v1, v2, ...] to
+// CRDB's jsonb_build_array(v1, v2, ...).
+func listLiteralToSQL(lit *parser.ListLiteral, paramIdx *int) (string, interface{}, error) {
+	if len(lit.Values) == 0 {
+		return "'[]'::JSONB", nil, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("jsonb_build_array(")
+	for i, val := range lit.Values {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sqlVal, _, err := exprToSQL(val, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		sb.WriteString(sqlVal)
+	}
+	sb.WriteByte(')')
+	return sb.String(), nil, nil
+}
+
+// setLiteralToSQL translates a CQL set literal {v1, v2, ...} to
+// CRDB's jsonb_build_array(v1, v2, ...). CQL sets are stored as
+// JSON arrays (sorted uniqueness is an application-level concern).
+func setLiteralToSQL(lit *parser.SetLiteral, paramIdx *int) (string, interface{}, error) {
+	if len(lit.Values) == 0 {
+		return "'[]'::JSONB", nil, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("jsonb_build_array(")
+	for i, val := range lit.Values {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sqlVal, _, err := exprToSQL(val, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		sb.WriteString(sqlVal)
+	}
+	sb.WriteByte(')')
+	return sb.String(), nil, nil
+}
+
+// mapLiteralToSQL translates a CQL map literal {k1: v1, k2: v2, ...}
+// to CRDB's jsonb_build_object(k1, v1, k2, v2, ...).
+func mapLiteralToSQL(lit *parser.MapExprLiteral, paramIdx *int) (string, interface{}, error) {
+	if len(lit.Entries) == 0 {
+		return "'{}'::JSONB", nil, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("jsonb_build_object(")
+	for i, entry := range lit.Entries {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		keySQL, _, err := exprToSQL(entry.Key, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		valSQL, _, err := exprToSQL(entry.Value, paramIdx)
+		if err != nil {
+			return "", nil, err
+		}
+		sb.WriteString(keySQL)
+		sb.WriteString(", ")
+		sb.WriteString(valSQL)
+	}
+	sb.WriteByte(')')
+	return sb.String(), nil, nil
 }

@@ -151,10 +151,11 @@ type UpdateStatement struct {
 
 func (*UpdateStatement) statementNode() {}
 
-// Assignment represents a SET assignment: <col> = <val>.
+// Assignment represents a SET assignment: <col> = <val> or <col>[<key>] = <val>.
 type Assignment struct {
-	Column string
-	Value  Expr
+	Column    string
+	Subscript Expr // non-nil for col[key] = val (map element update)
+	Value     Expr
 }
 
 // DeleteStatement represents
@@ -343,6 +344,18 @@ type ColumnRef struct {
 }
 
 func (*ColumnRef) exprNode() {}
+
+// CollectionOpExpr represents a binary collection operation used in SET
+// assignments: <left> + <right> (e.g. [1,2] + col for list prepend) or
+// <left> - <right>. Unlike CounterExpr, the left side can be an arbitrary
+// expression (not just a column name).
+type CollectionOpExpr struct {
+	Left  Expr
+	Op    string // "+" or "-"
+	Right Expr
+}
+
+func (*CollectionOpExpr) exprNode() {}
 
 // CastExpr represents CAST(expr AS type).
 type CastExpr struct {

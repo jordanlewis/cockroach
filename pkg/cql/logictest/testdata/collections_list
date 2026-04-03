@@ -1,104 +1,148 @@
 # Collection type: list.
 #
 # CQL lists are ordered collections of elements (e.g., list<text>).
-# They support positional access, append, prepend, and removal.
-# The parser accepts list<T> type syntax and list literal syntax ([...]),
-# but the translator does not yet map these to CRDB SQL types.
-# These tests document the expected errors.
+# They are stored as JSONB arrays in CockroachDB. List literals
+# ([...]) translate to jsonb_build_array() calls; append/prepend
+# use JSONB concatenation (||).
 
 exec
 USE defaultdb
 ----
 
 # ---------------------------------------------------------------
-# CREATE TABLE with list column — unsupported type.
+# CREATE TABLE with list columns — maps list<T> to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_list (id int PRIMARY KEY, tags list<text>)
 ----
-unsupported CQL type "list" for column "tags"
 
-# Bare list type (without angle brackets).
+# Bare list type (without angle brackets) is still a parser error.
 error
 CREATE TABLE lt_coll_list2 (id int, data list, PRIMARY KEY (id))
 ----
 at position 41: list type requires type parameters (e.g. list<text>)
 
 # List of integers.
-error
+exec
 CREATE TABLE lt_coll_list3 (id int PRIMARY KEY, nums list<int>)
 ----
-unsupported CQL type "list" for column "nums"
 
 # List of UUIDs.
-error
+exec
 CREATE TABLE lt_coll_list4 (id int PRIMARY KEY, ids list<uuid>)
 ----
-unsupported CQL type "list" for column "ids"
 
 # ---------------------------------------------------------------
-# Frozen list column — unsupported frozen modifier.
+# Frozen list column — frozen<T> also maps to JSONB.
 # ---------------------------------------------------------------
 
-error
+exec
 CREATE TABLE lt_coll_flist (id int PRIMARY KEY, items frozen<list<int>>)
 ----
-unsupported CQL type "frozen" for column "items"
 
 # ---------------------------------------------------------------
-# INSERT with list literal — translator rejects list expression.
-#
-# CQL list literals use square brackets: [1, 2, 3]. The parser
-# accepts this syntax but the translator cannot convert it to SQL.
+# INSERT with list literal — translates to jsonb_build_array().
 # ---------------------------------------------------------------
 
-error
+exec
 INSERT INTO lt_coll_list (id, tags) VALUES (1, ['hello', 'world'])
 ----
-translating INSERT value: unsupported expression type: *parser.ListLiteral
+
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 1
+----
+id tags
+1 ["hello", "world"]
 
 # ---------------------------------------------------------------
-# UPDATE with list literal — translator rejects list expression.
+# UPDATE with list literal — full replacement.
 # ---------------------------------------------------------------
 
-error
+exec
 UPDATE lt_coll_list SET tags = ['a', 'b'] WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.ListLiteral
 
-# ---------------------------------------------------------------
-# List append (SET col = col + [...]) — binary expressions unsupported.
-# ---------------------------------------------------------------
-
-error
-INSERT INTO lt_coll_list (id, tags) VALUES (1, ['a'] + ['b'])
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
-at position 53: expected ')', got "+"
+id tags
+1 ["a", "b"]
 
 # ---------------------------------------------------------------
-# List prepend (SET col = [...] + col) — binary expressions unsupported.
+# List append (SET col = col + [...]) — JSONB concatenation.
 # ---------------------------------------------------------------
 
-error
-UPDATE lt_coll_list SET tags = ['prepend'] + tags WHERE id = 1
+exec
+UPDATE lt_coll_list SET tags = tags + ['c'] WHERE id = 1
 ----
-at position 43: expected WHERE, got "+"
 
-# ---------------------------------------------------------------
-# List removal (SET col = col - [...]) — binary expressions unsupported.
-# ---------------------------------------------------------------
-
-error
-UPDATE lt_coll_list SET tags = tags - ['remove'] WHERE id = 1
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 1
 ----
-translating SET value: unsupported expression type: *parser.ListLiteral
+id tags
+1 ["a", "b", "c"]
 
 # ---------------------------------------------------------------
-# Nested list (list<list<int>>) — unsupported.
+# List prepend (SET col = [...] + col) — JSONB concatenation.
 # ---------------------------------------------------------------
 
-error
+exec
+UPDATE lt_coll_list SET tags = ['z'] + tags WHERE id = 1
+----
+
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 1
+----
+id tags
+1 ["z", "a", "b", "c"]
+
+# ---------------------------------------------------------------
+# List removal (SET col = col - [...]) — JSONB subtraction.
+# Note: JSONB - array removes by value for objects (keys), but
+# for arrays it only works with integer index removal. CQL list
+# removal by value is approximated here.
+# ---------------------------------------------------------------
+
+# Removal by index (CRDB JSONB supports integer index removal).
+exec
+UPDATE lt_coll_list SET tags = tags - 0 WHERE id = 1
+----
+
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 1
+----
+id tags
+1 ["a", "b", "c"]
+
+# ---------------------------------------------------------------
+# Nested list (list<list<int>>) — works via JSONB nesting.
+# ---------------------------------------------------------------
+
+exec
 CREATE TABLE lt_coll_nested_list (id int PRIMARY KEY, matrix list<list<int>>)
 ----
-unsupported CQL type "list" for column "matrix"
+
+exec
+INSERT INTO lt_coll_nested_list (id, matrix) VALUES (1, [[1, 2], [3, 4]])
+----
+
+query
+SELECT id, matrix FROM lt_coll_nested_list WHERE id = 1
+----
+id matrix
+1 [[1, 2], [3, 4]]
+
+# ---------------------------------------------------------------
+# Empty list literal.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO lt_coll_list (id, tags) VALUES (2, [])
+----
+
+query
+SELECT id, tags FROM lt_coll_list WHERE id = 2
+----
+id tags
+2 []

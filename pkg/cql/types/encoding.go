@@ -65,11 +65,16 @@ func EncodeValue(buf []byte, val []byte) []byte {
 }
 
 func encodeText(d tree.Datum) ([]byte, bool, error) {
-	s, ok := d.(*tree.DString)
-	if !ok {
-		return nil, false, errors.Newf("expected DString, got %T", d)
+	switch v := d.(type) {
+	case *tree.DString:
+		return []byte(string(*v)), false, nil
+	case *tree.DJSON:
+		// JSONB datums (used for CQL collection types) are encoded as
+		// their JSON text representation.
+		return []byte(v.JSON.String()), false, nil
+	default:
+		return nil, false, errors.Newf("expected DString or DJSON, got %T", d)
 	}
-	return []byte(string(*s)), false, nil
 }
 
 func encodeInt(d tree.Datum) ([]byte, bool, error) {
