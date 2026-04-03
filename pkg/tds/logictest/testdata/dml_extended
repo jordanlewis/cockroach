@@ -18,8 +18,13 @@ exec
 INSERT INTO src_tbl (id, val) VALUES (3, 'gamma')
 ----
 
+# dst_tbl needs a PRIMARY KEY on id for MERGE (ON CONFLICT) support.
 exec
-CREATE TABLE dst_tbl (id INT, val VARCHAR(50))
+CREATE TABLE dst_tbl (id INT NOT NULL, val VARCHAR(50))
+----
+
+exec
+ALTER TABLE dst_tbl ADD CONSTRAINT pk_dst PRIMARY KEY (id)
 ----
 
 # --- Multi-row INSERT (single VALUES with multiple rows) ---
@@ -40,44 +45,73 @@ id  name
 2  two
 3  three
 
-# --- INSERT ... SELECT (not yet supported by parser) ---
+# --- INSERT ... SELECT ---
 
-exec error=(parse error)
+exec
 INSERT INTO dst_tbl (id, val) SELECT id, val FROM src_tbl WHERE id <= 2
 ----
 
-# --- MERGE statement (not yet supported by parser) ---
+query colnames
+SELECT id, val FROM dst_tbl ORDER BY id
+----
+id  val
+1  alpha
+2  beta
 
-exec error=(parse error)
+# --- MERGE statement ---
+# MERGE translates to INSERT ... ON CONFLICT DO UPDATE SET ...
+# This requires a unique constraint on the conflict columns (id has PK).
+
+exec
 MERGE INTO dst_tbl AS target USING src_tbl AS source ON target.id = source.id WHEN MATCHED THEN UPDATE SET val = source.val WHEN NOT MATCHED THEN INSERT (id, val) VALUES (source.id, source.val)
 ----
 
-# --- OUTPUT clause on INSERT (not yet supported by parser) ---
+# After MERGE: id=1,2 updated (same vals), id=3 inserted.
+query colnames
+SELECT id, val FROM dst_tbl ORDER BY id
+----
+id  val
+1  alpha
+2  beta
+3  gamma
 
-exec error=(parse error)
+# --- OUTPUT clause on INSERT ---
+# OUTPUT inserted.col translates to RETURNING col.
+
+exec
 INSERT INTO dst_tbl (id, val) OUTPUT inserted.id, inserted.val VALUES (10, 'test')
 ----
 
-# --- OUTPUT clause on DELETE (not yet supported by parser) ---
+# --- OUTPUT clause on DELETE ---
 
-exec error=(parse error)
+exec
 DELETE FROM src_tbl OUTPUT deleted.id, deleted.val WHERE id = 3
 ----
 
-# --- OUTPUT clause on UPDATE (not yet supported by parser) ---
+# --- OUTPUT clause on UPDATE ---
 
-exec error=(parse error)
+exec
 UPDATE src_tbl SET val = 'updated' OUTPUT inserted.id, inserted.val WHERE id = 1
 ----
 
-# --- UPDATE with FROM/JOIN (T-SQL extension, not yet supported) ---
+# --- UPDATE with FROM/JOIN (T-SQL extension) ---
+# UPDATE target SET col = expr FROM target alias JOIN other ON ...
 
-exec error=(parse error)
+exec
 UPDATE dst_tbl SET val = s.val FROM dst_tbl d INNER JOIN src_tbl s ON d.id = s.id
 ----
 
-# --- DELETE with JOIN (T-SQL extension, not yet supported) ---
+# --- DELETE with JOIN (T-SQL extension) ---
+# DELETE alias FROM target alias JOIN other ON ... WHERE ...
+# src_tbl currently has (1, 'updated'), (2, 'beta').
 
-exec error=(parse error)
-DELETE d FROM dst_tbl d INNER JOIN src_tbl s ON d.id = s.id WHERE s.val = 'alpha'
+exec
+DELETE d FROM dst_tbl d INNER JOIN src_tbl s ON d.id = s.id WHERE s.val = 'beta'
 ----
+
+# After DELETE...JOIN: dst_tbl id=2 was deleted (matched s.val = 'beta').
+query colnames
+SELECT COUNT(*) AS cnt FROM dst_tbl WHERE id = 2
+----
+cnt
+0

@@ -564,14 +564,27 @@ func translateWith(s *parser.WithStmt) (string, error) {
 func translateDelete(s *parser.DeleteStmt) string {
 	var b strings.Builder
 	if len(s.From) > 0 {
-		// Multi-table DELETE → DELETE FROM <target> USING <other_tables>.
-		// The target is s.Table (which may be an alias). We need to find the
-		// actual table definition from s.From and emit the others as USING.
-		fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(s.Table))
+		// Multi-table DELETE → DELETE FROM <target> [AS alias] USING <other_tables>.
+		// s.Table may be an alias (e.g. DELETE d FROM dst_tbl d JOIN ...).
+		// Resolve it to the actual table name from the FROM refs.
+		targetName := s.Table
+		targetAlias := ""
+		for _, ref := range s.From {
+			if ref.Alias == s.Table || ref.Name == s.Table {
+				targetName = ref.Name
+				if ref.Alias != "" && ref.Alias != ref.Name {
+					targetAlias = ref.Alias
+				}
+				break
+			}
+		}
+		fmt.Fprintf(&b, "DELETE FROM %s", quoteIdent(targetName))
+		if targetAlias != "" {
+			fmt.Fprintf(&b, " AS %s", quoteIdent(targetAlias))
+		}
 		var usingParts []string
 		for _, ref := range s.From {
-			name := ref.Name
-			if name == s.Table {
+			if ref.Name == targetName {
 				continue
 			}
 			usingParts = append(usingParts, translateTableRef(ref))

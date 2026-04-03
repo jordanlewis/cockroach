@@ -7,13 +7,13 @@ Generated: 2026-04-03
 | Metric | Count |
 |--------|-------|
 | Total test files | 34 |
-| Total test directives (exec/query) | 729 |
-| Passing directives | 663 (91%) |
-| Error directives (expected failures) | 66 (9%) |
+| Total test directives (exec/query) | 736 |
+| Passing directives | 677 (92%) |
+| Error directives (expected failures) | 59 (8%) |
 | Known behavioral divergences | 2 |
 | Stale test comments | 1 |
 
-## Error Categorization (66 total)
+## Error Categorization (59 total)
 
 Errors are categorized by root cause and implementation effort. "Expected
 errors" (bad syntax, missing tables) are separated from feature gaps.
@@ -49,7 +49,7 @@ These features parse correctly but are intentionally blocked from execution.
 | ddl_extended | unsupported | CREATE TRIGGER |
 | tsql_control_flow | Test error | RAISERROR (Sybase syntax, working correctly) |
 
-### Parser Feature Gaps — 43
+### Parser Feature Gaps — 36
 
 These fail because the T-SQL parser cannot parse the syntax yet.
 Grouped by feature area for convoy planning.
@@ -88,20 +88,12 @@ a complete SELECT statement and parsing the second SELECT.
 **Implementation note:** Requires parsing OVER (...) clauses after
 function calls, including PARTITION BY and ORDER BY within the window spec.
 
-#### DML Extensions (7 errors)
+#### DML Extensions (0 errors — IMPLEMENTED)
 
-| File | Count | Features |
-|------|-------|----------|
-| dml_extended | 1 | INSERT ... SELECT |
-| dml_extended | 1 | MERGE statement |
-| dml_extended | 3 | OUTPUT clause (INSERT, DELETE, UPDATE) |
-| dml_extended | 1 | UPDATE ... FROM ... JOIN |
-| dml_extended | 1 | DELETE ... JOIN |
-
-**Implementation note:** INSERT...SELECT requires parsing SELECT after
-VALUES position. MERGE is a complex new statement type. OUTPUT is a
-clause modifier. UPDATE/DELETE with FROM/JOIN are T-SQL extensions to
-standard DML.
+All 7 DML extension features are now fully supported:
+- INSERT...SELECT, MERGE (→ INSERT ON CONFLICT), OUTPUT clause
+  (→ RETURNING) on INSERT/UPDATE/DELETE, UPDATE...FROM...JOIN,
+  DELETE...JOIN (→ DELETE USING). See dml_extended tests.
 
 #### CAST / TRY_CAST Syntax (2 errors)
 
@@ -248,14 +240,10 @@ pagination. Both are small, high-value parser changes.
 **Estimated scope:** Special-case CAST(expr AS type) in expression
 parser. Add OFFSET-FETCH to ORDER BY clause handling.
 
-### Convoy C: DML Extensions (MEDIUM priority, 7 errors)
+### Convoy C: DML Extensions (COMPLETE — 0 errors remaining)
 
-INSERT...SELECT, OUTPUT, UPDATE...FROM, DELETE...JOIN, MERGE.
-Important for ETL and data migration workloads.
-
-**Estimated scope:** INSERT...SELECT is small. OUTPUT and MERGE are
-medium complexity. UPDATE/DELETE with FROM/JOIN need JOIN support in
-DML statements.
+All DML extension features (INSERT...SELECT, OUTPUT, UPDATE...FROM,
+DELETE...JOIN, MERGE) are now implemented.
 
 ### Convoy D: Window Functions (MEDIUM priority, 3 errors)
 
