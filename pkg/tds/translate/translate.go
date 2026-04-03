@@ -1557,7 +1557,10 @@ func translateArgs(args []parser.Expr) []string {
 func translateSystemVariable(name string) string {
 	switch strings.ToUpper(name) {
 	case "@@ROWCOUNT":
-		return "current_setting('crdb_internal.num_rows_affected')"
+		// [Both] @@ROWCOUNT tracks the number of rows affected by the last
+		// DML statement. The executor tracks this state and substitutes the
+		// value before execution (same pattern as @@TRANCOUNT).
+		return "@@ROWCOUNT"
 	case "@@IDENTITY":
 		return "lastval()"
 	case "@@VERSION":

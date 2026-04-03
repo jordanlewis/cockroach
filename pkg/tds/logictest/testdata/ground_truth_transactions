@@ -93,11 +93,8 @@ SELECT f FROM gt_txn_test ORDER BY f
 # Transaction with DML: insert + rollback should discard data.
 # Source: thda/tds session_test.go (TestConn_BeginTx)
 #
-# Note: In real Sybase, ROLLBACK discards the insert and only
-# the committed row (1) should remain. Our TDS frontend currently
-# does not properly implement transaction rollback semantics, so
-# the rolled-back row persists. This test documents the expected
-# Sybase behavior — the extra row is a known divergence.
+# ROLLBACK discards the insert and only the committed row (1)
+# should remain. This matches real Sybase/SQL Server behavior.
 # ============================================================
 
 exec
@@ -112,14 +109,11 @@ exec
 ROLLBACK
 ----
 
-# In real Sybase only the committed row (1) would remain.
-# Our frontend currently shows both rows because ROLLBACK
-# does not undo the DML.
+# Only the committed row (1) remains — ROLLBACK undid the insert.
 query
 SELECT f FROM gt_txn_test ORDER BY f
 ----
 1
-2
 
 exec
 DROP TABLE gt_txn_test

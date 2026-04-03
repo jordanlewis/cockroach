@@ -5,10 +5,12 @@
 
 # @@VERSION — already tested, works (handled by catalog layer).
 
-# @@ROWCOUNT — translated to current_setting() which fails in CRDB.
-query error=(unrecognized configuration parameter)
+# @@ROWCOUNT — returns the number of rows affected by the last DML.
+# Initially 0 at the start of a session.
+query
 SELECT @@ROWCOUNT
 ----
+0
 
 # @@ERROR — unsupported @@variable, translated to NULL.
 # Returns NULL since the translator uses NULL fallback for unknown @@ vars.

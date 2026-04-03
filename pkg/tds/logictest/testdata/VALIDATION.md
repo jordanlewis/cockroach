@@ -8,10 +8,10 @@ Generated: 2026-04-03 (updated: window functions, subqueries, OFFSET-FETCH now p
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 736 |
-| Passing directives | 686 (93%) |
-| Error directives (expected failures) | 45 (6%) |
+| Passing directives | 687 (93%) |
+| Error directives (expected failures) | 44 (6%) |
 | Empty-result directives (parse OK, TDS wire gap) | 5 |
-| Known behavioral divergences | 2 |
+| Known behavioral divergences | 1 |
 | Stale test comments | 1 |
 
 ## Error Categorization (45 total)
@@ -175,14 +175,14 @@ are marked as `query` with empty expected output.
 column metadata for compound SELECT and CTE statements. Needs investigation
 in the TDS server execution path.
 
-### Translation/Runtime Gaps — 11
+### Translation/Runtime Gaps — 10
 
 These parse correctly but fail at execution due to missing translations
 or CockroachDB limitations.
 
 | File | Error | Root Cause |
 |------|-------|------------|
-| system_metadata | unrecognized configuration parameter | @@ROWCOUNT → current_setting() not supported in CRDB |
+| ~~system_metadata~~ | ~~unrecognized configuration parameter~~ | ~~@@ROWCOUNT~~ FIXED: executor substitutes value directly |
 | system_metadata | lastval | @@IDENTITY → lastval() fails without prior nextval() |
 | system_metadata | unknown function | SCOPE_IDENTITY() not translated |
 | system_metadata | does not exist | sysobjects ORDER BY name — catalog doesn't translate ORDER BY refs |
@@ -195,11 +195,9 @@ or CockroachDB limitations.
 These tests pass but produce incorrect results compared to real
 Sybase/SQL Server behavior:
 
-1. **Transaction rollback doesn't undo DML** (ground_truth_transactions:118)
-   - ROLLBACK after INSERT does not discard the inserted row
-   - Test documents expected Sybase behavior in comments but asserts
-     the current (wrong) CockroachDB behavior
-   - Root cause: TDS frontend's ROLLBACK is syntactic only
+1. ~~**Transaction rollback doesn't undo DML**~~ (ground_truth_transactions:118)
+   - FIXED: ROLLBACK now correctly discards uncommitted DML changes
+   - BEGIN TRAN/COMMIT/ROLLBACK wire to actual CockroachDB KV transactions
 
 2. **PATINDEX lossy translation** (functions_extended:43)
    - PATINDEX('%world%', str) → strpos(str, '%world%') — searches for
@@ -266,7 +264,7 @@ Window functions (ROW_NUMBER, RANK, SUM OVER with PARTITION BY),
 OFFSET-FETCH pagination, subquery in WHERE (IN), scalar subquery,
 and EXISTS now fully pass end-to-end through TDS.
 
-### Runtime Fixes (standalone, 2 items)
+### Runtime Fixes (COMPLETE — 0 items remaining)
 
-1. @@ROWCOUNT implementation (track affected row count per statement)
-2. Transaction rollback semantics (wire ROLLBACK to actual CRDB rollback)
+1. ~~@@ROWCOUNT implementation~~ — FIXED: executor substitutes lastRowsAffected directly
+2. ~~Transaction rollback semantics~~ — FIXED: BEGIN/COMMIT/ROLLBACK wire to real KV transactions

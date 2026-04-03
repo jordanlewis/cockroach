@@ -372,7 +372,7 @@ func TestTranslateSystemVariables(t *testing.T) {
 		{
 			name:     "@@ROWCOUNT",
 			input:    "SELECT @@ROWCOUNT",
-			expected: "SELECT current_setting('crdb_internal.num_rows_affected')",
+			expected: "SELECT @@ROWCOUNT",
 		},
 		{
 			name:     "@@IDENTITY",

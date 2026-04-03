@@ -55,6 +55,12 @@ exec
 ROLLBACK TRANSACTION my_savepoint
 ----
 
+# Close the transaction opened by BEGIN TRAN myTran above.
+
+exec
+ROLLBACK
+----
+
 # Create table for multi-statement batch tests.
 
 exec

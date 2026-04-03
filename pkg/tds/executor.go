@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
@@ -37,11 +38,11 @@ type Executor struct {
 	currentDatabase  string
 	lastRowsAffected int
 
-	// Transaction state. When a BEGIN TRAN is executed, activeTxn holds
-	// the open transaction and tranCount tracks the nesting depth (always
-	// 0 or 1 since CRDB doesn't support nested transactions).
-	activeTxn isql.Txn
-	tranCount int
+	// Transaction state. When a BEGIN TRAN is executed, activeKVTxn holds
+	// the open KV transaction and tranCount tracks the nesting depth
+	// (always 0 or 1 since CRDB doesn't support nested transactions).
+	activeKVTxn *kv.Txn
+	tranCount   int
 
 	// variables holds T-SQL session variables (DECLARE @var).
 	// Keys are variable names including the @ prefix (e.g. "@x").
@@ -73,6 +74,22 @@ func (e *Executor) SetDatabase(db string) {
 // CockroachDB function.
 func (e *Executor) substituteTranCount(sql string) string {
 	return strings.ReplaceAll(sql, "@@TRANCOUNT", fmt.Sprintf("%d", e.tranCount))
+}
+
+// substituteRowCount replaces the @@ROWCOUNT placeholder (emitted by
+// the translator) with the last DML row count as an integer literal.
+// This allows SELECT @@ROWCOUNT to work without a special CockroachDB
+// session variable.
+func (e *Executor) substituteRowCount(sql string) string {
+	return strings.ReplaceAll(sql, "@@ROWCOUNT", fmt.Sprintf("%d", e.lastRowsAffected))
+}
+
+// currentKVTxn returns the active KV transaction, or nil if no
+// transaction is open. All executor methods pass this to the internal
+// executor so that DML/DDL/SELECT within a BEGIN...COMMIT block
+// execute transactionally.
+func (e *Executor) currentKVTxn() *kv.Txn {
+	return e.activeKVTxn
 }
 
 // executorOverride returns an InternalExecutorOverride configured for
@@ -249,11 +266,14 @@ func (e *Executor) executeStatement(
 	}
 }
 
-// executeBeginTran handles BEGIN TRAN by incrementing the transaction
-// counter and acknowledging the command. Actual transaction management
-// is handled by CockroachDB's implicit transaction semantics within
-// each batch execution.
+// executeBeginTran handles BEGIN TRAN by starting a CockroachDB KV
+// transaction and incrementing the transaction counter. Subsequent
+// DML/DDL/SELECT statements will execute within this transaction
+// until COMMIT or ROLLBACK is issued.
 func (e *Executor) executeBeginTran(ctx context.Context, tw *tdswire.TokenWriter) error {
+	if e.activeKVTxn == nil {
+		e.activeKVTxn = e.db.KV().NewTxn(ctx, "tds-txn")
+	}
 	e.tranCount++
 	return tw.WriteDone(tdswire.DoneToken{
 		TokenType: tdswire.TokenDone,
@@ -261,10 +281,19 @@ func (e *Executor) executeBeginTran(ctx context.Context, tw *tdswire.TokenWriter
 	})
 }
 
-// executeCommitTran handles COMMIT by decrementing the transaction counter.
+// executeCommitTran handles COMMIT by committing the active KV
+// transaction and decrementing the transaction counter.
 func (e *Executor) executeCommitTran(ctx context.Context, tw *tdswire.TokenWriter) error {
 	if e.tranCount > 0 {
 		e.tranCount--
+	}
+	if e.tranCount == 0 && e.activeKVTxn != nil {
+		if err := e.activeKVTxn.Commit(ctx); err != nil {
+			e.activeKVTxn = nil
+			return writeErrorToken(tw, 50000, 1, 16,
+				fmt.Sprintf("COMMIT failed: %s", err))
+		}
+		e.activeKVTxn = nil
 	}
 	return tw.WriteDone(tdswire.DoneToken{
 		TokenType: tdswire.TokenDone,
@@ -272,13 +301,23 @@ func (e *Executor) executeCommitTran(ctx context.Context, tw *tdswire.TokenWrite
 	})
 }
 
-// executeRollbackTran handles ROLLBACK. A plain ROLLBACK resets the
-// transaction counter to 0. A ROLLBACK to a named savepoint leaves
-// the counter unchanged (matching T-SQL semantics).
+// executeRollbackTran handles ROLLBACK. A plain ROLLBACK rolls back
+// the active KV transaction and resets the transaction counter to 0.
+// A ROLLBACK to a named savepoint leaves the counter unchanged
+// (matching T-SQL semantics).
 func (e *Executor) executeRollbackTran(
 	ctx context.Context, stmt *parser.RollbackTranStmt, tw *tdswire.TokenWriter,
 ) error {
 	if stmt.Name == "" {
+		if e.activeKVTxn != nil {
+			if err := e.activeKVTxn.Rollback(ctx); err != nil {
+				e.activeKVTxn = nil
+				e.tranCount = 0
+				return writeErrorToken(tw, 50000, 1, 16,
+					fmt.Sprintf("ROLLBACK failed: %s", err))
+			}
+			e.activeKVTxn = nil
+		}
 		e.tranCount = 0
 	}
 	return tw.WriteDone(tdswire.DoneToken{
@@ -331,7 +370,7 @@ func (e *Executor) executeDDL(ctx context.Context, sql string, tw *tdswire.Token
 	rowCount, err := executor.ExecEx(
 		ctx,
 		redact.Sprint("tds-ddl"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
@@ -354,7 +393,7 @@ func (e *Executor) executeDML(ctx context.Context, sql string, tw *tdswire.Token
 	rowCount, err := executor.ExecEx(
 		ctx,
 		redact.Sprint("tds-dml"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
@@ -378,7 +417,7 @@ func (e *Executor) executeSelect(ctx context.Context, sql string, tw *tdswire.To
 	rows, resultCols, err := executor.QueryBufferedExWithCols(
 		ctx,
 		redact.Sprint("tds-select"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
@@ -433,14 +472,14 @@ func (e *Executor) executeSelectWithCompute(
 	parts := strings.Split(crdbSQL, ";\n")
 
 	// Execute the base SELECT (first part).
-	baseSQL := e.substituteTranCount(parts[0])
+	baseSQL := e.substituteRowCount(e.substituteTranCount(parts[0]))
 	if err := e.executeSelectNonFinal(ctx, baseSQL, tw); err != nil {
 		return err
 	}
 
 	// Execute each COMPUTE aggregate query.
 	for i := 1; i < len(parts); i++ {
-		aggSQL := e.substituteTranCount(parts[i])
+		aggSQL := e.substituteRowCount(e.substituteTranCount(parts[i]))
 		if i == len(parts)-1 {
 			// Last result set gets DONE(FINAL).
 			if err := e.executeSelect(ctx, aggSQL, tw); err != nil {
@@ -466,7 +505,7 @@ func (e *Executor) executeSelectNonFinal(
 	rows, resultCols, err := executor.QueryBufferedExWithCols(
 		ctx,
 		redact.Sprint("tds-select-compute"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
@@ -745,6 +784,7 @@ func (e *Executor) execParsedStmt(
 				fmt.Sprintf("T-SQL translation error: %s", err))
 		}
 		crdbSQL = e.substituteTranCount(crdbSQL)
+		crdbSQL = e.substituteRowCount(crdbSQL)
 		crdbSQL = e.substituteVars(crdbSQL)
 		return e.executeStatement(ctx, stmt, crdbSQL, tw)
 	}
@@ -854,7 +894,7 @@ func (e *Executor) evaluateExpr(ctx context.Context, expr parser.Expr) (string, 
 	rows, _, err := executor.QueryBufferedExWithCols(
 		ctx,
 		redact.Sprint("tds-eval-expr"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
@@ -882,7 +922,7 @@ func (e *Executor) evaluateCondition(ctx context.Context, expr parser.Expr) (boo
 	rows, _, err := executor.QueryBufferedExWithCols(
 		ctx,
 		redact.Sprint("tds-eval-cond"),
-		nil, // txn
+		e.currentKVTxn(),
 		e.executorOverride(),
 		sql,
 	)
