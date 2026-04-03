@@ -34,13 +34,15 @@ import (
 
 // TableMeta holds metadata about a CQL table needed for translations that
 // require schema context, such as PER PARTITION LIMIT, INSERT IF NOT EXISTS
-// (lightweight transaction) result sets, and static column propagation.
+// (lightweight transaction) result sets, static column propagation, and UDT
+// field access resolution.
 type TableMeta struct {
-	PartitionKeys  []string        // partition key columns from PRIMARY KEY
-	ClusteringKeys []string        // clustering key columns from PRIMARY KEY
-	ClusteringDesc map[string]bool // clustering key column name → true if DESC
-	Columns        []string        // all column names in declaration order
-	StaticColumns  map[string]bool // lowercase names of STATIC columns (nil if none)
+	PartitionKeys  []string          // partition key columns from PRIMARY KEY
+	ClusteringKeys []string          // clustering key columns from PRIMARY KEY
+	ClusteringDesc map[string]bool   // clustering key column name → true if DESC
+	Columns        []string          // all column names in declaration order
+	StaticColumns  map[string]bool   // lowercase names of STATIC columns (nil if none)
+	ColumnTypes    map[string]string // lowercase col name → CRDB SQL type (e.g. "JSONB")
 }
 
 // SchemaInfo tracks table metadata accumulated from CREATE TABLE statements,
@@ -262,7 +264,7 @@ func translateCreateTable(s *parser.CreateTableStatement) (Result, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sqlType := cqlTypeToSQL(col.DataType)
+		sqlType := CqlTypeToSQL(col.DataType)
 		if sqlType == "" {
 			return Result{}, errors.Newf(
 				"unsupported CQL type %q for column %q", col.DataType.Name, col.Name,
@@ -416,7 +418,7 @@ func translateSelect(s *parser.SelectStatement, schema *SchemaInfo) (Result, err
 	}
 
 	// Column list.
-	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx); err != nil {
+	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx, schema, s.Keyspace, s.Table); err != nil {
 		return Result{}, err
 	}
 
@@ -543,7 +545,7 @@ func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, 
 
 	// Inner subquery.
 	sb.WriteString(" FROM (SELECT ")
-	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx); err != nil {
+	if err := writeSelectColumns(&sb, s.Columns, &params, &paramIdx, schema, s.Keyspace, s.Table); err != nil {
 		return Result{}, err
 	}
 
@@ -634,34 +636,49 @@ func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, 
 // writeSelectColumns writes the column list from a SELECT statement's
 // selectors. Shared by translateSelect and translateSelectPPL.
 //
+// When schema, keyspace, and table are provided, UDT field access
+// expressions (col.field) are translated using JSONB extraction for
+// JSONB-backed columns or composite type syntax for others.
+//
 // Function call selectors without an explicit alias get an automatic
 // Cassandra-style alias of the form "system.<func>(<args>)" (W8). This
 // matches real Cassandra's column naming convention for function results.
 func writeSelectColumns(
-	sb *strings.Builder, columns []parser.Selector, params *[]interface{}, paramIdx *int,
+	sb *strings.Builder,
+	columns []parser.Selector,
+	params *[]interface{},
+	paramIdx *int,
+	schema *SchemaInfo,
+	keyspace, table string,
 ) error {
 	for i, sel := range columns {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		if sel.Expr != nil {
-			sqlExpr, p, err := exprToSQL(sel.Expr, paramIdx)
-			if err != nil {
-				return errors.Wrap(err, "translating selector")
+			// Handle UDT field access with schema-aware translation.
+			if fa, ok := sel.Expr.(*parser.FieldAccessExpr); ok {
+				sb.WriteString(fieldAccessToSQL(fa, schema, keyspace, table))
+			} else {
+				sqlExpr, p, err := exprToSQL(sel.Expr, paramIdx)
+				if err != nil {
+					return errors.Wrap(err, "translating selector")
+				}
+				sb.WriteString(sqlExpr)
+				if fc, ok := sel.Expr.(*parser.FunctionCall); ok && sel.Alias == "" {
+					// Cassandra names function result columns as
+					// "system.<func>(<args>)" when no explicit alias is given.
+					sb.WriteString(` AS "`)
+					sb.WriteString(cqlFuncAlias(fc))
+					sb.WriteString(`"`)
+				}
+				if p != nil {
+					*params = append(*params, p)
+				}
 			}
-			sb.WriteString(sqlExpr)
 			if sel.Alias != "" {
 				sb.WriteString(" AS ")
 				sb.WriteString(quoteIdent(sel.Alias))
-			} else if fc, ok := sel.Expr.(*parser.FunctionCall); ok {
-				// Cassandra names function result columns as
-				// "system.<func>(<args>)" when no explicit alias is given.
-				sb.WriteString(` AS "`)
-				sb.WriteString(cqlFuncAlias(fc))
-				sb.WriteString(`"`)
-			}
-			if p != nil {
-				*params = append(*params, p)
 			}
 		} else if sel.Column == "*" {
 			sb.WriteByte('*')
@@ -717,7 +734,7 @@ func TranslateSelectWithFrom(columns []parser.Selector, fromClause string) (Resu
 	paramIdx := 1
 
 	sb.WriteString("SELECT ")
-	if err := writeSelectColumns(&sb, columns, &params, &paramIdx); err != nil {
+	if err := writeSelectColumns(&sb, columns, &params, &paramIdx, nil, "", ""); err != nil {
 		return Result{}, err
 	}
 	if fromClause != "" {
@@ -942,6 +959,28 @@ func ConsistencyToIsolation(consistency string) string {
 	default:
 		return "SERIALIZABLE"
 	}
+}
+
+// fieldAccessToSQL translates a CQL field access expression (col.field) to
+// CRDB SQL. When schema context is available, JSONB-backed columns use the
+// JSONB text extraction operator (->>'field'); composite type columns use
+// the standard (col).field syntax.
+func fieldAccessToSQL(
+	fa *parser.FieldAccessExpr, schema *SchemaInfo, keyspace, table string,
+) string {
+	if schema != nil {
+		if meta, ok := schema.LookupTable(keyspace, table); ok {
+			if colType, ok := meta.ColumnTypes[strings.ToLower(fa.Column)]; ok {
+				if colType == "JSONB" {
+					return fmt.Sprintf(
+						"%s->>%s", quoteIdent(fa.Column), quoteLiteral(strings.ToLower(fa.Field)),
+					)
+				}
+			}
+		}
+	}
+	// Default to composite type field access.
+	return fmt.Sprintf("(%s).%s", quoteIdent(fa.Column), quoteIdent(fa.Field))
 }
 
 // exprToSQL converts a CQL expression to its SQL representation. Literal values
@@ -1382,11 +1421,11 @@ func castExprToSQL(c *parser.CastExpr, paramIdx *int) (string, interface{}, erro
 	return fmt.Sprintf("CAST(%s AS %s)", innerSQL, sqlType), nil, nil
 }
 
-// cqlTypeToSQL maps a CQL DataType to its CRDB SQL type string. Known types
+// CqlTypeToSQL maps a CQL DataType to its CRDB SQL type string. Known types
 // map through cqlTypeToCRDBSQL; unknown type names without type parameters
 // are treated as user-defined types (UDTs) and returned as quoted identifiers.
 // Parameterized unknown types (like tuple<int, int>) are unsupported.
-func cqlTypeToSQL(dt parser.DataType) string {
+func CqlTypeToSQL(dt parser.DataType) string {
 	if sqlType, ok := cqlTypeToCRDBSQL[dt.Name]; ok {
 		return sqlType
 	}
@@ -1419,7 +1458,7 @@ func translateCreateType(s *parser.CreateTypeStatement) (Result, error) {
 		}
 		sb.WriteString(quoteIdent(field.Name))
 		sb.WriteByte(' ')
-		sb.WriteString(cqlTypeToSQL(field.DataType))
+		sb.WriteString(CqlTypeToSQL(field.DataType))
 	}
 	sb.WriteByte(')')
 	return Result{SQL: sb.String()}, nil

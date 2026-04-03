@@ -2087,12 +2087,27 @@ func (p *parser) parseListLiteral() (*ListLiteral, error) {
 }
 
 // parseSetOrMapLiteral parses {expr, ...} (set) or {expr: expr, ...} (map).
-// An empty {} is parsed as an empty map literal.
+// An empty {} is parsed as an empty map literal. Also handles UDT literal
+// syntax where keys are unquoted identifiers: {field: val, ...}.
 func (p *parser) parseSetOrMapLiteral() (Expr, error) {
 	p.lex.next() // consume {
 	if p.lex.peek().kind == tokRBrace {
 		p.lex.next() // consume }
 		return &MapExprLiteral{}, nil
+	}
+
+	// Check for UDT literal syntax: {ident: val, ident: val, ...}.
+	// UDT literals use unquoted identifier keys instead of string-literal
+	// keys. Detect by lookahead: if the first token is an identifier and
+	// the second is a colon, treat the whole literal as identifier-keyed.
+	if p.lex.peek().kind == tokIdent {
+		saved := p.lex.cur
+		p.lex.next() // tentatively consume ident
+		isUDT := p.lex.peek().kind == tokColon
+		p.lex.cur = saved
+		if isUDT {
+			return p.parseUDTLiteralEntries()
+		}
 	}
 
 	// Parse the first element to determine if this is a set or map.
@@ -2144,6 +2159,39 @@ func (p *parser) parseSetOrMapLiteral() (Expr, error) {
 		return nil, err
 	}
 	return &SetLiteral{Values: elements}, nil
+}
+
+// parseUDTLiteralEntries parses the entries of a UDT literal:
+// {ident: val, ident: val, ...}. The opening { has already been consumed.
+// Each key is an unquoted identifier representing a UDT field name, stored
+// as a StringLiteral key in the resulting MapExprLiteral so that downstream
+// translation emits jsonb_build_object('field', val, ...).
+func (p *parser) parseUDTLiteralEntries() (Expr, error) {
+	var entries []MapEntry
+	for p.lex.peek().kind != tokRBrace {
+		if len(entries) > 0 {
+			if err := p.expectToken(tokComma); err != nil {
+				return nil, err
+			}
+		}
+		keyName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(tokColon); err != nil {
+			return nil, err
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, MapEntry{
+			Key:   &StringLiteral{Value: keyName},
+			Value: val,
+		})
+	}
+	p.lex.next() // consume }
+	return &MapExprLiteral{Entries: entries}, nil
 }
 
 func kindName(kind tokenKind) string {

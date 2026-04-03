@@ -723,6 +723,85 @@ func TestParseSelectFullSyntax(t *testing.T) {
 	}
 }
 
+func TestParseUDTLiteral(t *testing.T) {
+	input := `INSERT INTO t (id, addr) VALUES (1, {street: '123 Main', city: 'Anytown'})`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	if len(ins.Values) != 2 {
+		t.Fatalf("got %d values, want 2", len(ins.Values))
+	}
+	m, ok := ins.Values[1].(*MapExprLiteral)
+	if !ok {
+		t.Fatalf("expected *MapExprLiteral, got %T", ins.Values[1])
+	}
+	if len(m.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(m.Entries))
+	}
+	// Keys should be string literals from the identifier names.
+	key0 := m.Entries[0].Key.(*StringLiteral)
+	if key0.Value != "street" {
+		t.Errorf("key[0] = %q, want %q", key0.Value, "street")
+	}
+	val0 := m.Entries[0].Value.(*StringLiteral)
+	if val0.Value != "123 Main" {
+		t.Errorf("val[0] = %q, want %q", val0.Value, "123 Main")
+	}
+	key1 := m.Entries[1].Key.(*StringLiteral)
+	if key1.Value != "city" {
+		t.Errorf("key[1] = %q, want %q", key1.Value, "city")
+	}
+}
+
+func TestParseUDTLiteralMixedValues(t *testing.T) {
+	// UDT literal with different value types.
+	input := `INSERT INTO t (id, data) VALUES (1, {name: 'test', count: 42, active: true})`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	m := ins.Values[1].(*MapExprLiteral)
+	if len(m.Entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(m.Entries))
+	}
+	// Verify the integer value.
+	val1 := m.Entries[1].Value.(*IntegerLiteral)
+	if val1.Value != 42 {
+		t.Errorf("val[1] = %d, want 42", val1.Value)
+	}
+	// Verify the boolean value.
+	val2 := m.Entries[2].Value.(*BoolLiteral)
+	if !val2.Value {
+		t.Error("val[2] should be true")
+	}
+}
+
+func TestParseSelectFieldAccess(t *testing.T) {
+	input := `SELECT addr.street, addr.city FROM t`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("got %d columns, want 2", len(sel.Columns))
+	}
+	fa0, ok := sel.Columns[0].Expr.(*FieldAccessExpr)
+	if !ok {
+		t.Fatalf("expected *FieldAccessExpr, got %T", sel.Columns[0].Expr)
+	}
+	if fa0.Column != "addr" || fa0.Field != "street" {
+		t.Errorf("field access = %s.%s, want addr.street", fa0.Column, fa0.Field)
+	}
+	fa1 := sel.Columns[1].Expr.(*FieldAccessExpr)
+	if fa1.Column != "addr" || fa1.Field != "city" {
+		t.Errorf("field access = %s.%s, want addr.city", fa1.Column, fa1.Field)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsAt(s, substr)
 }

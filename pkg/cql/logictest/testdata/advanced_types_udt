@@ -41,7 +41,18 @@ CREATE TYPE full_address (base address, country text)
 cql-ddl: unimplemented: composite types that reference user-defined types not yet supported
 
 # UDT field access in SELECT (column.field syntax).
-# Translates to ("addr")."street" in CRDB.
+# For composite type columns, translates to ("addr")."street" in CRDB.
 exec
 SELECT addr.street FROM udt_table
+----
+
+# UDT field access on frozen<> (JSONB) columns uses ->> extraction.
+exec
+SELECT addr.street FROM frozen_udt_table
+----
+
+# UDT literal syntax: {field: val, ...} with unquoted identifier keys.
+# Parsed as a map literal and translated to jsonb_build_object().
+exec
+INSERT INTO frozen_udt_table (id, addr) VALUES (1, {street: '123 Main', city: 'Anytown', zip: '12345'})
 ----

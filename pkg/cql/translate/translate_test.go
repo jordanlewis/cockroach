@@ -997,3 +997,61 @@ func TestTranslateRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateFieldAccessJSONB(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "t", TableMeta{
+		PartitionKeys: []string{"id"},
+		Columns:       []string{"id", "addr"},
+		ColumnTypes:   map[string]string{"id": "INT4", "addr": "JSONB"},
+	})
+
+	stmt, err := parser.Parse("SELECT addr.street FROM t")
+	require.NoError(t, err)
+	result, err := TranslateWithSchema(stmt, schema)
+	require.NoError(t, err)
+	// JSONB columns should use ->> extraction, not composite syntax.
+	require.Equal(t,
+		`SELECT "addr"->>'street' FROM "t"`,
+		result.SQL)
+}
+
+func TestTranslateFieldAccessComposite(t *testing.T) {
+	schema := NewSchemaInfo()
+	schema.RecordTable("", "t", TableMeta{
+		PartitionKeys: []string{"id"},
+		Columns:       []string{"id", "addr"},
+		ColumnTypes:   map[string]string{"id": "INT4", "addr": `"address"`},
+	})
+
+	stmt, err := parser.Parse("SELECT addr.street FROM t")
+	require.NoError(t, err)
+	result, err := TranslateWithSchema(stmt, schema)
+	require.NoError(t, err)
+	// Composite type columns should use (col).field syntax.
+	require.Equal(t,
+		`SELECT ("addr")."street" FROM "t"`,
+		result.SQL)
+}
+
+func TestTranslateFieldAccessNoSchema(t *testing.T) {
+	stmt, err := parser.Parse("SELECT addr.street FROM t")
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	// Without schema, default to composite type syntax.
+	require.Equal(t,
+		`SELECT ("addr")."street" FROM "t"`,
+		result.SQL)
+}
+
+func TestTranslateUDTLiteral(t *testing.T) {
+	stmt, err := parser.Parse(
+		`INSERT INTO t (id, addr) VALUES (1, {street: '123 Main', city: 'Anytown'})`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`UPSERT INTO "t" ("id", "addr") VALUES (1, jsonb_build_object('street', '123 Main', 'city', 'Anytown'))`,
+		result.SQL)
+}

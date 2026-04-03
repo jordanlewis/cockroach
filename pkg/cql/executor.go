@@ -228,9 +228,13 @@ func (e *Executor) ExecuteQuery(
 // subsequent SELECTs and static column propagation on writes.
 func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace string) {
 	cols := make([]string, len(s.Columns))
+	colTypes := make(map[string]string, len(s.Columns))
 	var staticCols map[string]bool
 	for i, col := range s.Columns {
 		cols[i] = col.Name
+		if sqlType := translate.CqlTypeToSQL(col.DataType); sqlType != "" {
+			colTypes[strings.ToLower(col.Name)] = sqlType
+		}
 		if col.IsStatic {
 			if staticCols == nil {
 				staticCols = make(map[string]bool)
@@ -253,6 +257,7 @@ func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace st
 		ClusteringDesc: clusteringDesc,
 		Columns:        cols,
 		StaticColumns:  staticCols,
+		ColumnTypes:    colTypes,
 	})
 }
 
