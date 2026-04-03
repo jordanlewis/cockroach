@@ -339,19 +339,21 @@ func (j *JoinClause) String() string {
 
 // SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
 // [JOIN ...] [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>]
-// [ORDER BY <exprs>] [OFFSET n ROWS [FETCH NEXT m ROWS ONLY]].
+// [ORDER BY <exprs>] [OFFSET n ROWS [FETCH NEXT m ROWS ONLY]]
+// or the Sybase ASE pagination variant: [ROWS LIMIT x [OFFSET y]].
 type SelectStmt struct {
-	Distinct bool
-	Top      *int
-	Columns  []SelectColumn
-	From     []TableRef
-	Joins    []JoinClause
-	Where    Expr
-	GroupBy  []Expr
-	Having   Expr
-	OrderBy  []OrderByExpr
-	Offset   *int // OFFSET n ROWS
-	Fetch    *int // FETCH NEXT m ROWS ONLY
+	Distinct        bool
+	Top             *int
+	Columns         []SelectColumn
+	From            []TableRef
+	Joins           []JoinClause
+	Where           Expr
+	GroupBy         []Expr
+	Having          Expr
+	OrderBy         []OrderByExpr
+	Offset          *int // OFFSET n ROWS, or OFFSET y in Sybase ROWS LIMIT
+	Fetch           *int // FETCH NEXT m ROWS ONLY, or LIMIT x in Sybase ROWS LIMIT
+	RowsLimitSyntax bool // true when parsed from Sybase ROWS LIMIT syntax
 }
 
 func (*SelectStmt) statementNode() {}
@@ -407,11 +409,20 @@ func (s *SelectStmt) String() string {
 			b.WriteString(o.String())
 		}
 	}
-	if s.Offset != nil {
-		fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
-	}
-	if s.Fetch != nil {
-		fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+	if s.RowsLimitSyntax {
+		if s.Fetch != nil {
+			fmt.Fprintf(&b, " ROWS LIMIT %d", *s.Fetch)
+		}
+		if s.Offset != nil {
+			fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+		}
+	} else {
+		if s.Offset != nil {
+			fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
+		}
+		if s.Fetch != nil {
+			fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+		}
 	}
 	return b.String()
 }
@@ -464,15 +475,16 @@ func (o *OrderByExpr) String() string {
 }
 
 // CompoundSelectStmt represents two SELECT-like statements joined by a set
-// operation (UNION, UNION ALL, INTERSECT, EXCEPT). ORDER BY and OFFSET-FETCH
-// apply to the compound result when present.
+// operation (UNION, UNION ALL, INTERSECT, EXCEPT). ORDER BY, OFFSET-FETCH, or
+// Sybase ROWS LIMIT apply to the compound result when present.
 type CompoundSelectStmt struct {
-	Left    Statement // *SelectStmt or *CompoundSelectStmt
-	Op      string    // "UNION", "UNION ALL", "INTERSECT", "EXCEPT"
-	Right   Statement // *SelectStmt
-	OrderBy []OrderByExpr
-	Offset  *int
-	Fetch   *int
+	Left            Statement // *SelectStmt or *CompoundSelectStmt
+	Op              string    // "UNION", "UNION ALL", "INTERSECT", "EXCEPT"
+	Right           Statement // *SelectStmt
+	OrderBy         []OrderByExpr
+	Offset          *int
+	Fetch           *int
+	RowsLimitSyntax bool // true when parsed from Sybase ROWS LIMIT syntax
 }
 
 func (*CompoundSelectStmt) statementNode() {}
@@ -491,11 +503,20 @@ func (s *CompoundSelectStmt) String() string {
 			b.WriteString(o.String())
 		}
 	}
-	if s.Offset != nil {
-		fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
-	}
-	if s.Fetch != nil {
-		fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+	if s.RowsLimitSyntax {
+		if s.Fetch != nil {
+			fmt.Fprintf(&b, " ROWS LIMIT %d", *s.Fetch)
+		}
+		if s.Offset != nil {
+			fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+		}
+	} else {
+		if s.Offset != nil {
+			fmt.Fprintf(&b, " OFFSET %d ROWS", *s.Offset)
+		}
+		if s.Fetch != nil {
+			fmt.Fprintf(&b, " FETCH NEXT %d ROWS ONLY", *s.Fetch)
+		}
 	}
 	return b.String()
 }
@@ -1194,6 +1215,7 @@ func formatColumnRef(col string) string {
 	}
 	return formatIdent(col)
 }
+
 // formatIdent returns an identifier, quoting it with brackets if it contains
 // special characters or is a reserved word. For simplicity, identifiers that
 // are plain alphanumeric (plus underscore) are returned unquoted.

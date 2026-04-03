@@ -1046,6 +1046,40 @@ func TestTranslateTopVsFetch(t *testing.T) {
 	require.NotContains(t, results[0], "LIMIT 100")
 }
 
+func TestTranslateRowsLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "rows limit with offset",
+			input:    "SELECT * FROM users ORDER BY id ROWS LIMIT 10 OFFSET 5",
+			expected: "SELECT * FROM users ORDER BY id ASC LIMIT 10 OFFSET 5",
+		},
+		{
+			name:     "rows limit without offset",
+			input:    "SELECT * FROM users ORDER BY id ROWS LIMIT 20",
+			expected: "SELECT * FROM users ORDER BY id ASC LIMIT 20",
+		},
+		{
+			name:     "rows limit offset zero",
+			input:    "SELECT * FROM users ORDER BY id ROWS LIMIT 50 OFFSET 0",
+			expected: "SELECT * FROM users ORDER BY id ASC LIMIT 50 OFFSET 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
 func TestTranslateISNULLInSubquery(t *testing.T) {
 	// Verify that ISNULL inside a subquery is still translated to COALESCE.
 	batch, err := parser.Parse("SELECT * FROM users WHERE id IN (SELECT ISNULL(uid, 0) FROM orders)")

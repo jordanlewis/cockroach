@@ -1194,6 +1194,57 @@ func TestParseOffsetFetchFirst(t *testing.T) {
 	}
 }
 
+func TestParseRowsLimit(t *testing.T) {
+	sql := `SELECT * FROM users ORDER BY id ROWS LIMIT 10 OFFSET 5`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if sel.Fetch == nil || *sel.Fetch != 10 {
+		t.Errorf("expected LIMIT (Fetch) 10, got %v", sel.Fetch)
+	}
+	if sel.Offset == nil || *sel.Offset != 5 {
+		t.Errorf("expected OFFSET 5, got %v", sel.Offset)
+	}
+	if !sel.RowsLimitSyntax {
+		t.Error("expected RowsLimitSyntax to be true")
+	}
+}
+
+func TestParseRowsLimitOnly(t *testing.T) {
+	// ROWS LIMIT without OFFSET.
+	sql := `SELECT * FROM users ORDER BY id ROWS LIMIT 20`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := batch.Stmts[0].(*SelectStmt)
+	if sel.Fetch == nil || *sel.Fetch != 20 {
+		t.Errorf("expected LIMIT (Fetch) 20, got %v", sel.Fetch)
+	}
+	if sel.Offset != nil {
+		t.Errorf("expected no OFFSET, got %v", sel.Offset)
+	}
+	if !sel.RowsLimitSyntax {
+		t.Error("expected RowsLimitSyntax to be true")
+	}
+}
+
+func TestParseRowsLimitRoundTrip(t *testing.T) {
+	sql := `SELECT * FROM users ORDER BY id ROWS LIMIT 10 OFFSET 5`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The String() method should reproduce the Sybase syntax.
+	got := batch.Stmts[0].String()
+	expected := "SELECT * FROM users ORDER BY id ASC ROWS LIMIT 10 OFFSET 5"
+	if got != expected {
+		t.Errorf("String() round-trip:\n  got:  %s\n  want: %s", got, expected)
+	}
+}
+
 func TestParseUnionInSubquery(t *testing.T) {
 	sql := `SELECT * FROM users WHERE id IN (SELECT id FROM admins UNION SELECT id FROM mods)`
 	batch, err := Parse(sql)

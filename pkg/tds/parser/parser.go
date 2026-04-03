@@ -170,6 +170,8 @@ func (p *parser) parseSelectOrCompound() (Statement, error) {
 				rightSel.Offset = nil
 				cs.Fetch = rightSel.Fetch
 				rightSel.Fetch = nil
+				cs.RowsLimitSyntax = rightSel.RowsLimitSyntax
+				rightSel.RowsLimitSyntax = false
 			}
 		}
 	}
@@ -841,6 +843,45 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 			}
 			p.lex.next()
 		}
+	}
+
+	// Optional Sybase ASE ROWS LIMIT x [OFFSET y] pagination.
+	if p.lex.peek().typ == tokenROWS {
+		saved := p.lex.peek()
+		p.lex.next() // consume ROWS
+		if p.lex.peek().typ == tokenLIMIT {
+			p.lex.next() // consume LIMIT
+			tok := p.lex.next()
+			if tok.typ != tokenInt {
+				return nil, p.error(fmt.Sprintf(
+					"expected integer after ROWS LIMIT, got %q", tok.val))
+			}
+			n, err := strconv.Atoi(tok.val)
+			if err != nil {
+				return nil, p.error(fmt.Sprintf(
+					"invalid ROWS LIMIT value: %s", tok.val))
+			}
+			stmt.Fetch = &n
+			stmt.RowsLimitSyntax = true
+			// Optional OFFSET y.
+			if p.lex.peek().typ == tokenOFFSET {
+				p.lex.next()
+				tok = p.lex.next()
+				if tok.typ != tokenInt {
+					return nil, p.error(fmt.Sprintf(
+						"expected integer after OFFSET, got %q", tok.val))
+				}
+				m, err := strconv.Atoi(tok.val)
+				if err != nil {
+					return nil, p.error(fmt.Sprintf(
+						"invalid OFFSET value: %s", tok.val))
+				}
+				stmt.Offset = &m
+			}
+			return stmt, nil
+		}
+		// Not ROWS LIMIT — push ROWS back for the next check.
+		p.lex.peeked = &saved
 	}
 
 	// Optional OFFSET-FETCH (T-SQL pagination).
@@ -2250,7 +2291,7 @@ func isKeywordToken(typ tokenType) bool {
 		tokenWITH, tokenANY, tokenSOME,
 		tokenOVER, tokenPARTITION,
 		tokenOFFSET, tokenFETCH, tokenNEXT, tokenFIRST,
-		tokenONLY, tokenROWS, tokenROW,
+		tokenONLY, tokenROWS, tokenROW, tokenLIMIT,
 		tokenBEGIN, tokenTRAN, tokenTRANSACTION, tokenCOMMIT,
 		tokenROLLBACK, tokenSAVE,
 		tokenIDENTITY, tokenDEFAULT:

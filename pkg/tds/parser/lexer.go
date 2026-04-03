@@ -150,6 +150,9 @@ const (
 	tokenROLLBACK
 	tokenSAVE
 
+	// Sybase ASE pagination keyword.
+	tokenLIMIT
+
 	// Type system keywords.
 	tokenIDENTITY
 	tokenDEFAULT
@@ -258,6 +261,9 @@ var keywords = map[string]tokenType{
 	"COMMIT":      tokenCOMMIT,
 	"ROLLBACK":    tokenROLLBACK,
 	"SAVE":        tokenSAVE,
+
+	// Sybase ASE pagination keyword.
+	"LIMIT": tokenLIMIT,
 
 	// Type system keywords.
 	"IDENTITY": tokenIDENTITY,
