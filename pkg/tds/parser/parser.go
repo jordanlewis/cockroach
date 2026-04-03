@@ -403,16 +403,30 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 	// Optional FROM.
 	if p.lex.peek().typ == tokenFROM {
 		p.lex.next()
+		ref, err := p.parseTableRef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.From = append(stmt.From, ref)
+
+		// Parse additional comma-separated table refs or JOIN clauses.
 		for {
-			ref, err := p.parseTableRef()
-			if err != nil {
-				return nil, err
-			}
-			stmt.From = append(stmt.From, ref)
-			if p.lex.peek().typ != tokenComma {
+			if isJoinStart(p.lex.peek().typ) {
+				join, err := p.parseJoinClause()
+				if err != nil {
+					return nil, err
+				}
+				stmt.Joins = append(stmt.Joins, join)
+			} else if p.lex.peek().typ == tokenComma {
+				p.lex.next()
+				ref, err := p.parseTableRef()
+				if err != nil {
+					return nil, err
+				}
+				stmt.From = append(stmt.From, ref)
+			} else {
 				break
 			}
-			p.lex.next()
 		}
 	}
 
@@ -492,6 +506,77 @@ func (p *parser) parseSelectColumn() (SelectColumn, error) {
 		}
 	}
 	return SelectColumn{Expr: expr, Alias: alias}, nil
+}
+
+// isJoinStart returns true if the token type indicates the start of a JOIN
+// clause.
+func isJoinStart(typ tokenType) bool {
+	switch typ {
+	case tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL, tokenCROSS, tokenJOIN:
+		return true
+	}
+	return false
+}
+
+// parseJoinClause parses: [INNER|LEFT [OUTER]|RIGHT [OUTER]|FULL [OUTER]|CROSS]
+// JOIN <table_ref> [ON <expr>]
+func (p *parser) parseJoinClause() (JoinClause, error) {
+	var joinType JoinType
+
+	switch p.lex.peek().typ {
+	case tokenINNER:
+		p.lex.next()
+		joinType = InnerJoin
+	case tokenLEFT:
+		p.lex.next()
+		if p.lex.peek().typ == tokenOUTER {
+			p.lex.next()
+		}
+		joinType = LeftJoin
+	case tokenRIGHT:
+		p.lex.next()
+		if p.lex.peek().typ == tokenOUTER {
+			p.lex.next()
+		}
+		joinType = RightJoin
+	case tokenFULL:
+		p.lex.next()
+		if p.lex.peek().typ == tokenOUTER {
+			p.lex.next()
+		}
+		joinType = FullJoin
+	case tokenCROSS:
+		p.lex.next()
+		joinType = CrossJoin
+	case tokenJOIN:
+		// Plain JOIN = INNER JOIN.
+		joinType = InnerJoin
+	default:
+		return JoinClause{}, p.error("expected JOIN keyword")
+	}
+
+	if err := p.expect(tokenJOIN); err != nil {
+		return JoinClause{}, err
+	}
+
+	table, err := p.parseTableRef()
+	if err != nil {
+		return JoinClause{}, err
+	}
+
+	join := JoinClause{Type: joinType, Table: table}
+
+	// Parse ON condition (required for all except CROSS JOIN).
+	if p.lex.peek().typ == tokenON {
+		p.lex.next()
+		cond, err := p.parseExpr()
+		if err != nil {
+			return JoinClause{}, err
+		}
+		join.Condition = cond
+	}
+
+	return join, nil
 }
 
 // parseTableRef parses a table reference: <name> [<alias>]
@@ -852,6 +937,35 @@ func (p *parser) parsePrimary() (Expr, error) {
 		}
 		return &ParenExpr{Expr: expr}, nil
 
+	case tokenLEFT, tokenRIGHT:
+		// LEFT and RIGHT are both JOIN keywords and T-SQL function names
+		// (e.g. LEFT('hello', 3)). When followed by '(', parse as a
+		// function call.
+		p.lex.next() // consume LEFT/RIGHT
+		if p.lex.peek().typ == tokenLParen {
+			p.lex.next() // consume (
+			var args []Expr
+			if p.lex.peek().typ != tokenRParen {
+				for {
+					arg, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
+					if p.lex.peek().typ != tokenComma {
+						break
+					}
+					p.lex.next()
+				}
+			}
+			if err := p.expect(tokenRParen); err != nil {
+				return nil, err
+			}
+			return &FuncCallExpr{Name: tok.val, Args: args}, nil
+		}
+		return nil, p.error(fmt.Sprintf(
+			"unexpected token %q at position %d", tok.val, tok.pos))
+
 	case tokenCASE:
 		return p.parseCASE()
 
@@ -1074,7 +1188,9 @@ func isKeywordToken(typ tokenType) bool {
 		tokenBETWEEN, tokenLIKE, tokenDELETE, tokenUPDATE, tokenSET,
 		tokenDROP, tokenDISTINCT, tokenGROUP, tokenHAVING,
 		tokenCASE, tokenWHEN, tokenTHEN, tokenELSE, tokenEND,
-		tokenISNULL, tokenCONVERT, tokenGETDATE:
+		tokenISNULL, tokenCONVERT, tokenGETDATE,
+		tokenJOIN, tokenINNER, tokenLEFT, tokenRIGHT, tokenFULL,
+		tokenOUTER, tokenCROSS, tokenON:
 		return true
 	}
 	return false

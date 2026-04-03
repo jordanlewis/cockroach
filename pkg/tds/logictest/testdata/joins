@@ -41,45 +41,78 @@ INSERT INTO j_orders (id, customer_id, product, amount) VALUES (4, 99, 'gizmo', 
 
 # --- INNER JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, o.product, o.amount FROM j_customers c INNER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
 ----
+name  product  amount
+alice  gadget  200
+alice  widget  100
+bob  widget  150
 
 # --- LEFT JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, o.product FROM j_customers c LEFT JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
 ----
+name  product
+alice  gadget
+alice  widget
+bob  widget
+carol  NULL
 
 # --- LEFT OUTER JOIN (explicit OUTER keyword) ---
 
-query error=(parse error)
-SELECT c.name, o.product FROM j_customers c LEFT OUTER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name
+query colnames
+SELECT c.name, o.product FROM j_customers c LEFT OUTER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
 ----
+name  product
+alice  gadget
+alice  widget
+bob  widget
+carol  NULL
 
 # --- RIGHT JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, o.product FROM j_customers c RIGHT JOIN j_orders o ON c.id = o.customer_id ORDER BY o.id
 ----
+name  product
+alice  widget
+alice  gadget
+bob  widget
+NULL  gizmo
 
 # --- FULL OUTER JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, o.product FROM j_customers c FULL OUTER JOIN j_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
 ----
+name  product
+NULL  gizmo
+alice  gadget
+alice  widget
+bob  widget
+carol  NULL
 
 # --- CROSS JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, o.product FROM j_customers c CROSS JOIN j_orders o WHERE c.id = 1 ORDER BY o.product
 ----
+name  product
+alice  gadget
+alice  gizmo
+alice  widget
+alice  widget
 
 # --- Self-join ---
 
-query error=(parse error)
-SELECT a.name AS emp, b.name AS mgr FROM j_customers a INNER JOIN j_customers b ON a.id = b.id + 1
+query colnames
+SELECT a.name AS emp, b.name AS mgr FROM j_customers a INNER JOIN j_customers b ON a.id = b.id + 1 ORDER BY emp
 ----
+emp  mgr
+bob  alice
+carol  bob
 
 # --- Multi-table JOIN ---
 
@@ -95,15 +128,23 @@ exec
 INSERT INTO j_products (id, name, category) VALUES (2, 'gadget', 'electronics')
 ----
 
-query error=(parse error)
+query colnames
 SELECT c.name, p.name AS product, p.category, o.amount FROM j_customers c INNER JOIN j_orders o ON c.id = o.customer_id INNER JOIN j_products p ON o.product = p.name ORDER BY c.name, p.name
 ----
+name  product  category  amount
+alice  gadget  electronics  200
+alice  widget  hardware  100
+bob  widget  hardware  150
 
 # --- JOIN with aggregate ---
 
-query error=(parse error)
+query colnames
 SELECT c.name, COUNT(o.id) AS order_count, SUM(o.amount) AS total FROM j_customers c LEFT JOIN j_orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY c.name
 ----
+name  order_count  total
+alice  2  300
+bob  1  150
+carol  0  NULL
 
 # --- Old-style join (comma-separated FROM with WHERE) ---
 # This uses the existing comma-separated FROM which is already supported.

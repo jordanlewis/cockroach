@@ -173,6 +173,15 @@ func translateSelect(s *parser.SelectStmt) string {
 				fmt.Fprintf(&b, " %s", quoteIdent(ref.Alias))
 			}
 		}
+		for _, j := range s.Joins {
+			fmt.Fprintf(&b, " %s %s", j.Type, quoteIdent(j.Table.Name))
+			if j.Table.Alias != "" {
+				fmt.Fprintf(&b, " %s", quoteIdent(j.Table.Alias))
+			}
+			if j.Condition != nil {
+				fmt.Fprintf(&b, " ON %s", translateExpr(j.Condition))
+			}
+		}
 	}
 	if s.Where != nil {
 		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))

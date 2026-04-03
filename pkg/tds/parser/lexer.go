@@ -85,6 +85,16 @@ const (
 	tokenISNULL
 	tokenCONVERT
 	tokenGETDATE
+
+	// JOIN-related keywords.
+	tokenJOIN
+	tokenINNER
+	tokenLEFT
+	tokenRIGHT
+	tokenFULL
+	tokenOUTER
+	tokenCROSS
+	tokenON
 )
 
 var keywords = map[string]tokenType{
@@ -128,6 +138,14 @@ var keywords = map[string]tokenType{
 	"ISNULL":   tokenISNULL,
 	"CONVERT":  tokenCONVERT,
 	"GETDATE":  tokenGETDATE,
+	"JOIN":     tokenJOIN,
+	"INNER":    tokenINNER,
+	"LEFT":     tokenLEFT,
+	"RIGHT":    tokenRIGHT,
+	"FULL":     tokenFULL,
+	"OUTER":    tokenOUTER,
+	"CROSS":    tokenCROSS,
+	"ON":       tokenON,
 }
 
 // token represents a single lexical token from T-SQL input.

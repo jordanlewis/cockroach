@@ -198,13 +198,59 @@ type Assignment struct {
 	Value  Expr
 }
 
+// JoinType identifies the kind of JOIN operation.
+type JoinType int
+
+const (
+	InnerJoin JoinType = iota + 1
+	LeftJoin
+	RightJoin
+	FullJoin
+	CrossJoin
+)
+
+func (j JoinType) String() string {
+	switch j {
+	case InnerJoin:
+		return "INNER JOIN"
+	case LeftJoin:
+		return "LEFT JOIN"
+	case RightJoin:
+		return "RIGHT JOIN"
+	case FullJoin:
+		return "FULL OUTER JOIN"
+	case CrossJoin:
+		return "CROSS JOIN"
+	default:
+		return "JOIN"
+	}
+}
+
+// JoinClause represents a JOIN in a FROM clause with a table reference,
+// join type, and optional ON condition (CROSS JOIN has no condition).
+type JoinClause struct {
+	Type      JoinType
+	Table     TableRef
+	Condition Expr // nil for CROSS JOIN
+}
+
+func (j *JoinClause) String() string {
+	s := fmt.Sprintf("%s %s", j.Type, j.Table.String())
+	if j.Condition != nil {
+		s += fmt.Sprintf(" ON %s", j.Condition)
+	}
+	return s
+}
+
 // SelectStmt represents SELECT [DISTINCT] [TOP n] <columns> [FROM <table>]
-// [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>] [ORDER BY <exprs>].
+// [JOIN ...] [WHERE <expr>] [GROUP BY <exprs>] [HAVING <expr>]
+// [ORDER BY <exprs>].
 type SelectStmt struct {
 	Distinct bool
 	Top      *int
 	Columns  []SelectColumn
 	From     []TableRef
+	Joins    []JoinClause
 	Where    Expr
 	GroupBy  []Expr
 	Having   Expr
@@ -235,6 +281,9 @@ func (s *SelectStmt) String() string {
 				b.WriteString(", ")
 			}
 			b.WriteString(t.String())
+		}
+		for _, j := range s.Joins {
+			fmt.Fprintf(&b, " %s", j.String())
 		}
 	}
 	if s.Where != nil {

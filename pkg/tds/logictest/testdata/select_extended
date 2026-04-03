@@ -46,35 +46,67 @@ exec
 INSERT INTO dept (id, name) VALUES (40, 'hr')
 ----
 
-# --- INNER JOIN (not yet supported by parser) ---
+# --- INNER JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT e.name, d.name AS dept FROM emp e INNER JOIN dept d ON e.dept_id = d.id ORDER BY e.name
 ----
+name  dept
+alice  engineering
+bob  engineering
+carol  sales
+dave  sales
+eve  marketing
 
-# --- LEFT JOIN (not yet supported by parser) ---
+# --- LEFT JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT d.name, e.name FROM dept d LEFT JOIN emp e ON d.id = e.dept_id ORDER BY d.name, e.name
 ----
+name  name
+engineering  alice
+engineering  bob
+hr  NULL
+marketing  eve
+sales  carol
+sales  dave
 
-# --- RIGHT JOIN (not yet supported by parser) ---
+# --- RIGHT JOIN ---
 
-query error=(parse error)
-SELECT e.name, d.name FROM emp e RIGHT JOIN dept d ON e.dept_id = d.id ORDER BY d.name
+query colnames
+SELECT e.name, d.name FROM emp e RIGHT JOIN dept d ON e.dept_id = d.id ORDER BY d.name, e.name
 ----
+name  name
+alice  engineering
+bob  engineering
+NULL  hr
+eve  marketing
+carol  sales
+dave  sales
 
-# --- FULL OUTER JOIN (not yet supported by parser) ---
+# --- FULL OUTER JOIN ---
 
-query error=(parse error)
-SELECT e.name, d.name FROM emp e FULL OUTER JOIN dept d ON e.dept_id = d.id ORDER BY d.name
+query colnames
+SELECT e.name, d.name FROM emp e FULL OUTER JOIN dept d ON e.dept_id = d.id ORDER BY d.name, e.name
 ----
+name  name
+alice  engineering
+bob  engineering
+NULL  hr
+eve  marketing
+carol  sales
+dave  sales
 
-# --- CROSS JOIN (not yet supported by parser) ---
+# --- CROSS JOIN ---
 
-query error=(parse error)
+query colnames
 SELECT e.name, d.name FROM emp e CROSS JOIN dept d WHERE e.id = 1 ORDER BY d.name
 ----
+name  name
+alice  engineering
+alice  hr
+alice  marketing
+alice  sales
 
 # --- Subquery in WHERE (not yet supported by parser) ---
 
