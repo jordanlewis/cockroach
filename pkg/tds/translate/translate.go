@@ -1401,6 +1401,17 @@ func mapDataType(dt string) string {
 	case "BIGINT":
 		return "INT8"
 
+	// Sybase unsigned integer types. CockroachDB has no unsigned integers,
+	// so we map to the smallest signed type that covers the full unsigned range.
+	case "UNSIGNED TINYINT":
+		return "INT2" // unsigned 8-bit (0–255) fits in signed 16-bit
+	case "UNSIGNED SMALLINT":
+		return "INT4" // unsigned 16-bit (0–65535) fits in signed 32-bit
+	case "UNSIGNED INT", "UNSIGNED INTEGER":
+		return "INT8" // unsigned 32-bit fits in signed 64-bit
+	case "UNSIGNED BIGINT":
+		return "DECIMAL(20, 0)" // unsigned 64-bit (0–18446744073709551615) exceeds INT8 range
+
 	// Float types.
 	case "REAL":
 		return "FLOAT4"
@@ -1445,6 +1456,21 @@ func mapDataType(dt string) string {
 	case "TEXT", "NTEXT":
 		return "STRING"
 
+	// Sybase Unicode character types. CockroachDB stores all strings as
+	// UTF-8, so UNICHAR/UNIVARCHAR map to CHAR/VARCHAR and UNITEXT to STRING.
+	case "UNICHAR":
+		if args != "" {
+			return fmt.Sprintf("CHAR(%s)", args)
+		}
+		return "CHAR"
+	case "UNIVARCHAR":
+		if args != "" {
+			return fmt.Sprintf("VARCHAR(%s)", args)
+		}
+		return "VARCHAR"
+	case "UNITEXT":
+		return "STRING"
+
 	// Binary types.
 	case "BINARY":
 		if args != "" {
@@ -1467,6 +1493,12 @@ func mapDataType(dt string) string {
 		return "TIME"
 	case "DATETIMEOFFSET":
 		return "TIMESTAMPTZ"
+
+	// Sybase ASE 15.5+ extended datetime types with microsecond precision.
+	case "BIGDATETIME":
+		return "TIMESTAMP"
+	case "BIGTIME":
+		return "TIME"
 
 	// Money types → DECIMAL with fixed precision/scale.
 	case "MONEY":

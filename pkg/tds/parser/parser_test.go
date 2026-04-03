@@ -1542,4 +1542,62 @@ func TestParseIdentityWithNotNull(t *testing.T) {
 	}
 }
 
+func TestParseUnsignedTypes(t *testing.T) {
+	sql := `CREATE TABLE t (
+		a UNSIGNED INT NOT NULL,
+		b UNSIGNED BIGINT,
+		c UNSIGNED SMALLINT,
+		d UNSIGNED TINYINT
+	)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 4 {
+		t.Fatalf("expected 4 columns, got %d", len(ct.Columns))
+	}
+	expected := []string{
+		"UNSIGNED INT",
+		"UNSIGNED BIGINT",
+		"UNSIGNED SMALLINT",
+		"UNSIGNED TINYINT",
+	}
+	for i, exp := range expected {
+		if ct.Columns[i].DataType != exp {
+			t.Errorf("col %d: expected type=%s, got %s", i, exp, ct.Columns[i].DataType)
+		}
+	}
+}
+
+func TestParseSybaseTypes(t *testing.T) {
+	sql := `CREATE TABLE t (
+		a UNICHAR(20),
+		b UNIVARCHAR(100),
+		c UNITEXT,
+		d BIGDATETIME,
+		e BIGTIME
+	)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 5 {
+		t.Fatalf("expected 5 columns, got %d", len(ct.Columns))
+	}
+	expected := []string{
+		"UNICHAR(20)",
+		"UNIVARCHAR(100)",
+		"UNITEXT",
+		"BIGDATETIME",
+		"BIGTIME",
+	}
+	for i, exp := range expected {
+		if ct.Columns[i].DataType != exp {
+			t.Errorf("col %d: expected type=%s, got %s", i, exp, ct.Columns[i].DataType)
+		}
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

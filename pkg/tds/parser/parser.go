@@ -428,6 +428,17 @@ func (p *parser) parseDataType() (string, error) {
 	}
 	typeName := strings.ToUpper(name)
 
+	// Sybase ASE supports UNSIGNED as a type modifier (e.g. UNSIGNED INT,
+	// UNSIGNED BIGINT). Consume the base type and combine into a compound
+	// type name so the translator can map it.
+	if typeName == "UNSIGNED" {
+		base, err := p.expectIdent()
+		if err != nil {
+			return "", err
+		}
+		typeName = "UNSIGNED " + strings.ToUpper(base)
+	}
+
 	// Check for parenthesized arguments.
 	if p.lex.peek().typ == tokenLParen {
 		p.lex.next() // consume (

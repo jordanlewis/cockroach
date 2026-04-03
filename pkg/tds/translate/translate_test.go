@@ -449,6 +449,24 @@ func TestMapDataType(t *testing.T) {
 		{"BINARY(16)", "BYTES"},
 		{"VARBINARY(100)", "BYTES"},
 		{"IMAGE", "BYTES"},
+
+		// Sybase unsigned integer types.
+		{"UNSIGNED TINYINT", "INT2"},
+		{"UNSIGNED SMALLINT", "INT4"},
+		{"UNSIGNED INT", "INT8"},
+		{"UNSIGNED INTEGER", "INT8"},
+		{"UNSIGNED BIGINT", "DECIMAL(20, 0)"},
+
+		// Sybase Unicode character types.
+		{"UNICHAR(20)", "CHAR(20)"},
+		{"UNICHAR", "CHAR"},
+		{"UNIVARCHAR(100)", "VARCHAR(100)"},
+		{"UNIVARCHAR", "VARCHAR"},
+		{"UNITEXT", "STRING"},
+
+		// Sybase extended datetime types.
+		{"BIGDATETIME", "TIMESTAMP"},
+		{"BIGTIME", "TIME"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
