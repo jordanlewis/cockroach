@@ -1402,4 +1402,144 @@ func TestParseUpdateOutput(t *testing.T) {
 	}
 }
 
+func TestParseIdentityColumn(t *testing.T) {
+	sql := `CREATE TABLE t (id INT IDENTITY(1,1), name VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+
+	col := ct.Columns[0]
+	if col.Name != "id" {
+		t.Errorf("expected name=id, got %s", col.Name)
+	}
+	if col.DataType != "INT" {
+		t.Errorf("expected type=INT, got %s", col.DataType)
+	}
+	if col.Identity == nil {
+		t.Fatal("expected IDENTITY, got nil")
+	}
+	if col.Identity.Seed != 1 || col.Identity.Increment != 1 {
+		t.Errorf("expected IDENTITY(1,1), got (%d,%d)",
+			col.Identity.Seed, col.Identity.Increment)
+	}
+}
+
+func TestParseIdentityColumnWithoutArgs(t *testing.T) {
+	sql := `CREATE TABLE t (id INT IDENTITY, name VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	col := ct.Columns[0]
+	if col.Identity == nil {
+		t.Fatal("expected IDENTITY, got nil")
+	}
+	if col.Identity.Seed != 1 || col.Identity.Increment != 1 {
+		t.Errorf("expected default IDENTITY(1,1), got (%d,%d)",
+			col.Identity.Seed, col.Identity.Increment)
+	}
+}
+
+func TestParseDefaultValue(t *testing.T) {
+	sql := `CREATE TABLE t (id INT, status INT DEFAULT 0, name VARCHAR(50) DEFAULT 'unknown')`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(ct.Columns))
+	}
+
+	// status INT DEFAULT 0
+	col := ct.Columns[1]
+	if col.DefaultExpr == nil {
+		t.Fatal("expected DEFAULT expr, got nil")
+	}
+	if col.DefaultExpr.String() != "0" {
+		t.Errorf("expected DEFAULT 0, got %s", col.DefaultExpr)
+	}
+
+	// name VARCHAR(50) DEFAULT 'unknown'
+	col = ct.Columns[2]
+	if col.DefaultExpr == nil {
+		t.Fatal("expected DEFAULT expr, got nil")
+	}
+	if !strings.Contains(col.DefaultExpr.String(), "unknown") {
+		t.Errorf("expected DEFAULT 'unknown', got %s", col.DefaultExpr)
+	}
+}
+
+func TestParseDefaultGetdate(t *testing.T) {
+	sql := `CREATE TABLE t (id INT, created DATETIME DEFAULT GETDATE())`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	col := ct.Columns[1]
+	if col.DefaultExpr == nil {
+		t.Fatal("expected DEFAULT expr, got nil")
+	}
+	fc, ok := col.DefaultExpr.(*FuncCallExpr)
+	if !ok {
+		t.Fatalf("expected FuncCallExpr, got %T", col.DefaultExpr)
+	}
+	if strings.ToUpper(fc.Name) != "GETDATE" {
+		t.Errorf("expected GETDATE, got %s", fc.Name)
+	}
+}
+
+func TestParseComputedColumn(t *testing.T) {
+	sql := `CREATE TABLE t (price INT, qty INT, total AS price * qty)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(ct.Columns))
+	}
+
+	col := ct.Columns[2]
+	if col.Name != "total" {
+		t.Errorf("expected name=total, got %s", col.Name)
+	}
+	if col.DataType != "" {
+		t.Errorf("expected empty DataType for computed column, got %s", col.DataType)
+	}
+	if col.ComputedExpr == nil {
+		t.Fatal("expected ComputedExpr, got nil")
+	}
+	expr, ok := col.ComputedExpr.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", col.ComputedExpr)
+	}
+	if expr.Op != "*" {
+		t.Errorf("expected *, got %s", expr.Op)
+	}
+}
+
+func TestParseIdentityWithNotNull(t *testing.T) {
+	sql := `CREATE TABLE t (id INT IDENTITY(1,1) NOT NULL, name VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	col := ct.Columns[0]
+	if col.Identity == nil {
+		t.Fatal("expected IDENTITY")
+	}
+	if col.Nullable == nil || *col.Nullable != false {
+		t.Error("expected NOT NULL")
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

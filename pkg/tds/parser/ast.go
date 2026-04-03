@@ -49,14 +49,34 @@ func (s *UseStmt) String() string {
 }
 
 // ColumnDef represents a column definition in a CREATE TABLE statement.
+// A column is either a regular column (with DataType) or a computed column
+// (with ComputedExpr and no DataType).
 type ColumnDef struct {
-	Name     string
-	DataType string
-	Nullable *bool // nil = unspecified, true = NULL, false = NOT NULL
+	Name         string
+	DataType     string
+	Nullable     *bool        // nil = unspecified, true = NULL, false = NOT NULL
+	Identity     *IdentityDef // IDENTITY(seed, increment)
+	DefaultExpr  Expr         // DEFAULT <expr>
+	ComputedExpr Expr         // AS <expr> (computed column, no DataType)
+}
+
+// IdentityDef represents the IDENTITY(seed, increment) clause on a column.
+type IdentityDef struct {
+	Seed      int64
+	Increment int64
 }
 
 func (c *ColumnDef) String() string {
+	if c.ComputedExpr != nil {
+		return fmt.Sprintf("%s AS %s", formatIdent(c.Name), c.ComputedExpr)
+	}
 	s := fmt.Sprintf("%s %s", formatIdent(c.Name), c.DataType)
+	if c.Identity != nil {
+		s += fmt.Sprintf(" IDENTITY(%d, %d)", c.Identity.Seed, c.Identity.Increment)
+	}
+	if c.DefaultExpr != nil {
+		s += fmt.Sprintf(" DEFAULT %s", c.DefaultExpr)
+	}
 	if c.Nullable != nil {
 		if *c.Nullable {
 			s += " NULL"

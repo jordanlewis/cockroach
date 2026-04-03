@@ -149,6 +149,10 @@ const (
 	tokenCOMMIT
 	tokenROLLBACK
 	tokenSAVE
+
+	// Type system keywords.
+	tokenIDENTITY
+	tokenDEFAULT
 )
 
 var keywords = map[string]tokenType{
@@ -254,6 +258,10 @@ var keywords = map[string]tokenType{
 	"COMMIT":      tokenCOMMIT,
 	"ROLLBACK":    tokenROLLBACK,
 	"SAVE":        tokenSAVE,
+
+	// Type system keywords.
+	"IDENTITY": tokenIDENTITY,
+	"DEFAULT":  tokenDEFAULT,
 }
 
 // token represents a single lexical token from T-SQL input.

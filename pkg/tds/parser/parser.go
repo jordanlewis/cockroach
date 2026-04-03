@@ -338,17 +338,70 @@ func (p *parser) parseCreateTable() (*CreateTableStmt, error) {
 	return &CreateTableStmt{Table: name, Columns: cols}, nil
 }
 
-// parseColumnDef parses: <name> <type>[(<args>)] [NULL | NOT NULL]
+// parseColumnDef parses a column definition:
+//
+//	<name> <type>[(<args>)] [IDENTITY(seed,incr)] [DEFAULT <expr>] [NULL | NOT NULL]
+//	<name> AS <expr>  (computed column)
 func (p *parser) parseColumnDef() (ColumnDef, error) {
 	name, err := p.expectIdent()
 	if err != nil {
 		return ColumnDef{}, err
 	}
+
+	// Computed column: <name> AS <expr>
+	if p.lex.peek().typ == tokenAS {
+		p.lex.next() // consume AS
+		expr, err := p.parseExpr()
+		if err != nil {
+			return ColumnDef{}, err
+		}
+		return ColumnDef{Name: name, ComputedExpr: expr}, nil
+	}
+
 	dataType, err := p.parseDataType()
 	if err != nil {
 		return ColumnDef{}, err
 	}
 	col := ColumnDef{Name: name, DataType: dataType}
+
+	// Parse optional IDENTITY[(seed, increment)].
+	if p.lex.peek().typ == tokenIDENTITY {
+		p.lex.next() // consume IDENTITY
+		if p.lex.peek().typ == tokenLParen {
+			p.lex.next() // consume (
+			seedTok := p.lex.next()
+			if seedTok.typ != tokenInt {
+				return ColumnDef{}, p.error(
+					fmt.Sprintf("expected integer for IDENTITY seed, got %q", seedTok.val))
+			}
+			seed, _ := strconv.ParseInt(seedTok.val, 10, 64)
+			if err := p.expect(tokenComma); err != nil {
+				return ColumnDef{}, err
+			}
+			incrTok := p.lex.next()
+			if incrTok.typ != tokenInt {
+				return ColumnDef{}, p.error(
+					fmt.Sprintf("expected integer for IDENTITY increment, got %q", incrTok.val))
+			}
+			incr, _ := strconv.ParseInt(incrTok.val, 10, 64)
+			if err := p.expect(tokenRParen); err != nil {
+				return ColumnDef{}, err
+			}
+			col.Identity = &IdentityDef{Seed: seed, Increment: incr}
+		} else {
+			col.Identity = &IdentityDef{Seed: 1, Increment: 1}
+		}
+	}
+
+	// Parse optional DEFAULT <expr>.
+	if p.lex.peek().typ == tokenDEFAULT {
+		p.lex.next() // consume DEFAULT
+		expr, err := p.parseExpr()
+		if err != nil {
+			return ColumnDef{}, err
+		}
+		col.DefaultExpr = expr
+	}
 
 	// Parse optional NULL / NOT NULL.
 	if p.lex.peek().typ == tokenNOT {
@@ -2188,7 +2241,8 @@ func isKeywordToken(typ tokenType) bool {
 		tokenOFFSET, tokenFETCH, tokenNEXT, tokenFIRST,
 		tokenONLY, tokenROWS, tokenROW,
 		tokenBEGIN, tokenTRAN, tokenTRANSACTION, tokenCOMMIT,
-		tokenROLLBACK, tokenSAVE:
+		tokenROLLBACK, tokenSAVE,
+		tokenIDENTITY, tokenDEFAULT:
 		return true
 	}
 	return false

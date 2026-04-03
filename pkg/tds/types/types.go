@@ -426,16 +426,23 @@ func encodeNull(dst []byte, ti TypeInfo) []byte {
 }
 
 func encodeBool(dst []byte, val interface{}, nullable bool) ([]byte, error) {
-	v, ok := val.(bool)
-	if !ok {
-		return nil, errors.Newf("expected bool, got %T", val)
-	}
 	// Note: the per-row length prefix for nullable types is written by
 	// writeRowValue in the tdswire package; we only produce raw value bytes.
-	if v {
-		return append(dst, 1), nil
+	switch v := val.(type) {
+	case bool:
+		if v {
+			return append(dst, 1), nil
+		}
+		return append(dst, 0), nil
+	case int64:
+		// BIT→INT coercion: accept integer values (0 = false, nonzero = true).
+		if v != 0 {
+			return append(dst, 1), nil
+		}
+		return append(dst, 0), nil
+	default:
+		return nil, errors.Newf("expected bool or int64, got %T", val)
 	}
-	return append(dst, 0), nil
 }
 
 func encodeFixedInt(dst []byte, val interface{}, size int) ([]byte, error) {
