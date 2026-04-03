@@ -697,11 +697,17 @@ func writeSelectColumns(
 // call result. Cassandra names unaliased function result columns as
 // "system.<func>(<args>)" where func is the original CQL function name
 // (not the translated SQL name) and args are the original CQL argument
-// expressions.
+// expressions. Metadata pseudo-functions (writetime, ttl) omit the
+// "system." prefix, matching Cassandra's actual column naming.
 func cqlFuncAlias(fc *parser.FunctionCall) string {
 	var sb strings.Builder
-	sb.WriteString("system.")
-	sb.WriteString(strings.ToLower(fc.Name))
+	lower := strings.ToLower(fc.Name)
+	// writetime() and ttl() are metadata pseudo-functions — Cassandra
+	// names their result columns without the "system." prefix.
+	if lower != "writetime" && lower != "ttl" {
+		sb.WriteString("system.")
+	}
+	sb.WriteString(lower)
 	sb.WriteByte('(')
 	for i, arg := range fc.Args {
 		if i > 0 {
@@ -1261,12 +1267,28 @@ func functionCallToSQL(fc *parser.FunctionCall, paramIdx *int) (string, interfac
 	case "token":
 		return tokenToSQL(fc, paramIdx)
 	case "writetime":
-		// Cassandra per-cell write timestamp metadata. CRDB does not track
-		// per-cell timestamps; return 0 for compatibility.
-		return "0::INT8", nil, nil
+		// Cassandra per-cell write timestamp in microseconds. CRDB does
+		// not track per-cell timestamps, but crdb_internal_mvcc_timestamp
+		// gives the per-row MVCC timestamp in nanoseconds. Dividing by
+		// 1000 converts to the microsecond precision CQL clients expect.
+		if len(fc.Args) != 1 {
+			return "", nil, errors.Newf("writetime() requires exactly one argument")
+		}
+		// Process arg for bind marker tracking; the value is unused since
+		// CRDB tracks timestamps per-row, not per-cell.
+		if _, _, err := exprToSQL(fc.Args[0], paramIdx); err != nil {
+			return "", nil, err
+		}
+		return "(crdb_internal_mvcc_timestamp / 1000)::INT8", nil, nil
 	case "ttl":
 		// Cassandra per-cell TTL metadata. CRDB does not support per-cell
 		// TTL; return NULL (same as Cassandra for rows without TTL).
+		if len(fc.Args) != 1 {
+			return "", nil, errors.Newf("ttl() requires exactly one argument")
+		}
+		if _, _, err := exprToSQL(fc.Args[0], paramIdx); err != nil {
+			return "", nil, err
+		}
 		return "NULL::INT4", nil, nil
 	case "fromjson":
 		return singleArgCast(fc, paramIdx, "JSONB")

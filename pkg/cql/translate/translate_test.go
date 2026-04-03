@@ -743,12 +743,12 @@ func TestTranslateBuiltinFunctions(t *testing.T) {
 		{
 			name: "writetime",
 			cql:  "SELECT writetime(val) FROM t",
-			want: `SELECT 0::INT8 AS "system.writetime(val)" FROM "t"`,
+			want: `SELECT (crdb_internal_mvcc_timestamp / 1000)::INT8 AS "writetime(val)" FROM "t"`,
 		},
 		{
 			name: "ttl",
 			cql:  "SELECT ttl(val) FROM t",
-			want: `SELECT NULL::INT4 AS "system.ttl(val)" FROM "t"`,
+			want: `SELECT NULL::INT4 AS "ttl(val)" FROM "t"`,
 		},
 		{
 			name: "textAsBlob",

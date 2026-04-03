@@ -86,7 +86,10 @@ SELECT * FROM fn_t WHERE token(pk) > 0
 
 # -- Metadata functions --
 
-# writetime(column) — returns 0 (CRDB has no per-cell timestamps).
+# writetime(column) — returns the per-row MVCC timestamp in microseconds.
+# CRDB does not track per-cell timestamps; crdb_internal_mvcc_timestamp
+# (per-row, in nanoseconds) is divided by 1000 to approximate CQL's
+# per-cell write timestamp in microseconds.
 exec
 SELECT writetime(val) FROM fn_t
 ----
