@@ -1,0 +1,104 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from CreateIndexTest.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_idx (k int PRIMARY KEY, y text, m map<text, int>, l list<text>)
+----
+
+# ---------------------------------------------------------------
+# Unnamed CREATE INDEX (unsupported — parser requires index name).
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX ON jd_idx (y)
+----
+at position 16: expected ON, got "jd_idx"
+
+# ---------------------------------------------------------------
+# Named CREATE INDEX.
+# ---------------------------------------------------------------
+
+exec
+CREATE INDEX jd_idx_y ON jd_idx (y)
+----
+
+# CREATE INDEX IF NOT EXISTS (no-op on existing).
+exec
+CREATE INDEX IF NOT EXISTS jd_idx_y ON jd_idx (y)
+----
+
+# Additional named index.
+exec
+CREATE INDEX IF NOT EXISTS jd_idx_y2 ON jd_idx (y)
+----
+
+# ---------------------------------------------------------------
+# Collection index functions (unsupported).
+# ---------------------------------------------------------------
+
+error
+CREATE INDEX jd_idx_val ON jd_idx (VALUES(m))
+----
+collection index function VALUES() is not supported
+
+error
+CREATE INDEX jd_idx_keys ON jd_idx (KEYS(m))
+----
+collection index function KEYS() is not supported
+
+error
+CREATE INDEX jd_idx_ent ON jd_idx (ENTRIES(m))
+----
+collection index function ENTRIES() is not supported
+
+error
+CREATE INDEX jd_idx_full ON jd_idx (FULL(l))
+----
+collection index function FULL() is not supported
+
+# ---------------------------------------------------------------
+# CUSTOM INDEX (unsupported).
+# ---------------------------------------------------------------
+
+error
+CREATE CUSTOM INDEX jd_idx_c1 ON jd_idx (y) USING 'MyClass'
+----
+CUSTOM INDEX is not supported
+
+error
+CREATE CUSTOM INDEX IF NOT EXISTS jd_idx_c2 ON jd_idx (y) USING 'MyClass'
+----
+CUSTOM INDEX is not supported
+
+error
+CREATE CUSTOM INDEX jd_idx_c3 ON jd_idx (y) USING 'MyClass' WITH opt1=1 AND opt2='data'
+----
+at position 60: unexpected token "WITH" after statement
+
+error
+CREATE CUSTOM INDEX jd_idx_sasi ON jd_idx (y) USING 'org.apache.cassandra.index.sasi.SASIIndex' WITH OPTIONS={'mode':'CONTAINS','tokenization_locale':'en'}
+----
+at position 96: unexpected token "WITH" after statement
+
+# ---------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------
+
+exec
+DROP INDEX IF EXISTS jd_idx_y
+----
+
+exec
+DROP INDEX IF EXISTS jd_idx_y2
+----

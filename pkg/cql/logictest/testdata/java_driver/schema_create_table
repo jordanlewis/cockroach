@@ -1,0 +1,159 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from CreateTableTest and related test classes.
+#
+# Note: The Java driver query builder outputs numeric map values like
+# 'chunk_length_in_kb':1024, but CockroachDB's CQL parser requires
+# string values in maps: 'chunk_length_in_kb':'1024'. Tests below use
+# the string form; the Java driver integer form is tested as error cases.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Basic CREATE TABLE variants.
+# ---------------------------------------------------------------
+
+# Simple table with single primary key.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct1 (k int PRIMARY KEY)
+----
+
+# Table with primary key and value column.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct2 (k int PRIMARY KEY, v text)
+----
+
+# Table with composite partition key.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct3 (kc int, ka timestamp, v text, PRIMARY KEY((kc, ka)))
+----
+
+# Table with partition key and clustering column.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct4 (k int, c text, v frozen<val>, PRIMARY KEY(k, c))
+----
+
+# Table with STATIC column.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct5 (k int, c text, s timeuuid STATIC, v frozen<val>, PRIMARY KEY(k, c))
+----
+
+# Table with composite partition key and multiple clustering columns.
+exec
+CREATE TABLE IF NOT EXISTS jd_ct6 (kc int, ka timestamp, c float, a uuid, v text, PRIMARY KEY((kc, ka), c, a))
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with CLUSTERING ORDER BY.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_co1 (k int, c text, v text, PRIMARY KEY(k, c)) WITH CLUSTERING ORDER BY (c ASC)
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_co2 (k int, c0 text, c1 text, c2 text, v text, PRIMARY KEY(k, c0, c1, c2)) WITH CLUSTERING ORDER BY (c0 DESC, c1 ASC, c2 DESC)
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with WITH properties (parsed but ignored).
+# ---------------------------------------------------------------
+
+# Multiple table properties (non-map properties accept any literal).
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_props (k int PRIMARY KEY, v text) WITH bloom_filter_fp_chance=0.42 AND cdc=false AND comment='Hello world' AND dclocal_read_repair_chance=0.54 AND default_time_to_live=86400 AND gc_grace_seconds=864000 AND memtable_flush_period_in_ms=10000 AND min_index_interval=1024 AND max_index_interval=4096 AND read_repair_chance=0.55 AND speculative_retry='99percentile'
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with compression options (string map values).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_lz4 (k int PRIMARY KEY, v text) WITH compression={'class':'LZ4Compressor'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_lz4_opts (k int PRIMARY KEY, v text) WITH compression={'class':'LZ4Compressor','chunk_length_in_kb':'1024'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_lz4_full (k int PRIMARY KEY, v text) WITH compression={'class':'LZ4Compressor','chunk_length_kb':'1024','crc_check_chance':'0.5'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_zstd (k int PRIMARY KEY, v text) WITH compression={'class':'ZstdCompressor'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_zstd_opts (k int PRIMARY KEY, v text) WITH compression={'class':'ZstdCompressor','chunk_length_in_kb':'1024'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_snappy (k int PRIMARY KEY, v text) WITH compression={'class':'SnappyCompressor'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_snappy_opts (k int PRIMARY KEY, v text) WITH compression={'class':'SnappyCompressor','chunk_length_in_kb':'2048'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_deflate (k int PRIMARY KEY, v text) WITH compression={'class':'DeflateCompressor'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_deflate_opts (k int PRIMARY KEY, v text) WITH compression={'class':'DeflateCompressor','chunk_length_in_kb':'4096'}
+----
+
+# Java driver integer form errors.
+error
+CREATE TABLE IF NOT EXISTS jd_ct_int_err (k int PRIMARY KEY, v text) WITH compression={'class':'LZ4Compressor','chunk_length_in_kb':1024}
+----
+at position 132: expected string value in map, got "1024"
+
+# ---------------------------------------------------------------
+# CREATE TABLE with caching options.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_cache (k int PRIMARY KEY, v text) WITH caching={'keys':'ALL','rows_per_partition':'10'}
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with compaction options (string map values).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_stcs (k int PRIMARY KEY, v text) WITH compaction={'class':'SizeTieredCompactionStrategy','bucket_high':'1.6','bucket_low':'0.6','cold_reads_to_omit':'0.1','max_threshold':'33','min_threshold':'5','min_sstable_size':'50000','only_purge_repaired_tombstones':'true','enabled':'false','tombstone_compaction_interval':'86400','tombstone_threshold':'0.22','unchecked_tombstone_compaction':'true'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_lcs (k int PRIMARY KEY, v text) WITH compaction={'class':'LeveledCompactionStrategy','sstable_size_in_mb':'110','tombstone_compaction_interval':'3600'}
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ct_twcs (k int PRIMARY KEY, v text) WITH compaction={'class':'TimeWindowCompactionStrategy','compaction_window_size':'10','compaction_window_unit':'DAYS','timestamp_resolution':'MICROSECONDS','unsafe_aggressive_sstable_expiration':'false'}
+----
+
+# ---------------------------------------------------------------
+# CREATE TABLE with COMPACT STORAGE (unsupported — parser does
+# not recognize COMPACT STORAGE as a special property form).
+# ---------------------------------------------------------------
+
+error
+CREATE TABLE IF NOT EXISTS jd_ct_compact (k int PRIMARY KEY, v text) WITH COMPACT STORAGE
+----
+at position 82: expected '=', got "STORAGE"
+
+error
+CREATE TABLE IF NOT EXISTS jd_ct_compact2 (k int PRIMARY KEY, v text) WITH COMPACT STORAGE AND default_time_to_live=86400
+----
+at position 83: expected '=', got "STORAGE"
+
+error
+CREATE TABLE IF NOT EXISTS jd_ct_compact3 (k int, c text, v text, PRIMARY KEY(k, c)) WITH COMPACT STORAGE AND CLUSTERING ORDER BY (c DESC) AND default_time_to_live=86400
+----
+at position 98: expected '=', got "STORAGE"

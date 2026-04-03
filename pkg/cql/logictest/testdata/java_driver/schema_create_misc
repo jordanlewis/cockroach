@@ -1,0 +1,78 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from CreateTypeTest, CreateFunctionTest,
+# CreateAggregateTest, CreateMaterializedViewTest.
+# These Cassandra features are not supported by CockroachDB's CQL frontend.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# CREATE TYPE (unsupported — User-Defined Types).
+# The parser recognizes CREATE TYPE but the translator rejects it.
+# ---------------------------------------------------------------
+
+error
+CREATE TYPE jd_type1 (single text)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+error
+CREATE TYPE jd_type2 (first text, second int, third blob, fourth boolean)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+error
+CREATE TYPE IF NOT EXISTS jd_type3 (single text)
+----
+unsupported CQL statement type: *parser.CreateTypeStatement
+
+# ---------------------------------------------------------------
+# CREATE FUNCTION (unsupported — parser does not recognize).
+# ---------------------------------------------------------------
+
+error
+CREATE FUNCTION func5 () RETURNS NULL ON NULL INPUT RETURNS text LANGUAGE java AS 'return "hello world";'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "FUNCTION"
+
+error
+CREATE FUNCTION IF NOT EXISTS func6 () RETURNS NULL ON NULL INPUT RETURNS text LANGUAGE java AS 'return "hello world";'
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "FUNCTION"
+
+# ---------------------------------------------------------------
+# CREATE AGGREGATE (unsupported — parser does not recognize).
+# ---------------------------------------------------------------
+
+error
+CREATE AGGREGATE agg4 () SFUNC sfunction STYPE ascii FINALFUNC finalfunction INITCOND (0,0)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "AGGREGATE"
+
+error
+CREATE AGGREGATE IF NOT EXISTS agg6 () SFUNC sfunction STYPE ascii FINALFUNC finalfunction INITCOND (0,0)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "AGGREGATE"
+
+# ---------------------------------------------------------------
+# CREATE MATERIALIZED VIEW (unsupported).
+# ---------------------------------------------------------------
+
+# Setup table for materialized view tests.
+exec
+CREATE TABLE IF NOT EXISTS jd_mv_base (k int, c text, x int, y int, a int, b int, PRIMARY KEY (k, c))
+----
+
+error
+CREATE MATERIALIZED VIEW IF NOT EXISTS jd_mv1 AS SELECT * FROM jd_mv_base WHERE x IS NOT NULL PRIMARY KEY(x)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"
+
+error
+CREATE MATERIALIZED VIEW jd_mv2 AS SELECT x, y FROM jd_mv_base WHERE x IS NOT NULL AND y < 5 PRIMARY KEY(x)
+----
+at position 7: expected KEYSPACE, TABLE, INDEX, or TYPE after CREATE, got "MATERIALIZED"

@@ -1,0 +1,135 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from DeleteSelectorTest, DeleteFluentRelationTest,
+# DeleteFluentConditionTest, DeleteTimestampTest, DeleteIdempotenceTest,
+# and related test classes.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup: create table used by DELETE tests.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_del (k int PRIMARY KEY, v int, v1 int, v2 int)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (1, 10, 100, 200)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (2, 20, 300, 400)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (3, 30, 500, 600)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (4, 40, 700, 800)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (5, 50, 900, 1000)
+----
+
+exec
+INSERT INTO jd_del (k, v, v1, v2) VALUES (6, 60, 1100, 1200)
+----
+
+# ---------------------------------------------------------------
+# Basic DELETE FROM ... WHERE.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM jd_del WHERE k = 1
+----
+
+query
+SELECT * FROM jd_del WHERE k = 1
+----
+k v v1 v2
+
+# ---------------------------------------------------------------
+# DELETE with IF EXISTS.
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM jd_del WHERE k = 2 IF EXISTS
+----
+
+query
+SELECT * FROM jd_del WHERE k = 2
+----
+k v v1 v2
+
+# DELETE IF EXISTS on non-existent row (no-op).
+exec
+DELETE FROM jd_del WHERE k = 999 IF EXISTS
+----
+
+# ---------------------------------------------------------------
+# DELETE with IF condition (lightweight transaction).
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM jd_del WHERE k = 3 IF v = 30
+----
+
+query
+SELECT * FROM jd_del WHERE k = 3
+----
+k v v1 v2
+
+exec
+DELETE FROM jd_del WHERE k = 4 IF v1 = 700 AND v2 = 800
+----
+
+query
+SELECT * FROM jd_del WHERE k = 4
+----
+k v v1 v2
+
+# ---------------------------------------------------------------
+# DELETE with USING TIMESTAMP (parsed but silently ignored).
+# ---------------------------------------------------------------
+
+exec
+DELETE FROM jd_del USING TIMESTAMP 1 WHERE k = 5
+----
+
+query
+SELECT * FROM jd_del WHERE k = 5
+----
+k v v1 v2
+
+exec
+DELETE FROM jd_del USING TIMESTAMP 3 WHERE k = 6
+----
+
+query
+SELECT * FROM jd_del WHERE k = 6
+----
+k v v1 v2
+
+# ---------------------------------------------------------------
+# Column-level DELETE (unsupported — parser expects FROM after DELETE).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_del_col (k int PRIMARY KEY, v text, m map<int, text>)
+----
+
+exec
+INSERT INTO jd_del_col (k, v) VALUES (1, 'hello')
+----
+
+error
+DELETE v FROM jd_del_col WHERE k = 1
+----
+at position 7: expected FROM, got "v"

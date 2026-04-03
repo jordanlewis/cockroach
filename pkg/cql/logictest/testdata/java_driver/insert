@@ -1,0 +1,120 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from RegularInsertTest, JsonInsertTest,
+# InsertIdempotenceTest, and related test classes.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup: create tables used by INSERT tests.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ins (k int PRIMARY KEY, a int, b int, c int)
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_ins_json (bar int PRIMARY KEY, baz text)
+----
+
+# ---------------------------------------------------------------
+# Basic INSERT with column assignments.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k, a, b) VALUES (10, 1, 2)
+----
+
+exec
+INSERT INTO jd_ins (k) VALUES (1)
+----
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k) VALUES (100) IF NOT EXISTS
+----
+
+# Duplicate with IF NOT EXISTS fails.
+error
+INSERT INTO jd_ins (k) VALUES (100) IF NOT EXISTS
+----
+cql-dml: duplicate key value violates unique constraint "jd_ins_pkey"
+
+# ---------------------------------------------------------------
+# INSERT with multiple columns.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k, a, b) VALUES (11, 1, 2)
+----
+
+exec
+INSERT INTO jd_ins (k, c, a, b) VALUES (12, 3, 1, 2)
+----
+
+# INSERT without primary key fails.
+error
+INSERT INTO jd_ins (a, b) VALUES (1, 2)
+----
+cql-dml: missing "k" primary key column
+
+# ---------------------------------------------------------------
+# INSERT with USING TIMESTAMP (parsed but silently ignored).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k) VALUES (200) USING TIMESTAMP 1
+----
+
+exec
+INSERT INTO jd_ins (k) VALUES (201) USING TIMESTAMP 3
+----
+
+# ---------------------------------------------------------------
+# INSERT with USING TTL (parsed but silently ignored).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k) VALUES (300) USING TTL 10
+----
+
+exec
+INSERT INTO jd_ins (k) VALUES (301) USING TTL 30
+----
+
+# ---------------------------------------------------------------
+# INSERT with both USING TIMESTAMP and TTL.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k) VALUES (400) USING TIMESTAMP 30 AND TTL 10
+----
+
+# ---------------------------------------------------------------
+# INSERT IF NOT EXISTS with USING TIMESTAMP.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins (k) VALUES (500) IF NOT EXISTS USING TIMESTAMP 1
+----
+
+# ---------------------------------------------------------------
+# INSERT JSON.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins_json JSON '{"bar": 1}'
+----
+
+query
+SELECT bar, baz FROM jd_ins_json WHERE bar = 1
+----
+bar baz
+1 NULL

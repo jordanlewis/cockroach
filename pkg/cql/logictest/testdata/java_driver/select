@@ -1,0 +1,240 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from SelectSelectorTest, SelectFluentRelationTest,
+# SelectOrderingTest, SelectGroupByTest, SelectLimitTest,
+# SelectAllowFilteringTest, and related test classes.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup: create tables used by SELECT tests.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_sel (k int, c1 int, c2 int, c3 int, v text, PRIMARY KEY (k, c1, c2, c3))
+----
+
+exec
+CREATE TABLE IF NOT EXISTS jd_sel2 (k int PRIMARY KEY, bar int, baz int, a int, b int, c int)
+----
+
+exec
+INSERT INTO jd_sel2 (k, bar, baz, a, b, c) VALUES (1, 10, 20, 1, 2, 3)
+----
+
+# ---------------------------------------------------------------
+# Basic SELECT patterns.
+# ---------------------------------------------------------------
+
+# SELECT * FROM table.
+query
+SELECT * FROM jd_sel2 WHERE k = 1
+----
+k bar baz a b c
+1 10 20 1 2 3
+
+# SELECT with column list.
+query
+SELECT bar FROM jd_sel2 WHERE k = 1
+----
+bar
+10
+
+query
+SELECT bar, baz FROM jd_sel2 WHERE k = 1
+----
+bar baz
+10 20
+
+query
+SELECT a, b, c FROM jd_sel2 WHERE k = 1
+----
+a b c
+1 2 3
+
+# ---------------------------------------------------------------
+# SELECT count(*).
+# ---------------------------------------------------------------
+
+query
+SELECT count(*) FROM jd_sel2
+----
+count
+1
+
+# ---------------------------------------------------------------
+# SELECT with column aliases.
+# ---------------------------------------------------------------
+
+query
+SELECT bar AS renamed FROM jd_sel2 WHERE k = 1
+----
+renamed
+10
+
+query
+SELECT count(*) AS total FROM jd_sel2
+----
+total
+1
+
+# ---------------------------------------------------------------
+# LIMIT clause.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_sel (k, c1, c2, c3, v) VALUES (1, 1, 1, 1, 'a')
+----
+
+exec
+INSERT INTO jd_sel (k, c1, c2, c3, v) VALUES (1, 2, 2, 2, 'b')
+----
+
+exec
+INSERT INTO jd_sel (k, c1, c2, c3, v) VALUES (1, 3, 3, 3, 'c')
+----
+
+query
+SELECT * FROM jd_sel WHERE k = 1 LIMIT 1
+----
+k c1 c2 c3 v
+1 1 1 1 a
+
+query
+SELECT * FROM jd_sel WHERE k = 1 LIMIT 2
+----
+k c1 c2 c3 v
+1 1 1 1 a
+1 2 2 2 b
+
+# ---------------------------------------------------------------
+# ORDER BY clause.
+# ---------------------------------------------------------------
+
+query
+SELECT * FROM jd_sel WHERE k = 1 ORDER BY c1 ASC LIMIT 2
+----
+k c1 c2 c3 v
+1 1 1 1 a
+1 2 2 2 b
+
+# ---------------------------------------------------------------
+# ALLOW FILTERING (parsed, silently accepted).
+# ---------------------------------------------------------------
+
+query rowsort
+SELECT * FROM jd_sel ALLOW FILTERING
+----
+k c1 c2 c3 v
+1 1 1 1 a
+1 2 2 2 b
+1 3 3 3 c
+
+# ---------------------------------------------------------------
+# GROUP BY clause.
+# ---------------------------------------------------------------
+
+query
+SELECT k, count(*) FROM jd_sel WHERE k = 1 GROUP BY k
+----
+k count
+1 3
+
+# ---------------------------------------------------------------
+# DISTINCT.
+# ---------------------------------------------------------------
+
+query
+SELECT DISTINCT k FROM jd_sel
+----
+k
+1
+
+# ---------------------------------------------------------------
+# Literal selectors (unsupported — parser expects column name).
+# ---------------------------------------------------------------
+
+error
+SELECT 1 FROM jd_sel2 WHERE k = 1
+----
+at position 7: expected column name or function, got "1"
+
+error
+SELECT NULL FROM jd_sel2 WHERE k = 1
+----
+cql-query: column "null" does not exist
+
+# ---------------------------------------------------------------
+# CAST selector.
+# ---------------------------------------------------------------
+
+query
+SELECT CAST(k AS double) FROM jd_sel2 WHERE k = 1
+----
+k
+1
+
+# ---------------------------------------------------------------
+# Built-in function selectors.
+# ---------------------------------------------------------------
+
+query
+SELECT writetime(bar), ttl(bar) FROM jd_sel2 WHERE k = 1
+----
+int8 int4
+0 NULL
+
+# ---------------------------------------------------------------
+# WHERE clause patterns (from RelationTest / SelectFluentRelationTest).
+# ---------------------------------------------------------------
+
+# IS NOT NULL predicate (unsupported in WHERE clause).
+error
+SELECT * FROM jd_sel2 WHERE k IS NOT NULL
+----
+at position 30: expected comparison operator, got "IS"
+
+# IN clause with literal values.
+query
+SELECT * FROM jd_sel2 WHERE k IN (1, 2, 3)
+----
+k bar baz a b c
+1 10 20 1 2 3
+
+# NOT IN clause (may not be supported).
+error
+SELECT * FROM jd_sel2 WHERE k NOT IN (1, 2, 3)
+----
+at position 30: expected comparison operator, got "NOT"
+
+# ---------------------------------------------------------------
+# CONTAINS / CONTAINS KEY (unsupported).
+# ---------------------------------------------------------------
+
+error
+SELECT * FROM jd_sel WHERE k CONTAINS 1
+----
+at position 29: expected comparison operator, got "CONTAINS"
+
+error
+SELECT * FROM jd_sel WHERE k CONTAINS KEY 1
+----
+at position 29: expected comparison operator, got "CONTAINS"
+
+# ---------------------------------------------------------------
+# PER PARTITION LIMIT (unsupported).
+# ---------------------------------------------------------------
+
+error
+SELECT * FROM jd_sel PER PARTITION LIMIT 1
+----
+PER PARTITION LIMIT is not supported
+
+error
+SELECT * FROM jd_sel PER PARTITION LIMIT 1 LIMIT 1
+----
+PER PARTITION LIMIT is not supported

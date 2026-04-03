@@ -1,0 +1,123 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from DropTableTest, DropKeyspaceTest, DropIndexTest,
+# DropTypeTest, DropFunctionTest, DropAggregateTest,
+# DropMaterializedViewTest.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# DROP TABLE.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_drop_t (k int PRIMARY KEY, v text)
+----
+
+exec
+DROP TABLE jd_drop_t
+----
+
+# DROP TABLE IF EXISTS (no-op on nonexistent).
+exec
+DROP TABLE IF EXISTS jd_drop_t
+----
+
+# ---------------------------------------------------------------
+# DROP KEYSPACE.
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_drop_ks WITH replication={'class':'SimpleStrategy','replication_factor':'1'}
+----
+
+exec
+DROP KEYSPACE jd_drop_ks
+----
+
+# DROP KEYSPACE IF EXISTS (no-op on nonexistent).
+exec
+DROP KEYSPACE IF EXISTS jd_drop_ks
+----
+
+# ---------------------------------------------------------------
+# DROP INDEX.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_drop_idx_t (k int PRIMARY KEY, v text)
+----
+
+exec
+CREATE INDEX jd_drop_idx ON jd_drop_idx_t (v)
+----
+
+exec
+DROP INDEX jd_drop_idx
+----
+
+# DROP INDEX IF EXISTS (no-op on nonexistent).
+exec
+DROP INDEX IF EXISTS jd_drop_idx
+----
+
+# ---------------------------------------------------------------
+# DROP TYPE (unsupported — UDTs not supported).
+# These test that the parser handles DROP TYPE gracefully.
+# ---------------------------------------------------------------
+
+error
+DROP TYPE bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "TYPE"
+
+error
+DROP TYPE IF EXISTS bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "TYPE"
+
+# ---------------------------------------------------------------
+# DROP FUNCTION (unsupported).
+# ---------------------------------------------------------------
+
+error
+DROP FUNCTION bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "FUNCTION"
+
+error
+DROP FUNCTION IF EXISTS bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "FUNCTION"
+
+# ---------------------------------------------------------------
+# DROP AGGREGATE (unsupported).
+# ---------------------------------------------------------------
+
+error
+DROP AGGREGATE bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "AGGREGATE"
+
+error
+DROP AGGREGATE IF EXISTS bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "AGGREGATE"
+
+# ---------------------------------------------------------------
+# DROP MATERIALIZED VIEW (unsupported).
+# ---------------------------------------------------------------
+
+error
+DROP MATERIALIZED VIEW bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "MATERIALIZED"
+
+error
+DROP MATERIALIZED VIEW IF EXISTS bar
+----
+at position 5: expected TABLE, KEYSPACE, or INDEX after DROP, got "MATERIALIZED"

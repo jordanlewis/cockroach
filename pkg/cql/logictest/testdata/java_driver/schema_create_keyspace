@@ -1,0 +1,84 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from CreateKeyspaceTest.
+#
+# Note: The Java driver query builder outputs numeric map values like
+# 'replication_factor':5, but CockroachDB's CQL parser requires string
+# values: 'replication_factor':'5'. Tests below use the string form.
+# The original Java driver integer form is tested as an error case.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# CREATE KEYSPACE with SimpleStrategy (string map values).
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_ks1 WITH replication={'class':'SimpleStrategy','replication_factor':'5'}
+----
+
+# CREATE KEYSPACE with durable_writes.
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_ks2 WITH replication={'class':'SimpleStrategy','replication_factor':'5'} AND durable_writes=true
+----
+
+# CREATE KEYSPACE IF NOT EXISTS (no-op).
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_ks1 WITH replication={'class':'SimpleStrategy','replication_factor':'2'}
+----
+
+# ---------------------------------------------------------------
+# CREATE KEYSPACE with NetworkTopologyStrategy.
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_ks3 WITH replication={'class':'NetworkTopologyStrategy','dc1':'3','dc2':'4'}
+----
+
+# ---------------------------------------------------------------
+# CREATE KEYSPACE with extra properties (only durable_writes accepted).
+# ---------------------------------------------------------------
+
+error
+CREATE KEYSPACE IF NOT EXISTS jd_ks4 WITH replication={'class':'SimpleStrategy','replication_factor':'3'} AND awesome_feature=true AND wow_factor=11 AND random_string='hi'
+----
+at position 110: expected durable_writes, got "awesome_feature"
+
+# ---------------------------------------------------------------
+# Java driver integer form for map values (parser error).
+# ---------------------------------------------------------------
+
+error
+CREATE KEYSPACE IF NOT EXISTS jd_ks_intval WITH replication={'class':'SimpleStrategy','replication_factor':5}
+----
+at position 107: expected string value in map, got "5"
+
+# ---------------------------------------------------------------
+# Duplicate CREATE KEYSPACE without IF NOT EXISTS (should error).
+# ---------------------------------------------------------------
+
+error
+CREATE KEYSPACE jd_ks1 WITH replication={'class':'SimpleStrategy','replication_factor':'5'}
+----
+cql-ddl: database "jd_ks1" already exists
+
+# ---------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------
+
+exec
+DROP KEYSPACE IF EXISTS jd_ks1
+----
+
+exec
+DROP KEYSPACE IF EXISTS jd_ks2
+----
+
+exec
+DROP KEYSPACE IF EXISTS jd_ks3
+----
+

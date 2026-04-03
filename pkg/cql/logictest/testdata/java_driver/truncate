@@ -1,0 +1,47 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from TruncateTest.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_trunc (k int PRIMARY KEY, v text)
+----
+
+exec
+INSERT INTO jd_trunc (k, v) VALUES (1, 'one')
+----
+
+exec
+INSERT INTO jd_trunc (k, v) VALUES (2, 'two')
+----
+
+# Verify data exists.
+query rowsort
+SELECT k, v FROM jd_trunc
+----
+k v
+1 one
+2 two
+
+# ---------------------------------------------------------------
+# TRUNCATE table.
+# ---------------------------------------------------------------
+
+exec
+TRUNCATE jd_trunc
+----
+
+# Verify table is empty.
+query
+SELECT k, v FROM jd_trunc
+----
+k v

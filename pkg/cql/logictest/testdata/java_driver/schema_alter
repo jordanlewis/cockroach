@@ -1,0 +1,112 @@
+# CQL test cases adapted from Apache Cassandra Java Driver (Apache 2.0).
+# Source: https://github.com/apache/cassandra-java-driver
+# Copyright DataStax, Inc. and/or The Apache Software Foundation.
+#
+# Tests derived from AlterTableTest, AlterKeyspaceTest, AlterTypeTest,
+# AlterMaterializedViewTest, and related test classes.
+
+exec
+USE defaultdb
+----
+
+# ---------------------------------------------------------------
+# Setup.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_alt (k int PRIMARY KEY, x text, y float, z double, u int, v int, b int, a int)
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE ADD column.
+# ---------------------------------------------------------------
+
+exec
+ALTER TABLE jd_alt ADD w text
+----
+
+# ALTER TABLE ADD STATIC column (STATIC keyword not supported in ALTER ADD).
+error
+ALTER TABLE jd_alt ADD w2 text STATIC
+----
+at position 31: unexpected token "STATIC" after statement
+
+# ---------------------------------------------------------------
+# ALTER TABLE DROP column.
+# ---------------------------------------------------------------
+
+exec
+ALTER TABLE jd_alt DROP w
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE RENAME column.
+# ---------------------------------------------------------------
+
+# Note: Cassandra's ALTER TABLE RENAME is limited to primary key columns.
+# Our CQL frontend may or may not support this.
+exec
+ALTER TABLE jd_alt RENAME u TO u_renamed
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE WITH properties (parsed but silently ignored).
+# ---------------------------------------------------------------
+
+exec
+ALTER TABLE jd_alt WITH comment='Hello' AND cdc=true
+----
+
+exec
+ALTER TABLE jd_alt WITH compression={'sstable_compression':''}
+----
+
+# ---------------------------------------------------------------
+# ALTER KEYSPACE.
+# ---------------------------------------------------------------
+
+exec
+CREATE KEYSPACE IF NOT EXISTS jd_alt_ks WITH replication={'class':'SimpleStrategy','replication_factor':'1'}
+----
+
+exec
+ALTER KEYSPACE jd_alt_ks WITH replication={'class':'SimpleStrategy','replication_factor':'3'}
+----
+
+# Extra properties beyond replication/durable_writes are not accepted.
+error
+ALTER KEYSPACE jd_alt_ks WITH durable_writes=true AND hello='world'
+----
+at position 54: expected replication or durable_writes after WITH, got "hello"
+
+exec
+DROP KEYSPACE IF EXISTS jd_alt_ks
+----
+
+# ---------------------------------------------------------------
+# ALTER TYPE (unsupported).
+# ---------------------------------------------------------------
+
+error
+ALTER TYPE jd_alt ALTER x TYPE text
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+
+error
+ALTER TYPE jd_alt ADD x text
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+
+error
+ALTER TYPE jd_alt RENAME x TO y
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "TYPE"
+
+# ---------------------------------------------------------------
+# ALTER MATERIALIZED VIEW (unsupported).
+# ---------------------------------------------------------------
+
+error
+ALTER MATERIALIZED VIEW baz WITH compression={'class':'LZ4Compressor'} AND default_time_to_live=86400
+----
+at position 6: expected TABLE or KEYSPACE after ALTER, got "MATERIALIZED"
