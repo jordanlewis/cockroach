@@ -92,6 +92,14 @@ CREATE CUSTOM INDEX jd_idx_sasi ON jd_idx (y) USING 'org.apache.cassandra.index.
 at position 96: unexpected token "WITH" after statement
 
 # ---------------------------------------------------------------
+# Named CREATE INDEX with keyspace qualifier (from CreateIndexTest).
+# ---------------------------------------------------------------
+
+exec
+CREATE INDEX jd_idx_ks ON defaultdb.jd_idx (y)
+----
+
+# ---------------------------------------------------------------
 # Cleanup.
 # ---------------------------------------------------------------
 
@@ -101,4 +109,8 @@ DROP INDEX IF EXISTS jd_idx_y
 
 exec
 DROP INDEX IF EXISTS jd_idx_y2
+----
+
+exec
+DROP INDEX IF EXISTS jd_idx_ks
 ----

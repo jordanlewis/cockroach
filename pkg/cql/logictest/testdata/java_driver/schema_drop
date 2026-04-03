@@ -66,6 +66,34 @@ DROP INDEX IF EXISTS jd_drop_idx
 ----
 
 # ---------------------------------------------------------------
+# DROP TABLE with keyspace qualifier (from DropTableTest).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_drop_ks_t (k int PRIMARY KEY, v text)
+----
+
+exec
+DROP TABLE IF EXISTS defaultdb.jd_drop_ks_t
+----
+
+# ---------------------------------------------------------------
+# DROP INDEX with keyspace qualifier (from DropIndexTest).
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_drop_ks_idx_t (k int PRIMARY KEY, v text)
+----
+
+exec
+CREATE INDEX jd_drop_ks_idx ON jd_drop_ks_idx_t (v)
+----
+
+exec
+DROP INDEX IF EXISTS defaultdb.jd_drop_ks_idx
+----
+
+# ---------------------------------------------------------------
 # DROP TYPE (unsupported — UDTs not supported).
 # These test that the parser handles DROP TYPE gracefully.
 # ---------------------------------------------------------------

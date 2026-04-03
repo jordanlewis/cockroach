@@ -118,3 +118,33 @@ SELECT bar, baz FROM jd_ins_json WHERE bar = 1
 ----
 bar baz
 1 NULL
+
+# ---------------------------------------------------------------
+# INSERT JSON DEFAULT NULL (from JsonInsertTest).
+# Default behavior: missing JSON fields are set to NULL.
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins_json JSON '{"bar": 2}' DEFAULT NULL
+----
+
+query
+SELECT bar, baz FROM jd_ins_json WHERE bar = 2
+----
+bar baz
+2 NULL
+
+# ---------------------------------------------------------------
+# INSERT JSON DEFAULT UNSET (from JsonInsertTest).
+# UNSET leaves missing columns unchanged (for updates via JSON).
+# ---------------------------------------------------------------
+
+exec
+INSERT INTO jd_ins_json JSON '{"bar": 3}' DEFAULT UNSET
+----
+
+query
+SELECT bar, baz FROM jd_ins_json WHERE bar = 3
+----
+bar baz
+3 NULL

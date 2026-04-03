@@ -214,3 +214,32 @@ UPDATE jd_upd USING TTL 30 SET v = 91 WHERE k = 1
 exec
 UPDATE jd_upd USING TIMESTAMP 1 AND TTL 10 SET v = 92 WHERE k = 1
 ----
+
+# ---------------------------------------------------------------
+# Map subscript assignment (from UpdateFluentAssignmentTest).
+# Uses a table with text-keyed map since JSONB subscript requires
+# text keys for jsonb_set path translation.
+# ---------------------------------------------------------------
+
+exec
+CREATE TABLE IF NOT EXISTS jd_upd_map_text (k int PRIMARY KEY, m map<text, text>)
+----
+
+exec
+INSERT INTO jd_upd_map_text (k, m) VALUES (1, '{"color": "red"}')
+----
+
+exec
+UPDATE jd_upd_map_text SET m['color'] = 'blue' WHERE k = 1
+----
+
+# ---------------------------------------------------------------
+# List subscript assignment (from UpdateFluentAssignmentTest).
+# List subscript uses jsonb_set with integer path which requires
+# text[] not int[] — currently unsupported by CQL translation.
+# ---------------------------------------------------------------
+
+error
+UPDATE jd_upd_coll SET l[0] = 99 WHERE k = 1
+----
+cql-dml: unknown signature: jsonb_set(jsonb, int[], jsonb) (returning <jsonb>)

@@ -84,6 +84,53 @@ DROP KEYSPACE IF EXISTS jd_alt_ks
 ----
 
 # ---------------------------------------------------------------
+# ALTER TABLE ALTER column TYPE (from AlterTableTest).
+# ---------------------------------------------------------------
+
+exec
+ALTER TABLE jd_alt ALTER x TYPE text
+----
+
+# ---------------------------------------------------------------
+# ALTER TABLE ADD multiple columns (from AlterTableTest).
+# Parenthesized multi-column ADD is not supported.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE jd_alt ADD (c1 text, c2 float)
+----
+at position 23: expected identifier, got "("
+
+# ---------------------------------------------------------------
+# ALTER TABLE DROP multiple columns (from AlterTableTest).
+# Parenthesized multi-column DROP is not supported.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE jd_alt DROP (x, y)
+----
+at position 24: expected identifier, got "("
+
+# ---------------------------------------------------------------
+# ALTER TABLE RENAME with AND (from AlterTableTest).
+# Multiple renames in single statement not supported.
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE jd_alt RENAME v TO v_renamed AND b TO b_renamed
+----
+at position 41: unexpected token "AND" after statement
+
+# ---------------------------------------------------------------
+# ALTER TABLE DROP COMPACT STORAGE (from AlterTableTest).
+# ---------------------------------------------------------------
+
+error
+ALTER TABLE jd_alt DROP COMPACT STORAGE
+----
+at position 32: unexpected token "STORAGE" after statement
+
+# ---------------------------------------------------------------
 # ALTER TYPE (unsupported).
 # ---------------------------------------------------------------
 
