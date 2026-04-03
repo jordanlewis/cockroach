@@ -1245,3 +1245,58 @@ func TestTranslateUDTLiteral(t *testing.T) {
 		`UPSERT INTO "t" ("id", "addr") VALUES (1, jsonb_build_object('street', '123 Main', 'city', 'Anytown'))`,
 		result.SQL)
 }
+
+func TestTranslateBlobHexLiteral(t *testing.T) {
+	stmt, err := parser.Parse(
+		`INSERT INTO t (id, data) VALUES (1, 0xdeadbeef)`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`UPSERT INTO "t" ("id", "data") VALUES (1, '\xdeadbeef'::BYTEA)`,
+		result.SQL)
+}
+
+func TestTranslateBigIntLiteral(t *testing.T) {
+	stmt, err := parser.Parse(
+		`INSERT INTO t (id, v) VALUES (1, 99999999999999999999)`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`UPSERT INTO "t" ("id", "v") VALUES (1, 99999999999999999999::DECIMAL)`,
+		result.SQL)
+}
+
+func TestTranslateMultiColumnIN(t *testing.T) {
+	stmt, err := parser.Parse(
+		`SELECT * FROM t WHERE (col1, col2) IN ((1, 'a'), (2, 'b'))`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`SELECT * FROM "t" WHERE ("col1", "col2") IN ((1, 'a'), (2, 'b'))`,
+		result.SQL)
+}
+
+func TestTranslateContains(t *testing.T) {
+	stmt, err := parser.Parse(
+		`SELECT * FROM t WHERE tags CONTAINS 'important'`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`SELECT * FROM "t" WHERE "tags" @> jsonb_build_array('important')`,
+		result.SQL)
+}
+
+func TestTranslateContainsKey(t *testing.T) {
+	stmt, err := parser.Parse(
+		`SELECT * FROM t WHERE props CONTAINS KEY 'color'`)
+	require.NoError(t, err)
+	result, err := Translate(stmt)
+	require.NoError(t, err)
+	require.Equal(t,
+		`SELECT * FROM "t" WHERE "props" ? 'color'`,
+		result.SQL)
+}

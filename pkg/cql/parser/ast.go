@@ -226,10 +226,13 @@ type OrderByClause struct {
 // WhereClause is a single <col> <op> <val> condition. For the IN operator,
 // Value is a *TupleLiteral containing the list of values. When the left-hand
 // side is a function call (e.g. token(pk) > 0), ColumnExpr is non-nil.
+// For multi-column IN (e.g. (col1, col2) IN ((1,'a'), (2,'b'))), Columns
+// is non-nil and Column is empty.
 type WhereClause struct {
 	Column     string
-	ColumnExpr Expr   // non-nil when left side is a function call
-	Operator   string // "=", "<", ">", "<=", ">=", "!=", "IN"
+	Columns    []string // non-nil for multi-column IN: (col1, col2) IN (...)
+	ColumnExpr Expr     // non-nil when left side is a function call
+	Operator   string   // "=", "<", ">", "<=", ">=", "!=", "IN", "CONTAINS", "CONTAINS KEY"
 	Value      Expr
 }
 
@@ -251,6 +254,22 @@ type IntegerLiteral struct {
 }
 
 func (*IntegerLiteral) exprNode() {}
+
+// BigIntLiteral is an integer constant that exceeds int64 range. The value
+// is stored as a raw decimal string and passed through to CRDB as a DECIMAL.
+type BigIntLiteral struct {
+	Value string
+}
+
+func (*BigIntLiteral) exprNode() {}
+
+// BlobLiteral is a CQL blob hex literal (0xdeadbeef). The Value is the
+// hex string without the 0x prefix.
+type BlobLiteral struct {
+	Value string // hex digits only, e.g. "deadbeef"
+}
+
+func (*BlobLiteral) exprNode() {}
 
 // FloatLiteral is a floating-point constant.
 type FloatLiteral struct {

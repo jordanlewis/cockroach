@@ -892,6 +892,144 @@ func TestParseSelectFieldAccess(t *testing.T) {
 	}
 }
 
+func TestParseBlobHexLiteral(t *testing.T) {
+	input := `INSERT INTO t (id, data) VALUES (1, 0xdeadbeef)`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	if len(ins.Values) != 2 {
+		t.Fatalf("got %d values, want 2", len(ins.Values))
+	}
+	blob, ok := ins.Values[1].(*BlobLiteral)
+	if !ok {
+		t.Fatalf("expected *BlobLiteral, got %T", ins.Values[1])
+	}
+	if blob.Value != "deadbeef" {
+		t.Errorf("blob value = %q, want %q", blob.Value, "deadbeef")
+	}
+}
+
+func TestParseBlobHexUpperCase(t *testing.T) {
+	input := `INSERT INTO t (id, data) VALUES (1, 0XFF00)`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	blob := ins.Values[1].(*BlobLiteral)
+	if blob.Value != "FF00" {
+		t.Errorf("blob value = %q, want %q", blob.Value, "FF00")
+	}
+}
+
+func TestParseBigIntLiteral(t *testing.T) {
+	// Value exceeding int64 max (9223372036854775807).
+	input := `INSERT INTO t (id, v) VALUES (1, 99999999999999999999)`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	big, ok := ins.Values[1].(*BigIntLiteral)
+	if !ok {
+		t.Fatalf("expected *BigIntLiteral, got %T", ins.Values[1])
+	}
+	if big.Value != "99999999999999999999" {
+		t.Errorf("big int = %q, want %q", big.Value, "99999999999999999999")
+	}
+}
+
+func TestParseBigIntNegative(t *testing.T) {
+	// Negative value exceeding int64 min.
+	input := `INSERT INTO t (id, v) VALUES (1, -99999999999999999999)`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := stmt.(*InsertStatement)
+	big, ok := ins.Values[1].(*BigIntLiteral)
+	if !ok {
+		t.Fatalf("expected *BigIntLiteral, got %T", ins.Values[1])
+	}
+	if big.Value != "-99999999999999999999" {
+		t.Errorf("big int = %q, want %q", big.Value, "-99999999999999999999")
+	}
+}
+
+func TestParseMultiColumnIN(t *testing.T) {
+	input := `SELECT * FROM t WHERE (col1, col2) IN ((1, 'a'), (2, 'b'))`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.Where) != 1 {
+		t.Fatalf("got %d where clauses, want 1", len(sel.Where))
+	}
+	wc := sel.Where[0]
+	if wc.Operator != "IN" {
+		t.Errorf("operator = %q, want %q", wc.Operator, "IN")
+	}
+	if len(wc.Columns) != 2 {
+		t.Fatalf("got %d columns, want 2", len(wc.Columns))
+	}
+	if wc.Columns[0] != "col1" || wc.Columns[1] != "col2" {
+		t.Errorf("columns = %v, want [col1 col2]", wc.Columns)
+	}
+	tup := wc.Value.(*TupleLiteral)
+	if len(tup.Values) != 2 {
+		t.Fatalf("got %d tuple values, want 2", len(tup.Values))
+	}
+}
+
+func TestParseContains(t *testing.T) {
+	input := `SELECT * FROM t WHERE tags CONTAINS 'important'`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.Where) != 1 {
+		t.Fatalf("got %d where clauses, want 1", len(sel.Where))
+	}
+	wc := sel.Where[0]
+	if wc.Column != "tags" {
+		t.Errorf("column = %q, want %q", wc.Column, "tags")
+	}
+	if wc.Operator != "CONTAINS" {
+		t.Errorf("operator = %q, want %q", wc.Operator, "CONTAINS")
+	}
+	val := wc.Value.(*StringLiteral)
+	if val.Value != "important" {
+		t.Errorf("value = %q, want %q", val.Value, "important")
+	}
+}
+
+func TestParseContainsKey(t *testing.T) {
+	input := `SELECT * FROM t WHERE props CONTAINS KEY 'color'`
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := stmt.(*SelectStatement)
+	if len(sel.Where) != 1 {
+		t.Fatalf("got %d where clauses, want 1", len(sel.Where))
+	}
+	wc := sel.Where[0]
+	if wc.Column != "props" {
+		t.Errorf("column = %q, want %q", wc.Column, "props")
+	}
+	if wc.Operator != "CONTAINS KEY" {
+		t.Errorf("operator = %q, want %q", wc.Operator, "CONTAINS KEY")
+	}
+	val := wc.Value.(*StringLiteral)
+	if val.Value != "color" {
+		t.Errorf("value = %q, want %q", val.Value, "color")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsAt(s, substr)
 }

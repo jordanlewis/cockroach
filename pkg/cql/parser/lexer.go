@@ -20,6 +20,7 @@ const (
 	tokString    // single-quoted string
 	tokInteger   // integer literal
 	tokFloat     // float literal
+	tokBlob      // hex blob literal (0xdeadbeef)
 	tokUUID      // bare UUID literal (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
 	tokLParen    // (
 	tokRParen    // )
@@ -215,11 +216,26 @@ func (l *lexer) lexString() error {
 	return fmt.Errorf("unterminated string starting at position %d", start)
 }
 
-// lexNumber reads an integer or float literal. Negative numbers start with '-'.
+// lexNumber reads an integer, float, or blob hex literal. Negative numbers
+// start with '-'. Hex blob literals start with 0x or 0X.
 func (l *lexer) lexNumber() {
 	start := l.pos
 	if l.input[l.pos] == '-' {
 		l.pos++
+	}
+	// Check for hex blob literal: 0x... or 0X...
+	if l.input[l.pos] == '0' && l.pos+1 < len(l.input) &&
+		(l.input[l.pos+1] == 'x' || l.input[l.pos+1] == 'X') {
+		l.pos += 2 // skip 0x
+		hexStart := l.pos
+		for l.pos < len(l.input) && isHexDigit(l.input[l.pos]) {
+			l.pos++
+		}
+		// Store just the hex digits (without 0x prefix) as the token value.
+		l.tokens = append(l.tokens, token{
+			kind: tokBlob, val: l.input[hexStart:l.pos], pos: start,
+		})
+		return
 	}
 	for l.pos < len(l.input) && isDigit(l.input[l.pos]) {
 		l.pos++

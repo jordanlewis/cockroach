@@ -6,6 +6,7 @@
 package parser
 
 import (
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -1557,9 +1558,18 @@ func (p *parser) parseExpr() (Expr, error) {
 		p.lex.next()
 		v, err := strconv.ParseInt(t.val, 10, 64)
 		if err != nil {
+			var numErr *strconv.NumError
+			if stderrors.As(err, &numErr) && stderrors.Is(numErr.Err, strconv.ErrRange) {
+				// VARINT overflow: value exceeds int64 range. Pass through
+				// as a raw decimal string for CRDB DECIMAL.
+				return &BigIntLiteral{Value: t.val}, nil
+			}
 			return nil, errors.Wrapf(err, "at position %d: invalid integer %q", t.pos, t.val)
 		}
 		return &IntegerLiteral{Value: v}, nil
+	case tokBlob:
+		p.lex.next()
+		return &BlobLiteral{Value: t.val}, nil
 	case tokFloat:
 		p.lex.next()
 		v, err := strconv.ParseFloat(t.val, 64)
@@ -1736,14 +1746,37 @@ func (p *parser) parseOneSelector() (Selector, error) {
 }
 
 // parseWhereClauses parses <col> <op> <val> [AND ...] with support for
-// the IN operator: <col> IN (<val>, <val>, ...) and function calls on
-// the left-hand side: token(pk) > 0.
+// the IN operator: <col> IN (<val>, <val>, ...), multi-column IN:
+// (col1, col2) IN ((1,'a'), (2,'b')), CONTAINS/CONTAINS KEY operators,
+// and function calls on the left-hand side: token(pk) > 0.
 func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 	var clauses []WhereClause
 	for {
+		// Multi-column IN: (col1, col2) IN ((1,'a'), (2,'b')).
+		if p.lex.peek().kind == tokLParen {
+			wc, err := p.parseMultiColumnIN()
+			if err != nil {
+				return nil, err
+			}
+			clauses = append(clauses, wc)
+			if !isKeyword(p.lex.peek(), "AND") {
+				break
+			}
+			p.lex.next() // consume AND
+			continue
+		}
+
 		col, err := p.expectIdent()
 		if err != nil {
 			return nil, err
+		}
+
+		// CONTAINS / CONTAINS KEY operators.
+		if strings.EqualFold(col, "CONTAINS") {
+			// This was parsed as an ident but is actually the operator
+			// following the previous clause. This can't happen as the
+			// first clause, so this path is a parse error.
+			return nil, p.errorf("unexpected CONTAINS without preceding column")
 		}
 
 		wc := WhereClause{Column: col}
@@ -1792,6 +1825,20 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 			}
 			wc.Operator = "IN"
 			wc.Value = &TupleLiteral{Values: vals}
+		} else if isKeyword(p.lex.peek(), "CONTAINS") {
+			p.lex.next() // consume CONTAINS
+			// CONTAINS KEY vs plain CONTAINS.
+			if isKeyword(p.lex.peek(), "KEY") {
+				p.lex.next() // consume KEY
+				wc.Operator = "CONTAINS KEY"
+			} else {
+				wc.Operator = "CONTAINS"
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			wc.Value = val
 		} else {
 			op, err := p.parseOperator()
 			if err != nil {
@@ -1811,6 +1858,48 @@ func (p *parser) parseWhereClauses() ([]WhereClause, error) {
 		p.lex.next() // consume AND
 	}
 	return clauses, nil
+}
+
+// parseMultiColumnIN parses: (col1, col2) IN ((val1, val2), (val3, val4)).
+// The opening ( has not been consumed yet.
+func (p *parser) parseMultiColumnIN() (WhereClause, error) {
+	p.lex.next() // consume (
+	// Parse column names.
+	var cols []string
+	for {
+		col, err := p.expectIdent()
+		if err != nil {
+			return WhereClause{}, err
+		}
+		cols = append(cols, col)
+		if p.lex.peek().kind != tokComma {
+			break
+		}
+		p.lex.next() // consume comma
+	}
+	if err := p.expectToken(tokRParen); err != nil {
+		return WhereClause{}, err
+	}
+	if !isKeyword(p.lex.peek(), "IN") {
+		return WhereClause{}, p.errorf("expected IN after column tuple")
+	}
+	p.lex.next() // consume IN
+	if err := p.expectToken(tokLParen); err != nil {
+		return WhereClause{}, err
+	}
+	// Parse list of tuples.
+	vals, err := p.parseExprList()
+	if err != nil {
+		return WhereClause{}, err
+	}
+	if err := p.expectToken(tokRParen); err != nil {
+		return WhereClause{}, err
+	}
+	return WhereClause{
+		Columns:  cols,
+		Operator: "IN",
+		Value:    &TupleLiteral{Values: vals},
+	}, nil
 }
 
 // parseOrderByClauses parses <col> [ASC|DESC] [, <col> [ASC|DESC], ...].
@@ -2268,6 +2357,8 @@ func kindName(kind tokenKind) string {
 		return "integer"
 	case tokFloat:
 		return "float"
+	case tokBlob:
+		return "blob"
 	case tokUUID:
 		return "UUID"
 	case tokLParen:

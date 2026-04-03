@@ -779,24 +779,85 @@ func writeWhereClauses(
 			if !ok {
 				return errors.Newf("IN operator requires tuple value")
 			}
-			if err := writeCol(); err != nil {
-				return err
+			// Multi-column IN: (col1, col2) IN ((1,'a'), (2,'b')).
+			if len(w.Columns) > 0 {
+				sb.WriteByte('(')
+				for j, c := range w.Columns {
+					if j > 0 {
+						sb.WriteString(", ")
+					}
+					sb.WriteString(quoteIdent(c))
+				}
+				sb.WriteByte(')')
+			} else {
+				if err := writeCol(); err != nil {
+					return err
+				}
 			}
 			sb.WriteString(" IN (")
 			for j, val := range tuple.Values {
 				if j > 0 {
 					sb.WriteString(", ")
 				}
-				sqlVal, param, err := exprToSQL(val, paramIdx)
-				if err != nil {
-					return errors.Wrap(err, "translating IN value")
-				}
-				sb.WriteString(sqlVal)
-				if param != nil {
-					*params = append(*params, param)
+				// For multi-column IN, inner tuples should render as
+				// SQL row constructors (val1, val2), not jsonb_build_array.
+				if innerTup, ok := val.(*parser.TupleLiteral); ok && len(w.Columns) > 0 {
+					sb.WriteByte('(')
+					for k, elem := range innerTup.Values {
+						if k > 0 {
+							sb.WriteString(", ")
+						}
+						elemSQL, param, err := exprToSQL(elem, paramIdx)
+						if err != nil {
+							return errors.Wrap(err, "translating IN tuple element")
+						}
+						sb.WriteString(elemSQL)
+						if param != nil {
+							*params = append(*params, param)
+						}
+					}
+					sb.WriteByte(')')
+				} else {
+					sqlVal, param, err := exprToSQL(val, paramIdx)
+					if err != nil {
+						return errors.Wrap(err, "translating IN value")
+					}
+					sb.WriteString(sqlVal)
+					if param != nil {
+						*params = append(*params, param)
+					}
 				}
 			}
 			sb.WriteByte(')')
+		} else if w.Operator == "CONTAINS" {
+			// CQL CONTAINS on list/set → CRDB JSONB array containment.
+			if err := writeCol(); err != nil {
+				return err
+			}
+			valSQL, param, err := exprToSQL(w.Value, paramIdx)
+			if err != nil {
+				return errors.Wrap(err, "translating CONTAINS value")
+			}
+			sb.WriteString(" @> jsonb_build_array(")
+			sb.WriteString(valSQL)
+			sb.WriteByte(')')
+			if param != nil {
+				*params = append(*params, param)
+			}
+		} else if w.Operator == "CONTAINS KEY" {
+			// CQL CONTAINS KEY on map → CRDB JSONB key existence.
+			if err := writeCol(); err != nil {
+				return err
+			}
+			valSQL, param, err := exprToSQL(w.Value, paramIdx)
+			if err != nil {
+				return errors.Wrap(err, "translating CONTAINS KEY value")
+			}
+			sb.WriteString(" ? ")
+			sb.WriteString(valSQL)
+			if param != nil {
+				*params = append(*params, param)
+			}
 		} else {
 			if err := writeCol(); err != nil {
 				return err
@@ -1166,6 +1227,10 @@ func exprToSQL(e parser.Expr, paramIdx *int) (string, interface{}, error) {
 		return quoteLiteral(v.Value), nil, nil
 	case *parser.IntegerLiteral:
 		return fmt.Sprintf("%d", v.Value), nil, nil
+	case *parser.BigIntLiteral:
+		return v.Value + "::DECIMAL", nil, nil
+	case *parser.BlobLiteral:
+		return fmt.Sprintf("'\\x%s'::BYTEA", strings.ToLower(v.Value)), nil, nil
 	case *parser.FloatLiteral:
 		return fmt.Sprintf("%g", v.Value), nil, nil
 	case *parser.BoolLiteral:
