@@ -268,6 +268,99 @@ func TestServerQueryNotImplemented(t *testing.T) {
 	}
 }
 
+// TestServerDDLSchemaChangeResponse tests that DDL queries sent through the
+// wire protocol with an executor return a SchemaChange RESULT frame (not an
+// error or timeout). This is the regression test for the DDL timeout bug
+// where DDL operations executed successfully but the response was never
+// sent back to the client.
+func TestServerDDLSchemaChangeResponse(t *testing.T) {
+	mock := &mockExecutor{}
+	db := &mockDB{exec: mock}
+	s := MakeServer(ServerConfig{Insecure: true}, db)
+	server, client := net.Pipe()
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 5*time.Second,
+	)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.ServeConn(ctx, server) }()
+
+	// Complete handshake.
+	sendStartup(t, client, map[string]string{
+		"CQL_VERSION": "3.4.5",
+	})
+	frame, err := cqlwire.ReadFrame(client)
+	require.NoError(t, err)
+	require.Equal(t, cqlwire.OpReady, frame.Header.Opcode)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"alter_table_add", "ALTER TABLE ks.users ADD email text"},
+		{"alter_table_drop", "ALTER TABLE ks.users DROP email"},
+		{"create_index_if_not_exists", "CREATE INDEX IF NOT EXISTS idx ON ks.users (name)"},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			streamID := int16(i + 1)
+			var qbody bytes.Buffer
+			_ = cqlwire.WriteLongString(&qbody, tt.query)
+			_ = cqlwire.WriteConsistency(&qbody, cqlwire.ConsistencyOne)
+			qbody.WriteByte(0) // flags
+			require.NoError(t, cqlwire.WriteFrame(
+				client, cqlwire.FrameHeader{
+					Version:  cqlwire.ProtoV4Request,
+					StreamID: streamID,
+					Opcode:   cqlwire.OpQuery,
+				}, qbody.Bytes(),
+			))
+
+			frame, err := cqlwire.ReadFrame(client)
+			require.NoError(t, err)
+			require.Equal(t, cqlwire.OpResult, frame.Header.Opcode,
+				"DDL should return RESULT, got %s", frame.Header.Opcode)
+			require.Equal(t, streamID, frame.Header.StreamID)
+
+			// Verify it's a SchemaChange result.
+			r := bytes.NewReader(frame.Body)
+			kind, err := cqlwire.ReadInt(r)
+			require.NoError(t, err)
+			require.Equal(t, resultKindSchemaChange, kind,
+				"DDL result should be SchemaChange kind")
+
+			// Verify the change_type, target, keyspace, name.
+			changeType, err := cqlwire.ReadString(r)
+			require.NoError(t, err)
+			require.NotEmpty(t, changeType)
+
+			target, err := cqlwire.ReadString(r)
+			require.NoError(t, err)
+			require.Equal(t, "TABLE", target)
+
+			ksName, err := cqlwire.ReadString(r)
+			require.NoError(t, err)
+			require.Equal(t, "ks", ksName)
+
+			objName, err := cqlwire.ReadString(r)
+			require.NoError(t, err)
+			require.Equal(t, "users", objName)
+		})
+	}
+
+	client.Close()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not exit")
+	}
+}
+
 func TestParseAuthResponse(t *testing.T) {
 	// Encode a valid SASL PLAIN token as CQL [bytes].
 	var body bytes.Buffer

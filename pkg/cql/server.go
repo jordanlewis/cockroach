@@ -261,6 +261,19 @@ func (s *Server) serveImpl(ctx context.Context, c *conn) {
 	// signal the processor.
 	c.readFrames(ctx, s)
 
+	// Cancel the connection context after the reader exits. This
+	// is critical for DDL operations: ExecEx blocks while a schema
+	// change runs, and without cancellation the processor goroutine
+	// stays blocked indefinitely after the client disconnects. The
+	// deferred onClose in ServeConn also calls cancel, but it
+	// cannot run until serveImpl returns — creating a deadlock
+	// where serveImpl waits for the processor, which is stuck in
+	// ExecEx with a live context. CancelFunc is idempotent so the
+	// duplicate call in onClose is harmless.
+	if c.cancelConn != nil {
+		c.cancelConn()
+	}
+
 	// Wait for the processor to finish before returning.
 	procWg.Wait()
 }

@@ -266,6 +266,15 @@ func (e *Executor) executeDDL(
 		result.Params...,
 	)
 	if err != nil {
+		// Distinguish context cancellation (client disconnect) from
+		// real DDL errors. When the client disconnects during a
+		// schema change, the context is cancelled and ExecEx returns
+		// a context error. The schema change may have already been
+		// committed. Return an error result so the caller does not
+		// attempt to write to the closed connection.
+		if ctx.Err() != nil {
+			return errorResult(errCodeServerError, "query cancelled: "+ctx.Err().Error())
+		}
 		return errorResult(errCodeServerError, err.Error())
 	}
 	return ExecuteResult{
