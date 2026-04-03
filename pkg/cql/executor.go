@@ -238,9 +238,19 @@ func (e *Executor) recordTableSchema(s *parser.CreateTableStatement, keyspace st
 			staticCols[strings.ToLower(col.Name)] = true
 		}
 	}
+	var clusteringDesc map[string]bool
+	for _, entry := range s.ClusteringOrder {
+		if entry.Desc {
+			if clusteringDesc == nil {
+				clusteringDesc = make(map[string]bool)
+			}
+			clusteringDesc[entry.Column] = true
+		}
+	}
 	e.schema.RecordTable(keyspace, s.Table, translate.TableMeta{
 		PartitionKeys:  s.PrimaryKey.PartitionKeys,
 		ClusteringKeys: s.PrimaryKey.ClusteringKeys,
+		ClusteringDesc: clusteringDesc,
 		Columns:        cols,
 		StaticColumns:  staticCols,
 	})

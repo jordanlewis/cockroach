@@ -374,6 +374,23 @@ func TestTranslateSelectPerPartitionLimit(t *testing.T) {
 		PartitionKeys: []string{"region", "host"},
 		Columns:       []string{"region", "host", "ts", "val"},
 	})
+	schema.RecordTable("", "timeseries", TableMeta{
+		PartitionKeys:  []string{"sensor_id"},
+		ClusteringKeys: []string{"ts"},
+		Columns:        []string{"sensor_id", "ts", "value"},
+	})
+	schema.RecordTable("", "logs_desc", TableMeta{
+		PartitionKeys:  []string{"app"},
+		ClusteringKeys: []string{"ts"},
+		ClusteringDesc: map[string]bool{"ts": true},
+		Columns:        []string{"app", "ts", "msg"},
+	})
+	schema.RecordTable("", "multi_ck", TableMeta{
+		PartitionKeys:  []string{"pk"},
+		ClusteringKeys: []string{"ck1", "ck2"},
+		ClusteringDesc: map[string]bool{"ck2": true},
+		Columns:        []string{"pk", "ck1", "ck2", "val"},
+	})
 
 	tests := []struct {
 		name       string
@@ -416,6 +433,21 @@ func TestTranslateSelectPerPartitionLimit(t *testing.T) {
 			cql:        "SELECT * FROM users PER PARTITION LIMIT ?",
 			want:       `SELECT "user_id", "name", "email" FROM (SELECT *, row_number() OVER (PARTITION BY "user_id") AS "__cql_rn" FROM "users") AS "__cql_ppl" WHERE "__cql_rn" <= $1`,
 			wantParams: 1,
+		},
+		{
+			name: "ppl with clustering key asc",
+			cql:  "SELECT * FROM timeseries PER PARTITION LIMIT 5",
+			want: `SELECT "sensor_id", "ts", "value" FROM (SELECT *, row_number() OVER (PARTITION BY "sensor_id" ORDER BY "ts") AS "__cql_rn" FROM "timeseries") AS "__cql_ppl" WHERE "__cql_rn" <= 5`,
+		},
+		{
+			name: "ppl with clustering key desc",
+			cql:  "SELECT * FROM logs_desc PER PARTITION LIMIT 3",
+			want: `SELECT "app", "ts", "msg" FROM (SELECT *, row_number() OVER (PARTITION BY "app" ORDER BY "ts" DESC) AS "__cql_rn" FROM "logs_desc") AS "__cql_ppl" WHERE "__cql_rn" <= 3`,
+		},
+		{
+			name: "ppl with mixed clustering order",
+			cql:  "SELECT * FROM multi_ck PER PARTITION LIMIT 2",
+			want: `SELECT "pk", "ck1", "ck2", "val" FROM (SELECT *, row_number() OVER (PARTITION BY "pk" ORDER BY "ck1", "ck2" DESC) AS "__cql_rn" FROM "multi_ck") AS "__cql_ppl" WHERE "__cql_rn" <= 2`,
 		},
 	}
 	for _, tt := range tests {

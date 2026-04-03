@@ -84,3 +84,88 @@ pk val
 2 two
 3 three
 4 four
+
+# ---------------------------------------------------------------
+# PER PARTITION LIMIT with clustering order
+# ---------------------------------------------------------------
+
+# Table with default (ASC) clustering order.
+exec
+CREATE TABLE IF NOT EXISTS sel_lim_ck (pk int, ck int, val text, PRIMARY KEY (pk, ck))
+----
+
+exec
+INSERT INTO sel_lim_ck (pk, ck, val) VALUES (1, 30, 'thirty')
+----
+
+exec
+INSERT INTO sel_lim_ck (pk, ck, val) VALUES (1, 10, 'ten')
+----
+
+exec
+INSERT INTO sel_lim_ck (pk, ck, val) VALUES (1, 20, 'twenty')
+----
+
+exec
+INSERT INTO sel_lim_ck (pk, ck, val) VALUES (2, 200, 'two hundred')
+----
+
+exec
+INSERT INTO sel_lim_ck (pk, ck, val) VALUES (2, 100, 'one hundred')
+----
+
+# PER PARTITION LIMIT 2 with default ASC clustering: returns the
+# two lowest ck values per partition.
+query rowsort
+SELECT * FROM sel_lim_ck PER PARTITION LIMIT 2
+----
+pk ck val
+1 10 ten
+1 20 twenty
+2 100 one hundred
+2 200 two hundred
+
+# Table with DESC clustering order.
+exec
+CREATE TABLE IF NOT EXISTS sel_lim_ck_desc (pk int, ck int, val text, PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)
+----
+
+exec
+INSERT INTO sel_lim_ck_desc (pk, ck, val) VALUES (1, 30, 'thirty')
+----
+
+exec
+INSERT INTO sel_lim_ck_desc (pk, ck, val) VALUES (1, 10, 'ten')
+----
+
+exec
+INSERT INTO sel_lim_ck_desc (pk, ck, val) VALUES (1, 20, 'twenty')
+----
+
+exec
+INSERT INTO sel_lim_ck_desc (pk, ck, val) VALUES (2, 200, 'two hundred')
+----
+
+exec
+INSERT INTO sel_lim_ck_desc (pk, ck, val) VALUES (2, 100, 'one hundred')
+----
+
+# PER PARTITION LIMIT 2 with DESC clustering: returns the two
+# highest ck values per partition.
+query rowsort
+SELECT * FROM sel_lim_ck_desc PER PARTITION LIMIT 2
+----
+pk ck val
+1 20 twenty
+1 30 thirty
+2 100 one hundred
+2 200 two hundred
+
+# PER PARTITION LIMIT 1 with DESC clustering: returns only the
+# highest ck value per partition.
+query rowsort
+SELECT * FROM sel_lim_ck_desc PER PARTITION LIMIT 1
+----
+pk ck val
+1 30 thirty
+2 200 two hundred

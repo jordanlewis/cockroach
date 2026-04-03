@@ -17,8 +17,9 @@
 // unless IF NOT EXISTS is present, in which case it maps to INSERT.
 //
 // CQL primary keys (partition keys + clustering keys) are mapped to a composite
-// PRIMARY KEY in SQL. CQL clustering key ordering is not yet supported but the
-// column order in the PK definition reflects the intended sort.
+// PRIMARY KEY in SQL. CQL clustering key ordering (WITH CLUSTERING ORDER BY) is
+// tracked in TableMeta and used by PER PARTITION LIMIT to order rows within
+// each partition correctly.
 package translate
 
 import (
@@ -37,6 +38,7 @@ import (
 type TableMeta struct {
 	PartitionKeys  []string        // partition key columns from PRIMARY KEY
 	ClusteringKeys []string        // clustering key columns from PRIMARY KEY
+	ClusteringDesc map[string]bool // clustering key column name → true if DESC
 	Columns        []string        // all column names in declaration order
 	StaticColumns  map[string]bool // lowercase names of STATIC columns (nil if none)
 }
@@ -545,13 +547,26 @@ func translateSelectPPL(s *parser.SelectStatement, schema *SchemaInfo) (Result, 
 		return Result{}, err
 	}
 
-	// ROW_NUMBER window function partitioned by partition key columns.
+	// ROW_NUMBER window function partitioned by partition key columns,
+	// ordered by clustering key columns to respect CLUSTERING ORDER BY.
 	sb.WriteString(`, row_number() OVER (PARTITION BY `)
 	for i, pk := range meta.PartitionKeys {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		sb.WriteString(quoteIdent(pk))
+	}
+	if len(meta.ClusteringKeys) > 0 {
+		sb.WriteString(" ORDER BY ")
+		for i, ck := range meta.ClusteringKeys {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(quoteIdent(ck))
+			if meta.ClusteringDesc[ck] {
+				sb.WriteString(" DESC")
+			}
+		}
 	}
 	sb.WriteString(`) AS "__cql_rn"`)
 
