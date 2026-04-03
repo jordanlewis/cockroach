@@ -1,39 +1,12 @@
 # Unsupported CQL types.
 #
-# Types recognized by the parser but not in the supported set produce
-# "unsupported CQL type" errors. Types not in the CQL specification
-# at all produce "expected data type" errors.
+# Types recognized by the parser but not supported by the translator
+# produce "unsupported CQL type" errors. Types not in the CQL
+# specification at all produce "expected data type" errors.
+#
+# Previously unsupported types (smallint, tinyint, date, time, duration)
+# are now supported — see types_integer and types_timestamp for tests.
 
 exec
 USE defaultdb
 ----
-
-# smallint is parsed as an identifier but not a supported CQL type.
-error
-CREATE TABLE unsup_smallint (id int PRIMARY KEY, v smallint)
-----
-at position 51: unsupported CQL type "smallint"
-
-# tinyint is parsed as an identifier but not a supported CQL type.
-error
-CREATE TABLE unsup_tinyint (id int PRIMARY KEY, v tinyint)
-----
-at position 50: unsupported CQL type "tinyint"
-
-# date is parsed as an identifier but not a supported CQL type.
-error
-CREATE TABLE unsup_date (id int PRIMARY KEY, v date)
-----
-at position 47: unsupported CQL type "date"
-
-# time is parsed as an identifier but not a supported CQL type.
-error
-CREATE TABLE unsup_time (id int PRIMARY KEY, v time)
-----
-at position 47: unsupported CQL type "time"
-
-# duration is parsed as an identifier but not a supported CQL type.
-error
-CREATE TABLE unsup_duration (id int PRIMARY KEY, v duration)
-----
-at position 51: unsupported CQL type "duration"

@@ -22,6 +22,7 @@ exec
 INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'first') IF NOT EXISTS
 ----
 
+# CRDB limitation: Cassandra returns [applied]=false; CRDB returns error.
 error
 INSERT INTO lwt_pk_single (pk, data) VALUES (1, 'duplicate') IF NOT EXISTS
 ----
@@ -50,7 +51,7 @@ exec
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 2, 'row-1-2') IF NOT EXISTS
 ----
 
-# Same (pk=1, ck=1) → conflict.
+# CRDB limitation: same (pk=1, ck=1) → constraint violation (not [applied]=false).
 error
 INSERT INTO lwt_pk_cluster (pk, ck, data) VALUES (1, 1, 'conflict') IF NOT EXISTS
 ----
@@ -87,7 +88,7 @@ exec
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 2, 1, 'b') IF NOT EXISTS
 ----
 
-# Same (pk1, pk2, ck) → conflict.
+# CRDB limitation: same (pk1, pk2, ck) → constraint violation (not [applied]=false).
 error
 INSERT INTO lwt_pk_composite (pk1, pk2, ck, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
 ----
@@ -126,7 +127,7 @@ exec
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 2, 1, 'z') IF NOT EXISTS
 ----
 
-# Full PK match → conflict.
+# CRDB limitation: full PK match → constraint violation (not [applied]=false).
 error
 INSERT INTO lwt_pk_multi_ck (pk, ck1, ck2, data) VALUES (1, 1, 1, 'conflict') IF NOT EXISTS
 ----

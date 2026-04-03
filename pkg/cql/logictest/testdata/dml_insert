@@ -118,7 +118,8 @@ SELECT pk, ck, name, val FROM dml_ins WHERE pk = 20 AND ck = 1
 pk ck name val
 20 1 unique 42
 
-# Duplicate primary key — fails with constraint violation.
+# CRDB limitation: duplicate primary key fails with constraint violation
+# (Cassandra returns [applied]=false with existing row instead).
 error
 INSERT INTO dml_ins (pk, ck, name, val) VALUES (20, 1, 'dupe', 99) IF NOT EXISTS
 ----

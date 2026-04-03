@@ -135,15 +135,17 @@ DELETE FROM dml_del WHERE pk IN (10, 11)
 #
 # In Cassandra, DELETE col1, col2 FROM table WHERE ... sets those
 # columns to null (tombstones) rather than removing the entire row.
-# The parser expects FROM immediately after DELETE, so column names
-# are interpreted as the expected FROM keyword.
+# Unsupported: parser does not recognize column-level DELETE syntax;
+# would require parser changes to support DELETE <columns> FROM.
 # ---------------------------------------------------------------
 
+# Unsupported: column-level DELETE (MEDIUM — requires parser changes).
 error
 DELETE name FROM dml_del WHERE pk = 1 AND ck = 10
 ----
 at position 7: expected FROM, got "name"
 
+# Unsupported: column-level DELETE with multiple columns.
 error
 DELETE name, val FROM dml_del WHERE pk = 1 AND ck = 10
 ----

@@ -286,6 +286,11 @@ func decodeCQLValue(typeID cqltypes.CQLType, val []byte) string {
 	switch typeID {
 	case cqltypes.CQLVarchar, cqltypes.CQLAscii:
 		return string(val)
+	case cqltypes.CQLSmallint:
+		return fmt.Sprintf("%d",
+			int16(binary.BigEndian.Uint16(val)))
+	case cqltypes.CQLTinyint:
+		return fmt.Sprintf("%d", int8(val[0]))
 	case cqltypes.CQLInt:
 		return fmt.Sprintf("%d",
 			int32(binary.BigEndian.Uint32(val)))
@@ -309,6 +314,23 @@ func decodeCQLValue(typeID cqltypes.CQLType, val []byte) string {
 	case cqltypes.CQLTimestamp:
 		millis := int64(binary.BigEndian.Uint64(val))
 		return time.UnixMilli(millis).UTC().Format(time.RFC3339)
+	case cqltypes.CQLDate:
+		// CQL date: 4-byte unsigned int, 2^31 = epoch (1970-01-01).
+		cqlDays := binary.BigEndian.Uint32(val)
+		unixDays := int64(cqlDays) - (1 << 31)
+		t := time.Unix(unixDays*86400, 0).UTC()
+		return t.Format("2006-01-02")
+	case cqltypes.CQLTime:
+		// CQL time: 8-byte nanoseconds since midnight.
+		nanos := int64(binary.BigEndian.Uint64(val))
+		t := time.Date(0, 1, 1, 0, 0, 0, int(nanos), time.UTC)
+		return t.Format(time.RFC3339)
+	case cqltypes.CQLDuration:
+		// CQL duration: 3 signed vints (months, days, nanos).
+		months, n1 := readSignedVint(val)
+		days, n2 := readSignedVint(val[n1:])
+		nanos, _ := readSignedVint(val[n1+n2:])
+		return formatDuration(months, days, nanos)
 	case cqltypes.CQLBlob:
 		return "0x" + hex.EncodeToString(val)
 	case cqltypes.CQLInet:
@@ -328,6 +350,42 @@ func decodeCQLValue(typeID cqltypes.CQLType, val []byte) string {
 	default:
 		return "0x" + hex.EncodeToString(val)
 	}
+}
+
+// readSignedVint reads a zigzag-encoded variable-length integer and
+// returns the decoded value and number of bytes consumed.
+func readSignedVint(b []byte) (int64, int) {
+	var z uint64
+	var shift uint
+	for i, byt := range b {
+		z |= uint64(byt&0x7F) << shift
+		if byt&0x80 == 0 {
+			// Zigzag decode: (z >> 1) ^ -(z & 1).
+			return int64((z >> 1) ^ -(z & 1)), i + 1
+		}
+		shift += 7
+	}
+	return 0, len(b)
+}
+
+// formatDuration formats a CQL duration (months, days, nanos) as a
+// human-readable string matching CRDB's interval display format.
+func formatDuration(months, days, nanos int64) string {
+	hours := nanos / (3600 * 1e9)
+	nanos -= hours * 3600 * 1e9
+	mins := nanos / (60 * 1e9)
+	nanos -= mins * 60 * 1e9
+	secs := nanos / 1e9
+
+	var parts []string
+	if months != 0 {
+		parts = append(parts, fmt.Sprintf("%d mon", months))
+	}
+	if days != 0 {
+		parts = append(parts, fmt.Sprintf("%d day", days))
+	}
+	parts = append(parts, fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs))
+	return strings.Join(parts, " ")
 }
 
 // TestLogic walks the testdata directory and runs each file as a CQL

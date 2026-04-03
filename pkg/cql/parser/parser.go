@@ -1340,17 +1340,11 @@ func (p *parser) parseDataType() (DataType, error) {
 
 	// Known supported scalar types.
 	switch name {
-	case "text", "varchar", "int", "bigint", "float", "double",
-		"boolean", "timestamp", "uuid", "timeuuid", "blob",
-		"inet", "counter", "ascii", "varint", "decimal":
+	case "text", "varchar", "int", "bigint", "smallint", "tinyint",
+		"float", "double", "boolean", "timestamp", "date", "time",
+		"duration", "uuid", "timeuuid", "blob", "inet", "counter",
+		"ascii", "varint", "decimal":
 		return DataType{Name: name}, nil
-	}
-
-	// Known unsupported scalar types.
-	switch name {
-	case "smallint", "tinyint", "date", "time", "duration":
-		return DataType{}, fmt.Errorf(
-			"at position %d: unsupported CQL type %q", t.pos, name)
 	}
 
 	// Unknown identifier: accept as a user-defined type (UDT) name.

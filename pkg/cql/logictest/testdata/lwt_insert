@@ -36,8 +36,8 @@ id name val
 # ---------------------------------------------------------------
 # INSERT IF NOT EXISTS: row already exists → constraint violation.
 #
-# Cassandra returns: [applied]=false plus the existing row.
-# CockroachDB currently returns an error instead.
+# CRDB limitation: Cassandra returns [applied]=false plus the
+# existing row; CockroachDB returns a constraint violation error.
 # ---------------------------------------------------------------
 
 error
@@ -80,7 +80,7 @@ exec
 INSERT INTO lwt_ins (id, name, val) VALUES (3, 'dave', 400) IF NOT EXISTS
 ----
 
-# Second insert of id=2 fails.
+# CRDB limitation: second insert of id=2 fails with constraint violation.
 error
 INSERT INTO lwt_ins (id, name, val) VALUES (2, 'eve', 500) IF NOT EXISTS
 ----

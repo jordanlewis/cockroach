@@ -32,19 +32,19 @@ INSERT INTO json_t (id, name, age, active) VALUES (2, 'bob', 25, false)
 # INSERT INTO <table> JSON '...' is now supported.
 # ---------------------------------------------------------------
 
-# INSERT JSON without INTO — invalid CQL syntax.
+# Correctly rejected: bare INSERT JSON without INTO is not valid CQL.
 error
 INSERT JSON '{"id": 10, "name": "charlie", "age": 35, "active": true}'
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT JSON with DEFAULT UNSET — invalid CQL syntax.
+# Correctly rejected: bare INSERT JSON with DEFAULT UNSET.
 error
 INSERT JSON '{"id": 11, "name": "dave"}' DEFAULT UNSET
 ----
 at position 7: expected INTO, got "JSON"
 
-# INSERT JSON with DEFAULT NULL — invalid CQL syntax.
+# Correctly rejected: bare INSERT JSON with DEFAULT NULL.
 error
 INSERT JSON '{"id": 12}' DEFAULT NULL
 ----
@@ -92,7 +92,7 @@ SELECT toJson(name) FROM json_t WHERE id = 1
 to_jsonb
 "alice"
 
-# toJson on the entire row via * — not a valid function argument.
+# Correctly rejected: toJson(*) is not a valid CQL function call.
 error
 SELECT toJson(*) FROM json_t
 ----

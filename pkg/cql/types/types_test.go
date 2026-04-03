@@ -84,7 +84,7 @@ func TestCQLTypeFromCRDB(t *testing.T) {
 	}{
 		{types.Bool, CQLBoolean},
 		{types.Int4, CQLInt},
-		{types.Int2, CQLInt},
+		{types.Int2, CQLSmallint},
 		{types.Int, CQLBigint},
 		{types.Float4, CQLFloat},
 		{types.Float, CQLDouble},
@@ -92,11 +92,13 @@ func TestCQLTypeFromCRDB(t *testing.T) {
 		{types.Bytes, CQLBlob},
 		{types.TimestampTZ, CQLTimestamp},
 		{types.Timestamp, CQLTimestamp},
+		{types.Date, CQLDate},
+		{types.Time, CQLTime},
+		{types.Interval, CQLDuration},
 		{types.Uuid, CQLUuid},
 		{types.INet, CQLInet},
 		{types.Jsonb, CQLVarchar},
 		{types.Decimal, CQLDecimal},
-		{types.Date, CQLTimestamp},
 	}
 	for _, tt := range tests {
 		got, err := CQLTypeFromCRDB(tt.crdb)

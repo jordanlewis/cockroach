@@ -1,8 +1,11 @@
-# Integer types: int (INT4), bigint (INT8), varint (INT8).
+# Integer types: int (INT4), bigint (INT8), smallint (INT2),
+# tinyint (INT2), varint (INT8).
 #
 # CQL int maps to CRDB INT4 (32-bit), bigint to INT8 (64-bit).
-# varint maps to INT8 in CRDB and round-trips as bigint since
-# CQLTypeFromCRDB returns CQLBigint for 64-bit integers.
+# smallint and tinyint both map to CRDB INT2 (16-bit) since CRDB
+# has no 8-bit integer type. varint maps to INT8 in CRDB and
+# round-trips as bigint since CQLTypeFromCRDB returns CQLBigint
+# for 64-bit integers.
 
 exec
 USE defaultdb
@@ -142,3 +145,73 @@ SELECT id, v FROM lt_varint WHERE id = 4
 ----
 id v
 4 NULL
+
+# Smallint type: maps to INT2 (16-bit) in CRDB.
+exec
+CREATE TABLE IF NOT EXISTS lt_smallint (id int, v smallint, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_smallint (id, v) VALUES (1, 42)
+----
+
+query
+SELECT id, v FROM lt_smallint WHERE id = 1
+----
+id v
+1 42
+
+exec
+INSERT INTO lt_smallint (id, v) VALUES (2, -100)
+----
+
+query
+SELECT id, v FROM lt_smallint WHERE id = 2
+----
+id v
+2 -100
+
+exec
+INSERT INTO lt_smallint (id, v) VALUES (3, NULL)
+----
+
+query
+SELECT id, v FROM lt_smallint WHERE id = 3
+----
+id v
+3 NULL
+
+# Tinyint type: maps to INT2 in CRDB (no 8-bit integer in CRDB).
+exec
+CREATE TABLE IF NOT EXISTS lt_tinyint (id int, v tinyint, PRIMARY KEY (id))
+----
+
+exec
+INSERT INTO lt_tinyint (id, v) VALUES (1, 7)
+----
+
+query
+SELECT id, v FROM lt_tinyint WHERE id = 1
+----
+id v
+1 7
+
+exec
+INSERT INTO lt_tinyint (id, v) VALUES (2, -1)
+----
+
+query
+SELECT id, v FROM lt_tinyint WHERE id = 2
+----
+id v
+2 -1
+
+exec
+INSERT INTO lt_tinyint (id, v) VALUES (3, NULL)
+----
+
+query
+SELECT id, v FROM lt_tinyint WHERE id = 3
+----
+id v
+3 NULL

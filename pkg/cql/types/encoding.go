@@ -29,6 +29,10 @@ func EncodeDatum(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
 	switch cqlType {
 	case CQLVarchar, CQLAscii: // CQLText == CQLVarchar
 		return encodeText(d)
+	case CQLSmallint:
+		return encodeSmallint(d)
+	case CQLTinyint:
+		return encodeTinyint(d)
 	case CQLInt:
 		return encodeInt(d)
 	case CQLBigint, CQLCounter:
@@ -47,6 +51,12 @@ func EncodeDatum(d tree.Datum, cqlType CQLType) ([]byte, bool, error) {
 		return encodeBlob(d)
 	case CQLInet:
 		return encodeInet(d)
+	case CQLDate:
+		return encodeDate(d)
+	case CQLTime:
+		return encodeTime(d)
+	case CQLDuration:
+		return encodeDuration(d)
 	case CQLDecimal:
 		return encodeDecimal(d)
 	default:
@@ -246,21 +256,78 @@ func bigIntToTwosComplement(n *big.Int) []byte {
 	return b
 }
 
-// encodeDate encodes a CRDB date as CQL timestamp: 8-byte big-endian
-// milliseconds since Unix epoch (midnight of that date).
+func encodeSmallint(d tree.Datum) ([]byte, bool, error) {
+	i, ok := d.(*tree.DInt)
+	if !ok {
+		return nil, false, errors.Newf("expected DInt, got %T", d)
+	}
+	var buf [2]byte
+	binary.BigEndian.PutUint16(buf[:], uint16(int16(*i)))
+	return buf[:], false, nil
+}
+
+func encodeTinyint(d tree.Datum) ([]byte, bool, error) {
+	i, ok := d.(*tree.DInt)
+	if !ok {
+		return nil, false, errors.Newf("expected DInt, got %T", d)
+	}
+	return []byte{byte(int8(*i))}, false, nil
+}
+
+// encodeDate encodes a CRDB date as CQL date: 4-byte unsigned int where
+// 2^31 (0x80000000) represents the Unix epoch (1970-01-01).
 func encodeDate(d tree.Datum) ([]byte, bool, error) {
 	date, ok := d.(*tree.DDate)
 	if !ok {
 		return nil, false, errors.Newf("expected DDate, got %T", d)
 	}
-	t, err := date.ToTime()
-	if err != nil {
-		return nil, false, errors.Wrap(err, "converting DDate to time")
-	}
-	millis := t.UnixMilli()
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(millis))
+	unixDays := date.UnixEpochDays()
+	// CQL date is centered at 2^31: epoch day = 2^31.
+	cqlDays := uint32(int64(1<<31) + unixDays)
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], cqlDays)
 	return buf[:], false, nil
+}
+
+// encodeTime encodes a CRDB time as CQL time: 8-byte big-endian nanoseconds
+// since midnight.
+func encodeTime(d tree.Datum) ([]byte, bool, error) {
+	t, ok := d.(*tree.DTime)
+	if !ok {
+		return nil, false, errors.Newf("expected DTime, got %T", d)
+	}
+	// DTime is microseconds since midnight; CQL time is nanoseconds.
+	nanos := int64(*t) * 1000
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(nanos))
+	return buf[:], false, nil
+}
+
+// encodeDuration encodes a CRDB interval as CQL duration using the vint
+// encoding: three signed variable-length integers for months, days, and
+// nanoseconds.
+func encodeDuration(d tree.Datum) ([]byte, bool, error) {
+	iv, ok := d.(*tree.DInterval)
+	if !ok {
+		return nil, false, errors.Newf("expected DInterval, got %T", d)
+	}
+	var buf []byte
+	buf = appendSignedVint(buf, iv.Months)
+	buf = appendSignedVint(buf, iv.Days)
+	buf = appendSignedVint(buf, iv.Nanos())
+	return buf, false, nil
+}
+
+// appendSignedVint appends a zigzag-encoded variable-length integer to buf,
+// matching the CQL vint encoding used in duration values.
+func appendSignedVint(buf []byte, n int64) []byte {
+	// Zigzag encode: (n << 1) ^ (n >> 63).
+	z := uint64((n << 1) ^ (n >> 63))
+	for z >= 0x80 {
+		buf = append(buf, byte(z)|0x80)
+		z >>= 7
+	}
+	return append(buf, byte(z))
 }
 
 func appendInt32(buf []byte, v int32) []byte {

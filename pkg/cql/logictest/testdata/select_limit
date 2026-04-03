@@ -61,14 +61,15 @@ pk val
 2 two
 3 three
 
-# PER PARTITION LIMIT is parsed but not translatable — CRDB does
-# not support per-partition row limits.
+# Unsupported: PER PARTITION LIMIT — CRDB does not support
+# per-partition row limits. Would require significant query
+# rewriting (e.g. lateral join with LIMIT per partition group).
 error
 SELECT * FROM sel_lim PER PARTITION LIMIT 1
 ----
 PER PARTITION LIMIT is not supported
 
-# PER PARTITION LIMIT with a regular LIMIT.
+# Unsupported: PER PARTITION LIMIT combined with regular LIMIT.
 error
 SELECT * FROM sel_lim PER PARTITION LIMIT 2 LIMIT 10
 ----

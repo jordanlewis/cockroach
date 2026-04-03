@@ -160,13 +160,14 @@ exec
 ALTER TABLE lt_alt_compound ALTER age TYPE bigint
 ----
 
-# Change int to text — PK column type change requires rewrite, CRDB rejects.
+# CRDB limitation: PK column type change requires on-disk data rewrite,
+# which CRDB does not support for indexed columns.
 error
 ALTER TABLE lt_alt_basic ALTER id TYPE text
 ----
 cql-ddl: unimplemented: ALTER COLUMN TYPE requiring rewrite of on-disk data is currently not supported for columns that are part of an index
 
-# Change text to blob — incompatible, CRDB rejects.
+# CRDB limitation: incompatible column type change (INT8 to BYTES).
 error
 ALTER TABLE lt_alt_compound ALTER age TYPE blob
 ----

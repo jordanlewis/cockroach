@@ -51,6 +51,11 @@ const (
 	CQLVarint    CQLType = 0x000E
 	CQLTimeuuid  CQLType = 0x000F
 	CQLInet      CQLType = 0x0010
+	CQLDate      CQLType = 0x0011
+	CQLTime      CQLType = 0x0012
+	CQLSmallint  CQLType = 0x0013
+	CQLTinyint   CQLType = 0x0014
+	CQLDuration  CQLType = 0x0015
 	CQLList      CQLType = 0x0020
 	CQLMap       CQLType = 0x0021
 	CQLSet       CQLType = 0x0022
@@ -90,6 +95,16 @@ func (t CQLType) String() string {
 		return "timeuuid"
 	case CQLInet:
 		return "inet"
+	case CQLDate:
+		return "date"
+	case CQLTime:
+		return "time"
+	case CQLSmallint:
+		return "smallint"
+	case CQLTinyint:
+		return "tinyint"
+	case CQLDuration:
+		return "duration"
 	case CQLList:
 		return "list"
 	case CQLMap:
@@ -110,6 +125,8 @@ func (t CQLType) CRDBType() (*types.T, error) {
 		return types.String, nil
 	case CQLInt:
 		return types.Int4, nil
+	case CQLSmallint, CQLTinyint:
+		return types.Int2, nil
 	case CQLBigint, CQLCounter:
 		return types.Int, nil
 	case CQLFloat:
@@ -124,6 +141,12 @@ func (t CQLType) CRDBType() (*types.T, error) {
 		return types.Uuid, nil
 	case CQLBlob:
 		return types.Bytes, nil
+	case CQLDate:
+		return types.Date, nil
+	case CQLTime:
+		return types.Time, nil
+	case CQLDuration:
+		return types.Interval, nil
 	case CQLInet:
 		return types.INet, nil
 	case CQLDecimal:
@@ -144,7 +167,9 @@ func CQLTypeFromCRDB(t *types.T) (CQLType, error) {
 		return CQLBoolean, nil
 	case types.IntFamily:
 		switch t.Width() {
-		case 16, 32:
+		case 16:
+			return CQLSmallint, nil
+		case 32:
 			return CQLInt, nil
 		default:
 			return CQLBigint, nil
@@ -160,6 +185,12 @@ func CQLTypeFromCRDB(t *types.T) (CQLType, error) {
 		return CQLBlob, nil
 	case types.TimestampTZFamily, types.TimestampFamily:
 		return CQLTimestamp, nil
+	case types.DateFamily:
+		return CQLDate, nil
+	case types.TimeFamily:
+		return CQLTime, nil
+	case types.IntervalFamily:
+		return CQLDuration, nil
 	case types.UuidFamily:
 		return CQLUuid, nil
 	case types.INetFamily:
@@ -170,8 +201,6 @@ func CQLTypeFromCRDB(t *types.T) (CQLType, error) {
 		return CQLVarchar, nil
 	case types.DecimalFamily:
 		return CQLDecimal, nil
-	case types.DateFamily:
-		return CQLTimestamp, nil
 	default:
 		return 0, errors.Newf(
 			"no CQL type mapping for CRDB type %s (family %d)", t.SQLString(), t.Family(),
