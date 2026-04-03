@@ -14,6 +14,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
+	"github.com/cockroachdb/cockroach/pkg/cql/translate"
 	cqltypes "github.com/cockroachdb/cockroach/pkg/cql/types"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
@@ -339,6 +340,7 @@ func handleSystemSelect(
 	keyspace, table string,
 	where []parser.WhereClause,
 	columns []parser.Selector,
+	schema *translate.SchemaInfo,
 ) (ExecuteResult, bool) {
 	ks := strings.ToLower(keyspace)
 	tbl := strings.ToLower(table)
@@ -360,7 +362,7 @@ func handleSystemSelect(
 			}
 			return ExecuteResult{Body: body}, true
 		case "columns":
-			body, err := buildSystemSchemaColumnsBody(ctx, db, filters)
+			body, err := buildSystemSchemaColumnsBody(ctx, db, filters, schema)
 			if err != nil {
 				return errorResult(errCodeServerError, err.Error()), true
 			}
@@ -700,7 +702,7 @@ func crdbTypeToCQLTypeName(crdbType string) string {
 // If filters specifies keyspace_name and/or table_name, only matching
 // rows are included.
 func buildSystemSchemaColumnsBody(
-	ctx context.Context, db isql.DB, filters whereFilters,
+	ctx context.Context, db isql.DB, filters whereFilters, schema *translate.SchemaInfo,
 ) ([]byte, error) {
 	cols := systemSchemaTables["columns"].columns
 	var buf bytes.Buffer
@@ -850,14 +852,41 @@ func buildSystemSchemaColumnsBody(
 					dataType := string(*row[3].(*tree.DString))
 					kind := string(*row[5].(*tree.DString))
 					pos := int32(0)
-					if kind == "partition_key" {
-						pos = 0
+					clusteringOrder := "none"
+					// Refine kind using schema info. The SQL query marks
+					// all PRIMARY KEY columns as "partition_key", but CQL
+					// distinguishes partition keys from clustering keys.
+					if kind == "partition_key" && schema != nil {
+						if meta, ok := schema.LookupTable(dbName, tblName); ok {
+							lowerCol := strings.ToLower(colName)
+							isPartition := false
+							for i, pk := range meta.PartitionKeys {
+								if strings.ToLower(pk) == lowerCol {
+									isPartition = true
+									pos = int32(i)
+									break
+								}
+							}
+							if !isPartition {
+								for i, ck := range meta.ClusteringKeys {
+									if strings.ToLower(ck) == lowerCol {
+										kind = "clustering"
+										pos = int32(i)
+										clusteringOrder = "asc"
+										if meta.ClusteringDesc != nil && meta.ClusteringDesc[lowerCol] {
+											clusteringOrder = "desc"
+										}
+										break
+									}
+								}
+							}
+						}
 					}
 					columnRows = append(columnRows, colRow{
 						keyspaceName:    dbName,
 						tableName:       tblName,
 						columnName:      colName,
-						clusteringOrder: "none",
+						clusteringOrder: clusteringOrder,
 						kind:            kind,
 						position:        pos,
 						colType:         crdbTypeToCQLTypeName(dataType),

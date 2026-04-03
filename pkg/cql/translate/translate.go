@@ -671,6 +671,17 @@ func writeSelectColumns(
 			// Handle UDT field access with schema-aware translation.
 			if fa, ok := sel.Expr.(*parser.FieldAccessExpr); ok {
 				sb.WriteString(fieldAccessToSQL(fa, schema, keyspace, table))
+				// Add an alias so each field access gets a unique
+				// result column name. Without this, multiple
+				// extractions (e.g. addr->>'street', addr->>'city')
+				// all produce "?column?" and may collide.
+				if sel.Alias == "" {
+					sb.WriteString(` AS "`)
+					sb.WriteString(fa.Column)
+					sb.WriteByte('.')
+					sb.WriteString(fa.Field)
+					sb.WriteByte('"')
+				}
 			} else {
 				sqlExpr, p, err := exprToSQL(sel.Expr, paramIdx)
 				if err != nil {

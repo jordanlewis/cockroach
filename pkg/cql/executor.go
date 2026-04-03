@@ -107,6 +107,7 @@ func (e *Executor) ExecuteQuery(
 	if sel, ok := stmt.(*parser.SelectStatement); ok {
 		if res, handled := handleSystemSelect(
 			ctx, e.db, sel.Keyspace, sel.Table, sel.Where, sel.Columns,
+			e.schema,
 		); handled {
 			return res
 		}

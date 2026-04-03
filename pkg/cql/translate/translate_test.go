@@ -1201,8 +1201,10 @@ func TestTranslateFieldAccessJSONB(t *testing.T) {
 	result, err := TranslateWithSchema(stmt, schema)
 	require.NoError(t, err)
 	// JSONB columns should use ->> extraction, not composite syntax.
+	// The alias ensures unique column names when multiple field accesses
+	// are projected (avoids "?column?" collisions).
 	require.Equal(t,
-		`SELECT "addr"->>'street' FROM "t"`,
+		`SELECT "addr"->>'street' AS "addr.street" FROM "t"`,
 		result.SQL)
 }
 
@@ -1220,7 +1222,7 @@ func TestTranslateFieldAccessComposite(t *testing.T) {
 	require.NoError(t, err)
 	// Composite type columns should use (col).field syntax.
 	require.Equal(t,
-		`SELECT ("addr")."street" FROM "t"`,
+		`SELECT ("addr")."street" AS "addr.street" FROM "t"`,
 		result.SQL)
 }
 
@@ -1231,7 +1233,7 @@ func TestTranslateFieldAccessNoSchema(t *testing.T) {
 	require.NoError(t, err)
 	// Without schema, default to composite type syntax.
 	require.Equal(t,
-		`SELECT ("addr")."street" FROM "t"`,
+		`SELECT ("addr")."street" AS "addr.street" FROM "t"`,
 		result.SQL)
 }
 
