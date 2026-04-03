@@ -764,6 +764,21 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("string_agg(%s)", strings.Join(args, ", "))
 
+	case "LIST":
+		// LIST(expr [, separator]) — Sybase ASE equivalent of STRING_AGG.
+		// Default separator is comma when omitted.
+		if len(e.Args) >= 2 {
+			expr := translateExpr(e.Args[0])
+			sep := translateExpr(e.Args[1])
+			return fmt.Sprintf("string_agg(%s, %s)", expr, sep)
+		}
+		if len(e.Args) == 1 {
+			expr := translateExpr(e.Args[0])
+			return fmt.Sprintf("string_agg(%s, ',')", expr)
+		}
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("string_agg(%s)", strings.Join(args, ", "))
+
 	case "QUOTENAME":
 		// QUOTENAME(str) → quote_ident(str)
 		args := translateArgs(e.Args)

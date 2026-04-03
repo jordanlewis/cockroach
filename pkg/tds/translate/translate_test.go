@@ -699,6 +699,18 @@ func TestTranslateFunctionMappings(t *testing.T) {
 			input:    "SELECT STDEV(col)",
 			expected: "SELECT stddev(col)",
 		},
+
+		// LIST (Sybase STRING_AGG equivalent).
+		{
+			name:     "LIST with separator",
+			input:    "SELECT LIST(name, ';')",
+			expected: "SELECT string_agg(name, ';')",
+		},
+		{
+			name:     "LIST default separator",
+			input:    "SELECT LIST(name)",
+			expected: "SELECT string_agg(name, ',')",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
