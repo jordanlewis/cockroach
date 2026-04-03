@@ -12,6 +12,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	cqltypes "github.com/cockroachdb/cockroach/pkg/cql/types"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,7 +171,7 @@ func TestExecutorSystemSchemaSelect(t *testing.T) {
 	ctx := context.Background()
 
 	result := exec.ExecuteQuery(ctx,
-		"SELECT * FROM system_schema.keyspaces", "")
+		"SELECT * FROM system_schema.keyspaces", "", username.RootUserName())
 	require.False(t, result.IsError)
 	require.Empty(t, mock.execSQL,
 		"system_schema query should not reach SQL executor")
@@ -186,7 +187,7 @@ func TestExecutorSystemSchemaTriggers(t *testing.T) {
 	ctx := context.Background()
 
 	result := exec.ExecuteQuery(ctx,
-		"SELECT * FROM system_schema.triggers", "")
+		"SELECT * FROM system_schema.triggers", "", username.RootUserName())
 	require.False(t, result.IsError)
 	require.Empty(t, mock.execSQL)
 }

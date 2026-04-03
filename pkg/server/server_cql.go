@@ -68,10 +68,14 @@ func startCQLServer(
 		return nil, "", err
 	}
 
-	cqlServer := cql.MakeServer(cql.ServerConfig{
+	cfg := cql.ServerConfig{
 		AmbientCtx: ambientCtx,
 		Insecure:   insecure,
-	}, db)
+	}
+	if !insecure {
+		cfg.Authenticator = cql.NewCRDBAuthenticator(db)
+	}
+	cqlServer := cql.MakeServer(cfg, db)
 
 	listenAddr := ln.Addr().String()
 	log.Ops.Infof(ctx, "CQL server listening on %s", listenAddr)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/kv"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
@@ -154,9 +155,7 @@ func (m *mockExecutor) QueryBufferedExWithCols(
 	return m.queryRows, m.queryCols, m.queryErr
 }
 
-func (m *mockExecutor) WithSyntheticDescriptors(
-	_ []catalog.Descriptor, run func() error,
-) error {
+func (m *mockExecutor) WithSyntheticDescriptors(_ []catalog.Descriptor, run func() error) error {
 	return run()
 }
 
@@ -167,7 +166,9 @@ type mockDB struct {
 
 func (m *mockDB) KV() *kv.DB { return nil }
 
-func (m *mockDB) Txn(_ context.Context, _ func(context.Context, isql.Txn) error, _ ...isql.TxnOption) error {
+func (m *mockDB) Txn(
+	_ context.Context, _ func(context.Context, isql.Txn) error, _ ...isql.TxnOption,
+) error {
 	return nil
 }
 
@@ -175,7 +176,9 @@ func (m *mockDB) Executor(_ ...isql.ExecutorOption) isql.Executor {
 	return m.exec
 }
 
-func (m *mockDB) Session(_ context.Context, _ string, _ ...isql.ExecutorOption) (isql.Session, error) {
+func (m *mockDB) Session(
+	_ context.Context, _ string, _ ...isql.ExecutorOption,
+) (isql.Session, error) {
 	return nil, nil
 }
 
@@ -202,7 +205,7 @@ func TestExecutorUseKeyspace(t *testing.T) {
 	exec := NewExecutor(db)
 	ctx := context.Background()
 
-	result := exec.ExecuteQuery(ctx, "USE mykeyspace", "")
+	result := exec.ExecuteQuery(ctx, "USE mykeyspace", "", username.RootUserName())
 	require.False(t, result.IsError)
 	require.Equal(t, "mykeyspace", result.NewKeyspace)
 
@@ -224,7 +227,7 @@ func TestExecutorCreateKeyspace(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"CREATE KEYSPACE test_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}",
-		"",
+		"", username.RootUserName(),
 	)
 	require.False(t, result.IsError)
 	require.Contains(t, mock.execSQL, "CREATE DATABASE")
@@ -242,7 +245,7 @@ func TestExecutorCreateTable(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"CREATE TABLE users (id uuid, name text, PRIMARY KEY (id))",
-		"mykeyspace",
+		"mykeyspace", username.RootUserName(),
 	)
 	require.False(t, result.IsError)
 	require.Contains(t, mock.execSQL, "CREATE TABLE")
@@ -259,7 +262,7 @@ func TestExecutorInsert(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"INSERT INTO users (id, name) VALUES ('550e8400-e29b-41d4-a716-446655440000', 'alice')",
-		"mykeyspace",
+		"mykeyspace", username.RootUserName(),
 	)
 	require.False(t, result.IsError)
 	require.Contains(t, mock.execSQL, "UPSERT INTO")
@@ -285,7 +288,7 @@ func TestExecutorSelect(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"SELECT id, name FROM users",
-		"mykeyspace",
+		"mykeyspace", username.RootUserName(),
 	)
 	require.False(t, result.IsError)
 	require.Contains(t, mock.execSQL, "SELECT")
@@ -366,7 +369,7 @@ func TestExecutorDDLError(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"CREATE KEYSPACE test_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}",
-		"",
+		"", username.RootUserName(),
 	)
 	require.True(t, result.IsError)
 
@@ -384,7 +387,7 @@ func TestExecutorDMLError(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"INSERT INTO users (id, name) VALUES ('550e8400-e29b-41d4-a716-446655440000', 'alice')",
-		"",
+		"", username.RootUserName(),
 	)
 	require.True(t, result.IsError)
 
@@ -402,7 +405,7 @@ func TestExecutorSelectError(t *testing.T) {
 
 	result := exec.ExecuteQuery(ctx,
 		"SELECT * FROM nonexistent",
-		"",
+		"", username.RootUserName(),
 	)
 	require.True(t, result.IsError)
 
@@ -415,7 +418,7 @@ func TestExecutorParseError(t *testing.T) {
 	exec := NewExecutor(db)
 	ctx := context.Background()
 
-	result := exec.ExecuteQuery(ctx, "INVALID QUERY SYNTAX", "")
+	result := exec.ExecuteQuery(ctx, "INVALID QUERY SYNTAX", "", username.RootUserName())
 	require.True(t, result.IsError)
 
 	code := readErrorCode(t, result.Body)
@@ -436,7 +439,7 @@ func TestExecutorSelectWithNulls(t *testing.T) {
 	exec := NewExecutor(db)
 	ctx := context.Background()
 
-	result := exec.ExecuteQuery(ctx, "SELECT id, name FROM users", "")
+	result := exec.ExecuteQuery(ctx, "SELECT id, name FROM users", "", username.RootUserName())
 	require.False(t, result.IsError)
 
 	kind := readResultKind(t, result.Body)

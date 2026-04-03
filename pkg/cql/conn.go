@@ -16,6 +16,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
 	"github.com/cockroachdb/cockroach/pkg/cql/parser"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
@@ -53,6 +54,11 @@ type conn struct {
 	// frameCh carries request frames from the reader goroutine to
 	// the processor goroutine. It is closed when the reader exits.
 	frameCh chan cqlwire.Frame
+
+	// authenticatedUser is the SQL username established during the
+	// CQL handshake. In insecure mode this defaults to root. Only
+	// accessed by the processor goroutine.
+	authenticatedUser username.SQLUsername
 
 	// keyspace is the current CQL keyspace (database) set via USE.
 	// Only accessed by the processor goroutine.
@@ -227,7 +233,7 @@ func (c *conn) handleQuery(ctx context.Context, s *Server, frame cqlwire.Frame) 
 		)
 	}
 
-	result := s.executor.ExecuteQuery(ctx, query, c.keyspace)
+	result := s.executor.ExecuteQuery(ctx, query, c.keyspace, c.authenticatedUser)
 
 	// Update keyspace if a USE statement was executed.
 	if result.NewKeyspace != "" {
@@ -370,7 +376,7 @@ func (c *conn) handleExecute(ctx context.Context, s *Server, frame cqlwire.Frame
 		)
 	}
 
-	result := s.executor.ExecuteQuery(ctx, query, c.keyspace)
+	result := s.executor.ExecuteQuery(ctx, query, c.keyspace, c.authenticatedUser)
 	if result.NewKeyspace != "" {
 		c.keyspace = result.NewKeyspace
 	}

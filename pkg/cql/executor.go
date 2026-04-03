@@ -66,9 +66,10 @@ func NewExecutor(db isql.DB) *Executor {
 // ExecuteQuery parses and executes a CQL query, returning an
 // ExecuteResult containing the CQL RESULT or ERROR frame body. The
 // keyspace parameter provides the current database context (set via
-// USE).
+// USE). The user parameter identifies the authenticated CQL user
+// whose privileges govern the query.
 func (e *Executor) ExecuteQuery(
-	ctx context.Context, cqlQuery string, keyspace string,
+	ctx context.Context, cqlQuery string, keyspace string, user username.SQLUsername,
 ) ExecuteResult {
 	// Parse the CQL query.
 	stmt, err := parser.Parse(cqlQuery)
@@ -103,7 +104,7 @@ func (e *Executor) ExecuteQuery(
 	}
 
 	override := sessiondata.InternalExecutorOverride{
-		User: username.RootUserName(),
+		User: user,
 	}
 	if keyspace != "" {
 		override.Database = keyspace

@@ -10,6 +10,11 @@ import (
 	"context"
 
 	"github.com/cockroachdb/cockroach/pkg/cql/cqlwire"
+	"github.com/cockroachdb/cockroach/pkg/security/password"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
+	"github.com/cockroachdb/cockroach/pkg/sql/isql"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
+	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/errors"
 )
 
@@ -88,8 +93,10 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 
 	streamID := frame.Header.StreamID
 
-	// Insecure mode: skip authentication entirely.
+	// Insecure mode: skip authentication entirely and default
+	// to root for query execution.
 	if s.cfg.Insecure {
+		c.authenticatedUser = username.RootUserName()
 		return c.sendReady(streamID)
 	}
 
@@ -126,7 +133,7 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 	authStreamID := frame.Header.StreamID
 
 	// Parse SASL PLAIN credentials.
-	username, password, err := parseAuthResponse(frame.Body)
+	user, pass, err := parseAuthResponse(frame.Body)
 	if err != nil {
 		_ = c.sendError(
 			authStreamID, errCodeBadCredentials,
@@ -137,7 +144,7 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 
 	// Validate credentials.
 	if err := s.cfg.Authenticator.Authenticate(
-		ctx, username, password,
+		ctx, user, pass,
 	); err != nil {
 		_ = c.sendError(
 			authStreamID, errCodeBadCredentials,
@@ -145,6 +152,19 @@ func (c *conn) handleAuthentication(ctx context.Context, s *Server) error {
 		)
 		return errors.Wrap(err, "authentication failed")
 	}
+
+	// Store the authenticated username for query execution.
+	sqlUser, err := username.MakeSQLUsernameFromUserInput(
+		user, username.PurposeValidation,
+	)
+	if err != nil {
+		_ = c.sendError(
+			authStreamID, errCodeBadCredentials,
+			"invalid username: "+err.Error(),
+		)
+		return errors.Wrap(err, "normalizing username")
+	}
+	c.authenticatedUser = sqlUser
 
 	return c.sendAuthSuccess(authStreamID)
 }
@@ -177,4 +197,55 @@ func parseAuthResponse(body []byte) (username, password string, err error) {
 		)
 	}
 	return string(parts[1]), string(parts[2]), nil
+}
+
+// CRDBAuthenticator validates CQL client credentials against
+// CockroachDB's system.users table. It looks up the user's stored
+// password hash and compares it with the cleartext password provided
+// during the SASL PLAIN handshake.
+type CRDBAuthenticator struct {
+	db isql.DB
+}
+
+// NewCRDBAuthenticator creates an Authenticator that validates
+// credentials against the system.users table.
+func NewCRDBAuthenticator(db isql.DB) *CRDBAuthenticator {
+	return &CRDBAuthenticator{db: db}
+}
+
+// Authenticate checks that the given username exists in system.users
+// and that the password matches the stored hash.
+func (a *CRDBAuthenticator) Authenticate(ctx context.Context, user, pass string) error {
+	executor := a.db.Executor()
+	row, err := executor.QueryRowEx(
+		ctx,
+		"cql-auth-lookup",
+		nil, // txn
+		sessiondata.NodeUserSessionDataOverride,
+		`SELECT "hashedPassword" FROM system.public.users WHERE username=$1`,
+		user,
+	)
+	if err != nil {
+		return errors.Wrap(err, "looking up user")
+	}
+	if row == nil {
+		return errors.Newf("role %q does not exist", user)
+	}
+
+	var hashedBytes []byte
+	if v := row[0]; v != tree.DNull {
+		hashedBytes = []byte(*(v.(*tree.DBytes)))
+	}
+
+	pwHash := password.LoadPasswordHash(ctx, hashedBytes)
+	ok, err := password.CompareHashAndCleartextPassword(
+		ctx, pwHash, pass, nil, /* hashSem */
+	)
+	if err != nil {
+		return errors.Wrap(err, "verifying password")
+	}
+	if !ok {
+		return errors.New("password authentication failed")
+	}
+	return nil
 }
