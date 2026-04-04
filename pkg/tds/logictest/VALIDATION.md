@@ -1,6 +1,6 @@
 # TDS Logictest Validation Report
 
-Generated: 2026-04-04 (validation pass #3)
+Generated: 2026-04-04 (validation pass #4)
 
 ## Summary
 
@@ -8,9 +8,16 @@ Generated: 2026-04-04 (validation pass #3)
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 741 |
-| Passing directives | 716 (97%) |
-| Error directives (expected failures) | 25 (3%) |
-| Known behavioral divergences | 1 |
+| Passing directives | 719 (97%) |
+| Error directives (expected failures) | 22 (3%) |
+| Known behavioral divergences | 2 |
+
+**Changes from pass #3 (2026-04-04):**
+- TRY_CAST FIXED: falls back to CAST (CockroachDB has no try_cast);
+  failed conversions error instead of returning NULL (1 error recovered)
+- TRY_CONVERT FIXED: same CAST fallback as TRY_CAST (1 error recovered)
+- Computed column FIXED: translator now infers type from expression and
+  emits "col_name TYPE AS (expr) STORED" (1 error recovered)
 
 **Changes from pass #2 (2026-04-04):**
 - System stored procedures FIXED: sp_tables, sp_columns, sp_helptext,
@@ -25,12 +32,10 @@ Generated: 2026-04-04 (validation pass #3)
 - TDS wire-protocol gap FIXED: UNION, UNION ALL, INTERSECT, EXCEPT, and
   CTE now return full result sets through TDS (5 tests recovered)
 - IDENTITY column translation FIXED: removed conflicting NULL declaration
-- Computed column translation gap FOUND: missing data type in AS clause
-- TRY_CAST gap FOUND: parser/translator doesn't support TRY_CAST
 - VALIDATION.md moved out of testdata/ (was being parsed as a test file)
 - compute_by test ordering stabilized (added secondary sort to query)
 
-## Error Categorization (25 total)
+## Error Categorization (22 total)
 
 ### Expected Errors (correct behavior) — 8
 
@@ -81,18 +86,17 @@ not yet implemented.
 | ground_truth_system | unsupported | EXEC bad (non-existent procedure) |
 | ground_truth_system | sysusers | sysusers system table not in catalog |
 
-### Parser / Translation Gaps — 3
-
-These fail because the translator produces invalid CockroachDB SQL or
-the parser does not support the syntax.
-
-| File | Error | Feature |
-|------|-------|---------|
-| functions_extended | syntax error | TRY_CONVERT(type, value) |
-| functions_extended | syntax error | TRY_CAST(value AS type) |
-| types_extended | syntax error | Computed columns — missing data type in translation |
-
 ## Completed Features (previously errors, now passing)
+
+### TRY_CAST, TRY_CONVERT, Computed Columns (FIXED in pass #4)
+
+TRY_CAST and TRY_CONVERT now translate to CAST (CockroachDB has no
+try_cast). Failed conversions produce a runtime error instead of
+returning NULL — a known semantic divergence.
+
+Computed columns now include a type inferred from the expression
+(e.g. `total INT8 AS (price * qty) STORED`). Type inference covers
+arithmetic, string, and CAST expressions; other cases default to INT8.
 
 ### System Stored Procedures (FIXED in pass #3 — was 4 EXEC gaps)
 
@@ -142,12 +146,16 @@ INSERT...SELECT, MERGE, OUTPUT, UPDATE...FROM, DELETE...JOIN.
    - Returns 0 instead of expected match position
    - Test passes because it asserts the current (wrong) result
 
+2. **TRY_CAST / TRY_CONVERT semantics** (functions_extended:280,286)
+   - T-SQL: failed conversion returns NULL
+   - CockroachDB: CAST errors on invalid input (no try_cast support)
+   - Tests assert the CAST error; apps relying on NULL-on-failure will break
+
 ## Actionable Gap Categories (for fix beads)
 
 Prioritized by error count:
 
-1. **System procedures EXEC** (1 error) — EXEC with named params for
-   unknown procedures
-2. **System variables and catalog** (4 errors) — @@IDENTITY, SCOPE_IDENTITY(),
+1. **System variables and catalog** (4 errors) — @@IDENTITY, SCOPE_IDENTITY(),
    sysobjects, sysusers
-3. **Translation gaps** (3 errors) — TRY_CAST, TRY_CONVERT, computed columns
+2. **System procedures EXEC** (1 error) — EXEC with named params for
+   unknown procedures

@@ -277,15 +277,15 @@ SELECT CAST(42 AS VARCHAR)
 ----
 42
 
-# TRY_CONVERT (SQL Server 2012+) — translates to try_cast(), but
-# CockroachDB does not support try_cast syntax.
-query error=(syntax error)
+# TRY_CONVERT (SQL Server 2012+) — falls back to CAST since CockroachDB
+# has no try_cast. Failed conversions error instead of returning NULL.
+query error=(could not parse)
 SELECT TRY_CONVERT(INT, 'not_a_number')
 ----
 
-# TRY_CAST (SQL Server 2012+) — safe conversion, returns NULL on failure.
-# Not yet supported: TRY_CAST translation produces syntax error.
-query error=(syntax error)
+# TRY_CAST (SQL Server 2012+) — falls back to CAST since CockroachDB
+# has no try_cast. Failed conversions error instead of returning NULL.
+query error=(could not parse)
 SELECT TRY_CAST('not_a_number' AS INT)
 ----
 

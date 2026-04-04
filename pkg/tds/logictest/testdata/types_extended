@@ -275,10 +275,8 @@ id  status
 
 # === Computed columns ===
 
-# Computed columns (col AS expr) should translate to STORED generated columns,
-# but the translator omits the required data type before AS. CockroachDB
-# requires "col_name TYPE AS (expr) STORED" — needs type inference from the
-# column expression.
-exec error=(syntax error)
+# Computed columns (col AS expr) — translated to STORED generated columns
+# with inferred type. CockroachDB requires "col_name TYPE AS (expr) STORED".
+exec
 CREATE TABLE computed_test (price INT, qty INT, total AS price * qty)
 ----

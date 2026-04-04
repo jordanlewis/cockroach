@@ -304,12 +304,12 @@ func TestTranslateTRY_CAST(t *testing.T) {
 		{
 			name:     "try_cast int",
 			input:    "SELECT TRY_CAST('not_a_number' AS INT)",
-			expected: "SELECT try_cast('not_a_number' AS INT4)",
+			expected: "SELECT CAST('not_a_number' AS INT4)",
 		},
 		{
 			name:     "try_cast datetime",
 			input:    "SELECT TRY_CAST(col AS DATETIME)",
-			expected: "SELECT try_cast(col AS TIMESTAMP)",
+			expected: "SELECT CAST(col AS TIMESTAMP)",
 		},
 	}
 	for _, tt := range tests {
@@ -727,7 +727,7 @@ func TestTranslateFunctionMappings(t *testing.T) {
 		{
 			name:     "TRY_CONVERT",
 			input:    "SELECT TRY_CONVERT(INT, 'not_a_number')",
-			expected: "SELECT try_cast('not_a_number' AS INT4)",
+			expected: "SELECT CAST('not_a_number' AS INT4)",
 		},
 
 		// System functions.
@@ -1299,7 +1299,7 @@ func TestTranslateComputedColumn(t *testing.T) {
 	results, err := Batch(batch)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
-	require.Contains(t, results[0], "total AS (price * qty) STORED")
+	require.Contains(t, results[0], "total INT8 AS (price * qty) STORED")
 }
 
 func TestTranslateBitToInt2(t *testing.T) {

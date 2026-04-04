@@ -263,10 +263,13 @@ func translateSelectInto(s *parser.SelectStmt) string {
 // (SQL Server) vs AS expression (Sybase) differ slightly in source syntax.
 func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 	if col.ComputedExpr != nil {
-		// Computed column: name AS (expr) STORED. CockroachDB infers the
-		// type from the expression.
-		fmt.Fprintf(b, "%s AS (%s) STORED", quoteIdent(col.Name),
-			translateExpr(col.ComputedExpr))
+		// Computed column: CockroachDB requires an explicit type before AS,
+		// even though T-SQL infers it. We perform best-effort type inference
+		// from the expression; the declared type only needs to be compatible
+		// with the expression result (CockroachDB validates this at DDL time).
+		crdbType := inferExprType(col.ComputedExpr)
+		fmt.Fprintf(b, "%s %s AS (%s) STORED", quoteIdent(col.Name),
+			crdbType, translateExpr(col.ComputedExpr))
 		return
 	}
 
@@ -1220,14 +1223,15 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 
 	case "TRY_CONVERT":
 		// [SQL Server] TRY_CONVERT(type, expr) — SQL Server 2012+.
-		// The parser sees the type as an identifier in the first arg.
+		// CockroachDB does not support try_cast, so we fall back to CAST.
+		// Failed conversions produce an error instead of returning NULL.
 		if len(e.Args) >= 2 {
 			typeName := identName(e.Args[0])
 			if typeName == "" {
 				typeName = translateExpr(e.Args[0])
 			}
 			expr := translateExpr(e.Args[1])
-			return fmt.Sprintf("try_cast(%s AS %s)", expr, mapDataType(strings.ToUpper(typeName)))
+			return fmt.Sprintf("CAST(%s AS %s)", expr, mapDataType(strings.ToUpper(typeName)))
 		}
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("TRY_CONVERT(%s)", strings.Join(args, ", "))
@@ -1441,14 +1445,13 @@ func translateConvert(e *parser.ConvertExpr) string {
 	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
 }
 
-// translateCast converts CAST(expr AS type) → CAST(expr AS type) with type
-// mapping, and TRY_CAST(expr AS type) → try_cast(expr AS type).
+// translateCast converts CAST(expr AS type) and TRY_CAST(expr AS type) to
+// CAST(expr AS type) with type mapping. CockroachDB does not support
+// try_cast syntax, so TRY_CAST falls back to CAST. This means failed
+// conversions produce an error instead of returning NULL.
 func translateCast(e *parser.CastExpr) string {
 	expr := translateExpr(e.Expr)
 	crdbType := mapDataType(e.DataType)
-	if e.Try {
-		return fmt.Sprintf("try_cast(%s AS %s)", expr, crdbType)
-	}
 	return fmt.Sprintf("CAST(%s AS %s)", expr, crdbType)
 }
 
@@ -1692,6 +1695,60 @@ func isLetter(c rune) bool {
 
 func isDigit(c rune) bool {
 	return c >= '0' && c <= '9'
+}
+
+// inferExprType performs best-effort type inference on a T-SQL expression,
+// returning a CockroachDB type name suitable for computed column definitions.
+// T-SQL computed columns never declare a type (it is always inferred), but
+// CockroachDB requires one. The declared type only needs to be compatible
+// with the actual expression result — CockroachDB validates at DDL time.
+func inferExprType(expr parser.Expr) string {
+	switch e := expr.(type) {
+	case *parser.IntLit:
+		return "INT8"
+	case *parser.FloatLit:
+		return "FLOAT8"
+	case *parser.StringLit:
+		return "STRING"
+	case *parser.CastExpr:
+		return mapDataType(e.DataType)
+	case *parser.ConvertExpr:
+		return mapDataType(e.DataType)
+	case *parser.BinaryExpr:
+		switch e.Op {
+		case "||":
+			return "STRING"
+		case "+", "-", "*", "/", "%":
+			// If either operand is a float, the result is float.
+			if inferExprType(e.Left) == "FLOAT8" ||
+				inferExprType(e.Right) == "FLOAT8" {
+				return "FLOAT8"
+			}
+			return "INT8"
+		default:
+			return "INT8"
+		}
+	case *parser.FuncCallExpr:
+		switch strings.ToUpper(e.Name) {
+		case "CONCAT", "UPPER", "LOWER", "LTRIM", "RTRIM", "LEFT",
+			"RIGHT", "SUBSTRING", "REPLACE", "STUFF", "REVERSE",
+			"SPACE", "REPLICATE", "STR", "CHAR", "NCHAR",
+			"FORMAT", "STRING_AGG":
+			return "STRING"
+		case "GETDATE", "SYSDATETIME", "CURRENT_TIMESTAMP",
+			"DATEADD", "EOMONTH":
+			return "TIMESTAMP"
+		default:
+			return "INT8"
+		}
+	case *parser.UnaryExpr:
+		return inferExprType(e.Expr)
+	default:
+		// Column references and other expressions default to INT8.
+		// CockroachDB validates the declared type against the actual
+		// expression result at DDL time and rejects mismatches.
+		return "INT8"
+	}
 }
 
 // mapDataType converts a T-SQL data type name to its CockroachDB equivalent.
