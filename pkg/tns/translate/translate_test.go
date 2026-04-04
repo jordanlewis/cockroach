@@ -13,10 +13,10 @@ import (
 
 func TestTranslate(t *testing.T) {
 	tests := []struct {
-		name     string
-		oracle   string
-		crdb     string
-		params   map[int]string // expected bind variable mapping (nil if none)
+		name   string
+		oracle string
+		crdb   string
+		params map[int]string // expected bind variable mapping (nil if none)
 	}{
 		// DUAL → omit.
 		{
@@ -275,6 +275,48 @@ func TestTranslate(t *testing.T) {
 			if tt.params != nil {
 				require.Equal(t, tt.params, result.Params)
 			}
+		})
+	}
+}
+
+func TestTranslateColumnNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		oracle   string
+		expected []string
+	}{
+		{
+			name:     "trim function",
+			oracle:   "SELECT TRIM('  hello  ') FROM DUAL",
+			expected: []string{"TRIM"},
+		},
+		{
+			name:     "nvl function",
+			oracle:   "SELECT NVL(val, 0) FROM t",
+			expected: []string{"NVL"},
+		},
+		{
+			name:     "decode function",
+			oracle:   "SELECT DECODE(status, 'A', 'Active') FROM t",
+			expected: []string{"DECODE"},
+		},
+		{
+			name:     "column ref",
+			oracle:   "SELECT id, name FROM t",
+			expected: []string{"ID", "NAME"},
+		},
+		{
+			name:     "explicit alias",
+			oracle:   "SELECT id AS employee_id FROM t",
+			expected: []string{"EMPLOYEE_ID"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Translate(tt.oracle)
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, result.ColumnNames)
 		})
 	}
 }

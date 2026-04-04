@@ -39,6 +39,9 @@ type cursorState struct {
 	isRewrite bool
 	// bindParams maps positional param indices to Oracle bind var names.
 	bindParams map[int]string
+	// oracleColumnNames holds original Oracle column names from the parsed AST,
+	// used to override CockroachDB column names in results (e.g. NVL not COALESCE).
+	oracleColumnNames []string
 }
 
 // Executor bridges the CockroachDB internal SQL executor and the TNS/TTI
@@ -84,6 +87,14 @@ func (e *Executor) Open(
 	if cat != nil {
 		resp := cat.Handle(oracleSQL)
 		if resp.Handled {
+			// For catalog rewrites (e.g. FROM DUAL stripped), extract Oracle
+			// column names from the original SQL so the executor can override
+			// CockroachDB's column names (e.g. BTRIM→TRIM).
+			if resp.RewriteSQL != "" {
+				if result, err := translate.Translate(oracleSQL); err == nil {
+					cs.oracleColumnNames = result.ColumnNames
+				}
+			}
 			return e.handleCatalogOpen(ctx, cursorID, resp, cs)
 		}
 	}
@@ -109,6 +120,7 @@ func (e *Executor) Open(
 		} else {
 			cs.sql = result.SQL
 			cs.bindParams = result.Params
+			cs.oracleColumnNames = result.ColumnNames
 		}
 	}
 
@@ -132,7 +144,7 @@ func (e *Executor) Open(
 		cs.rows = [][][]byte{{[]byte(fmt.Sprintf("%d", rowCount))}}
 	} else {
 		// SELECT: execute to get column metadata and buffer results.
-		cols, rows, err := e.executeSelect(ctx, cs.sql)
+		cols, rows, err := e.executeSelect(ctx, cs.sql, cs.oracleColumnNames)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +198,7 @@ func (e *Executor) handleCatalogOpen(
 		// Rewritten SQL — execute against CRDB.
 		cs.isRewrite = true
 		cs.sql = resp.RewriteSQL
-		cols, rows, err := e.executeSelect(ctx, cs.sql)
+		cols, rows, err := e.executeSelect(ctx, cs.sql, cs.oracleColumnNames)
 		if err != nil {
 			return nil, err
 		}
@@ -301,9 +313,12 @@ func (e *Executor) Close(cursorID uint16) {
 }
 
 // executeSelect runs a SELECT via the internal executor and returns
-// column metadata and rows in TNS wire format.
+// column metadata and rows in TNS wire format. If oracleColNames is
+// non-nil, those names override the CRDB-derived column names, ensuring
+// Oracle function names (NVL, DECODE, TRIM) appear instead of their
+// CockroachDB equivalents (COALESCE, CASE, BTRIM).
 func (e *Executor) executeSelect(
-	ctx context.Context, sql string,
+	ctx context.Context, sql string, oracleColNames []string,
 ) ([]tnswire.ColumnDesc, [][][]byte, error) {
 	executor := e.db.Executor()
 	rows, resultCols, err := executor.QueryBufferedExWithCols(
@@ -320,9 +335,13 @@ func (e *Executor) executeSelect(
 	// Map CRDB result columns to Oracle column descriptors.
 	cols := make([]tnswire.ColumnDesc, len(resultCols))
 	for i, rc := range resultCols {
+		name := strings.ToUpper(rc.Name)
+		if i < len(oracleColNames) && oracleColNames[i] != "" {
+			name = oracleColNames[i]
+		}
 		cols[i] = tnswire.ColumnDesc{
 			TypeCode: mapCRDBTypeToOracle(rc.Typ),
-			Name:     strings.ToUpper(rc.Name),
+			Name:     name,
 		}
 	}
 
@@ -334,8 +353,7 @@ func (e *Executor) executeSelect(
 			if d == tree.DNull {
 				wireRow[j] = nil
 			} else {
-				wireRow[j] = []byte(
-					tree.AsStringWithFlags(d, tree.FmtBareStrings))
+				wireRow[j] = formatDatumForTNS(d)
 			}
 		}
 		wireRows[i] = wireRow
@@ -359,6 +377,18 @@ func (e *Executor) buildExecArgs(bindVars []tnswire.BindVar, params map[int]stri
 		}
 	}
 	return args
+}
+
+// formatDatumForTNS converts a tree.Datum to its wire-format byte representation
+// for TNS output. For strings, it uses FmtExport to avoid quoting. For decimals,
+// it strips trailing zeros to match Oracle's NUMBER display behavior (e.g.
+// "174.00000000000000000" → "174", "5.0000000000000000000" → "5").
+func formatDatumForTNS(d tree.Datum) []byte {
+	if dd, ok := d.(*tree.DDecimal); ok {
+		dd.Decimal.Reduce(&dd.Decimal)
+		return []byte(dd.Decimal.Text('f'))
+	}
+	return []byte(tree.AsStringWithFlags(d, tree.FmtExport))
 }
 
 // mapCRDBTypeToOracle maps a CockroachDB type to the closest Oracle type code.

@@ -37,6 +37,12 @@ type Result struct {
 	// bind variable names. For example, if the Oracle SQL had :emp_id and :dept,
 	// Params might be {1: "emp_id", 2: "dept"}.
 	Params map[int]string
+	// ColumnNames contains the Oracle-friendly column names for SELECT columns,
+	// derived from the original Oracle AST. For columns with explicit aliases, the
+	// alias is used. For function calls like NVL, DECODE, TRIM, the Oracle function
+	// name is used. This allows the TNS executor to override CockroachDB's column
+	// names (e.g. COALESCE→NVL, CASE→DECODE, BTRIM→TRIM) in query results.
+	ColumnNames []string
 }
 
 // Translate parses an Oracle SQL string and returns the equivalent
@@ -54,7 +60,7 @@ func Translate(oracleSQL string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{SQL: sql, Params: t.params}, nil
+	return Result{SQL: sql, Params: t.params, ColumnNames: t.columnNames}, nil
 }
 
 // translator walks an Oracle AST and emits CockroachDB SQL.
@@ -67,6 +73,8 @@ type translator struct {
 	params map[int]string
 	// nextParam is the next positional parameter index to assign.
 	nextParam int
+	// columnNames holds Oracle-friendly column names for the top-level SELECT.
+	columnNames []string
 }
 
 // assignBind returns the positional parameter index for the given Oracle bind
@@ -108,6 +116,15 @@ func (t *translator) translateSelect(s *parser.SelectStmt) (string, error) {
 	if s.Distinct {
 		b.WriteString("DISTINCT ")
 	}
+
+	// Extract Oracle-friendly column names for the top-level SELECT.
+	if t.columnNames == nil {
+		t.columnNames = make([]string, len(s.Columns))
+		for i, c := range s.Columns {
+			t.columnNames[i] = oracleColumnName(c)
+		}
+	}
+
 	for i, c := range s.Columns {
 		if i > 0 {
 			b.WriteString(", ")
@@ -804,6 +821,39 @@ func (t *translator) translateToDate(expr parser.Expr, fmtExpr parser.Expr) (str
 		return "", err
 	}
 	return fmt.Sprintf("to_timestamp(%s, %s)::DATE", inner, fmtStr), nil
+}
+
+// oracleColumnName derives the Oracle-style column name for a SELECT column.
+// If the column has an explicit alias, that alias is used. Otherwise the name
+// is derived from the expression: function calls use the Oracle function name
+// (e.g. NVL, DECODE, TRIM), column references use the column name, etc.
+func oracleColumnName(col parser.SelectColumn) string {
+	if col.Alias != "" {
+		return strings.ToUpper(col.Alias)
+	}
+	return oracleExprName(col.Expr)
+}
+
+// oracleExprName returns a short Oracle-style name for the given expression.
+// This is used for column naming when no explicit alias is provided.
+func oracleExprName(expr parser.Expr) string {
+	switch e := expr.(type) {
+	case *parser.ColumnRefExpr:
+		return strings.ToUpper(e.Column)
+	case *parser.FuncCallExpr:
+		return strings.ToUpper(e.Name)
+	case *parser.NVLExpr:
+		return "NVL"
+	case *parser.NVL2Expr:
+		return "NVL2"
+	case *parser.DecodeExpr:
+		return "DECODE"
+	default:
+		// For StarExpr, CaseExpr, literals, and other expressions, return ""
+		// so the CRDB-derived column name is used instead. CRDB often infers
+		// a more useful name (e.g. a column name from the ELSE branch of CASE).
+		return ""
+	}
 }
 
 // lowercaseSlice returns a new slice with all strings lowercased.
