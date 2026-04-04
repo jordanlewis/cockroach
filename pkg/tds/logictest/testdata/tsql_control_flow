@@ -86,10 +86,11 @@ exec error=(division by zero)
 BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH
 ----
 
-# --- GOTO ---
-# GOTO is not yet supported.
+# --- GOTO with labels ---
+# GOTO and labels are parsed but silently acknowledged (no actual jump).
+# Both SELECT statements execute since label-based flow is not implemented.
 
-exec error=(parse error)
+exec
 GOTO done; SELECT 'skipped'; done: SELECT 'reached'
 ----
 

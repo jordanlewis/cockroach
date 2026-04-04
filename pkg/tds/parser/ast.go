@@ -401,6 +401,7 @@ type SelectStmt struct {
 	Distinct        bool
 	Top             *int // [Both] SELECT TOP N
 	Columns         []SelectColumn
+	IntoTable       string // [Both] SELECT ... INTO <table> (empty if not present)
 	From            []TableRef
 	Joins           []JoinClause
 	Where           Expr
@@ -429,6 +430,9 @@ func (s *SelectStmt) String() string {
 			b.WriteString(", ")
 		}
 		b.WriteString(c.String())
+	}
+	if s.IntoTable != "" {
+		fmt.Fprintf(&b, " INTO %s", formatIdent(s.IntoTable))
 	}
 	if len(s.From) > 0 {
 		b.WriteString(" FROM ")
@@ -1306,6 +1310,25 @@ func (s *DeclareVarStmt) String() string {
 	return fmt.Sprintf("DECLARE %s %s", s.Name, s.DataType)
 }
 
+// DeclareTableVarStmt represents DECLARE @var TABLE (<columns>).
+// [Both] Table variables are session-scoped in-memory tables. They are
+// translated to CREATE TABLE statements since CockroachDB does not have
+// native table variable support.
+type DeclareTableVarStmt struct {
+	Name    string      // variable name including the @ prefix
+	Columns []ColumnDef // column definitions
+}
+
+func (*DeclareTableVarStmt) statementNode() {}
+
+func (s *DeclareTableVarStmt) String() string {
+	var cols []string
+	for _, c := range s.Columns {
+		cols = append(cols, c.String())
+	}
+	return fmt.Sprintf("DECLARE %s TABLE (%s)", s.Name, strings.Join(cols, ", "))
+}
+
 // SetVarStmt represents SET @var = expr (variable assignment).
 type SetVarStmt struct {
 	Name string // variable name including the @ prefix
@@ -1479,6 +1502,20 @@ func (s *GotoStmt) String() string {
 	return fmt.Sprintf("GOTO %s", s.Label)
 }
 
+// LabelStmt represents a label definition (<name>:) in T-SQL. Labels are
+// targets for GOTO statements. They are parsed for recognition but label-
+// based control flow is not implemented — both GOTO and labels are silently
+// acknowledged.
+type LabelStmt struct {
+	Label string
+}
+
+func (*LabelStmt) statementNode() {}
+
+func (s *LabelStmt) String() string {
+	return fmt.Sprintf("%s:", s.Label)
+}
+
 // ReturnStmt represents RETURN [<value>], used to exit a stored procedure
 // or batch. The optional value is the return status.
 type ReturnStmt struct {
@@ -1556,6 +1593,7 @@ type UnpivotClause struct {
 	ForCol   string   // column name for the source column labels
 	InCols   []string // source columns to unpivot
 }
+
 // formatColumnRef formats a column reference that may contain dots
 // (e.g., t.name from UPDATE...FROM). Each part is individually quoted
 // if necessary.

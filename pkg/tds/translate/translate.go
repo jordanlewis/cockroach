@@ -112,6 +112,9 @@ func Statement(stmt parser.Statement) (string, error) {
 		if err := checkUnsupportedTableOps(s.From); err != nil {
 			return "", err
 		}
+		if s.IntoTable != "" {
+			return translateSelectInto(s), nil
+		}
 		if len(s.Compute) > 0 {
 			return translateSelectWithCompute(s)
 		}
@@ -163,6 +166,8 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.DeclareVarStmt:
 		// Control flow: handled by the executor's interpreter.
 		return "", nil
+	case *parser.DeclareTableVarStmt:
+		return translateDeclareTableVar(s), nil
 	case *parser.SetVarStmt:
 		return "", nil
 	case *parser.IfStmt:
@@ -186,6 +191,8 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.ThrowStmt:
 		return "", nil
 	case *parser.GotoStmt:
+		return "", nil
+	case *parser.LabelStmt:
 		return "", nil
 	case *parser.ReturnStmt:
 		return "", nil
@@ -227,6 +234,26 @@ func translateCreateTable(s *parser.CreateTableStmt) string {
 	}
 	b.WriteString(")")
 	return b.String()
+}
+
+// translateDeclareTableVar converts DECLARE @var TABLE (...) to a CREATE
+// TABLE statement. The table is created with the @-prefixed name (which
+// CockroachDB accepts when double-quoted).
+func translateDeclareTableVar(s *parser.DeclareTableVarStmt) string {
+	return translateCreateTable(&parser.CreateTableStmt{
+		Table:   s.Name,
+		Columns: s.Columns,
+	})
+}
+
+// translateSelectInto converts SELECT ... INTO <table> ... to
+// CREATE TABLE <table> AS SELECT ... (CockroachDB's CTAS syntax).
+func translateSelectInto(s *parser.SelectStmt) string {
+	// Build a copy without IntoTable to get the plain SELECT.
+	plain := *s
+	plain.IntoTable = ""
+	return fmt.Sprintf("CREATE TABLE %s AS %s",
+		quoteIdent(s.IntoTable), translateSelect(&plain))
 }
 
 // translateColumnDef writes a translated column definition to the builder.

@@ -47,16 +47,40 @@ exec
 DROP TABLE ##temp_global
 ----
 
-# === Table variables (@table) — not supported by parser ===
+# === Table variables (@table) ===
+# Table variables are translated to CREATE TABLE with the @-prefixed name.
 
-exec error=(parse error)
+exec
 DECLARE @t TABLE (id INT, name VARCHAR(50))
 ----
 
-# === SELECT INTO (create table from query) — not supported ===
-# Parser parses SELECT but INTO is not a recognized clause,
-# causing a parse error on the trailing tokens.
+exec
+INSERT INTO [@t] (id, name) VALUES (1, 'table var')
+----
 
-exec error=(parse error)
+query colnames
+SELECT id, name FROM [@t]
+----
+id  name
+1  table var
+
+exec
+DROP TABLE [@t]
+----
+
+# === SELECT INTO (create table from query) ===
+# SELECT INTO is translated to CREATE TABLE AS SELECT.
+
+exec
 SELECT id, name INTO #new_temp FROM (SELECT 1 AS id, 'test' AS name) src
+----
+
+query colnames
+SELECT id, name FROM #new_temp
+----
+id  name
+1  test
+
+exec
+DROP TABLE #new_temp
 ----

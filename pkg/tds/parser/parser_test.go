@@ -1963,4 +1963,126 @@ func TestParseExecString(t *testing.T) {
 	}
 }
 
+func TestParseDeclareTableVar(t *testing.T) {
+	sql := `DECLARE @t TABLE (id INT, name VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+	}
+	dtv, ok := batch.Stmts[0].(*DeclareTableVarStmt)
+	if !ok {
+		t.Fatalf("expected *DeclareTableVarStmt, got %T", batch.Stmts[0])
+	}
+	if dtv.Name != "@t" {
+		t.Errorf("expected name=@t, got %s", dtv.Name)
+	}
+	if len(dtv.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(dtv.Columns))
+	}
+	if dtv.Columns[0].Name != "id" {
+		t.Errorf("expected col[0].Name=id, got %s", dtv.Columns[0].Name)
+	}
+	if dtv.Columns[0].DataType != "INT" {
+		t.Errorf("expected col[0].DataType=INT, got %s", dtv.Columns[0].DataType)
+	}
+	if dtv.Columns[1].Name != "name" {
+		t.Errorf("expected col[1].Name=name, got %s", dtv.Columns[1].Name)
+	}
+	if dtv.Columns[1].DataType != "VARCHAR(50)" {
+		t.Errorf(
+			"expected col[1].DataType=VARCHAR(50), got %s", dtv.Columns[1].DataType)
+	}
+}
+
+func TestParseDeclareTableVarString(t *testing.T) {
+	sql := `DECLARE @tv TABLE (a INT NOT NULL, b NVARCHAR(100))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := batch.Stmts[0].String()
+	if !strings.Contains(got, "DECLARE @tv TABLE") {
+		t.Errorf("String() should contain DECLARE @tv TABLE, got %q", got)
+	}
+}
+
+func TestParseSelectInto(t *testing.T) {
+	sql := `SELECT id, name INTO #new_temp FROM users`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(batch.Stmts))
+	}
+	sel, ok := batch.Stmts[0].(*SelectStmt)
+	if !ok {
+		t.Fatalf("expected *SelectStmt, got %T", batch.Stmts[0])
+	}
+	if sel.IntoTable != "#new_temp" {
+		t.Errorf("expected IntoTable=#new_temp, got %s", sel.IntoTable)
+	}
+	if len(sel.Columns) != 2 {
+		t.Errorf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	if len(sel.From) != 1 {
+		t.Errorf("expected 1 FROM ref, got %d", len(sel.From))
+	}
+}
+
+func TestParseSelectIntoString(t *testing.T) {
+	sql := `SELECT 1 AS id INTO #tmp`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := batch.Stmts[0].String()
+	if !strings.Contains(got, "INTO #tmp") {
+		t.Errorf("String() should contain 'INTO #tmp', got %q", got)
+	}
+}
+
+func TestParseLabelStmt(t *testing.T) {
+	sql := `GOTO done; done: SELECT 1`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Stmts) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(batch.Stmts))
+	}
+	gt, ok := batch.Stmts[0].(*GotoStmt)
+	if !ok {
+		t.Fatalf("stmt[0]: expected *GotoStmt, got %T", batch.Stmts[0])
+	}
+	if gt.Label != "done" {
+		t.Errorf("expected label=done, got %s", gt.Label)
+	}
+	lbl, ok := batch.Stmts[1].(*LabelStmt)
+	if !ok {
+		t.Fatalf("stmt[1]: expected *LabelStmt, got %T", batch.Stmts[1])
+	}
+	if lbl.Label != "done" {
+		t.Errorf("expected label=done, got %s", lbl.Label)
+	}
+	if _, ok := batch.Stmts[2].(*SelectStmt); !ok {
+		t.Fatalf("stmt[2]: expected *SelectStmt, got %T", batch.Stmts[2])
+	}
+}
+
+func TestParseLabelStmtString(t *testing.T) {
+	sql := `myLabel: SELECT 1`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lbl := batch.Stmts[0].(*LabelStmt)
+	if lbl.String() != "myLabel:" {
+		t.Errorf("String() should be 'myLabel:', got %q", lbl.String())
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

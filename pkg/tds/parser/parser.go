@@ -147,6 +147,15 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseGoto()
 	case tokenWAITFOR:
 		return p.parseWaitfor()
+	case tokenIdent:
+		// Check for label definition: <ident>:
+		identTok := p.lex.next() // consume identifier
+		if p.lex.peek().typ == tokenColon {
+			p.lex.next() // consume colon
+			return &LabelStmt{Label: identTok.val}, nil
+		}
+		return nil, p.error(fmt.Sprintf(
+			"unexpected token %q at position %d", identTok.val, identTok.pos))
 	default:
 		return nil, p.error(fmt.Sprintf("unexpected token %q at position %d", tok.val, tok.pos))
 	}
@@ -816,6 +825,16 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		p.lex.next()
 	}
 
+	// Optional INTO (SELECT ... INTO <table>).
+	if p.lex.peek().typ == tokenINTO {
+		p.lex.next() // consume INTO
+		name, err := p.parseTableName()
+		if err != nil {
+			return nil, err
+		}
+		stmt.IntoTable = name
+	}
+
 	// Optional FROM.
 	if p.lex.peek().typ == tokenFROM {
 		p.lex.next()
@@ -1107,8 +1126,11 @@ func (p *parser) parseBeginEndBody() (*BeginEndBlock, error) {
 	return block, nil
 }
 
-// parseDeclare parses: DECLARE @var TYPE [= expr]
-func (p *parser) parseDeclare() (*DeclareVarStmt, error) {
+// parseDeclare parses:
+//
+//	DECLARE @var TYPE [= expr]          (scalar variable)
+//	DECLARE @var TABLE (<column_defs>)  (table variable)
+func (p *parser) parseDeclare() (Statement, error) {
 	p.lex.next() // consume DECLARE
 	name, err := p.expectIdent()
 	if err != nil {
@@ -1118,6 +1140,32 @@ func (p *parser) parseDeclare() (*DeclareVarStmt, error) {
 		return nil, p.error(fmt.Sprintf(
 			"expected @variable name after DECLARE, got %q", name))
 	}
+
+	// Table variable: DECLARE @t TABLE (columns...)
+	if p.lex.peek().typ == tokenTABLE {
+		p.lex.next() // consume TABLE
+		if err := p.expect(tokenLParen); err != nil {
+			return nil, err
+		}
+		var cols []ColumnDef
+		for {
+			col, err := p.parseColumnDef()
+			if err != nil {
+				return nil, err
+			}
+			cols = append(cols, col)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next() // consume comma
+		}
+		if err := p.expect(tokenRParen); err != nil {
+			return nil, err
+		}
+		return &DeclareTableVarStmt{Name: name, Columns: cols}, nil
+	}
+
+	// Scalar variable: DECLARE @var TYPE [= expr]
 	dataType, err := p.parseDataType()
 	if err != nil {
 		return nil, err
@@ -2736,6 +2784,8 @@ func tokenName(typ tokenType) string {
 		return "'*'"
 	case tokenEq:
 		return "'='"
+	case tokenColon:
+		return "':'"
 	case tokenNULL:
 		return "NULL"
 	case tokenTABLE:

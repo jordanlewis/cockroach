@@ -236,7 +236,13 @@ func (e *Executor) executeStatement(
 	case *parser.InsertStmt:
 		return e.executeDML(ctx, crdbSQL, tw)
 
+	case *parser.DeclareTableVarStmt:
+		return e.executeDDL(ctx, crdbSQL, tw)
+
 	case *parser.SelectStmt:
+		if s.IntoTable != "" {
+			return e.executeDDL(ctx, crdbSQL, tw)
+		}
 		if len(s.Compute) > 0 {
 			return e.executeSelectWithCompute(ctx, s, crdbSQL, tw)
 		}
@@ -815,8 +821,13 @@ func (e *Executor) execParsedStmt(
 		return e.execStoredProcedure(ctx, s, tw)
 	case *parser.ThrowStmt:
 		return e.executeThrow(s, tw)
+	case *parser.DeclareTableVarStmt:
+		return e.executeDeclareTableVar(ctx, s, tw)
 	case *parser.GotoStmt:
 		// GOTO is silently acknowledged (label-based flow not supported).
+		return nil
+	case *parser.LabelStmt:
+		// Labels are silently acknowledged (label-based flow not supported).
 		return nil
 	case *parser.ReturnStmt:
 		// RETURN is silently acknowledged (stored procedure context only).
@@ -858,6 +869,20 @@ func (e *Executor) executeDeclare(
 		e.variables[s.Name] = "NULL"
 	}
 	return nil
+}
+
+// executeDeclareTableVar handles DECLARE @var TABLE (columns...) by
+// creating a real table. CockroachDB does not have native table variable
+// support, so we translate to CREATE TABLE.
+func (e *Executor) executeDeclareTableVar(
+	ctx context.Context, s *parser.DeclareTableVarStmt, tw *tdswire.TokenWriter,
+) error {
+	crdbSQL, err := translate.Statement(s)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("T-SQL translation error: %s", err))
+	}
+	return e.executeDDL(ctx, crdbSQL, tw)
 }
 
 // executeSetVar handles SET @var = expr.

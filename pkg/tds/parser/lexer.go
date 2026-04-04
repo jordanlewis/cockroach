@@ -174,7 +174,6 @@ const (
 	tokenBREAK
 	tokenCONTINUE
 
-
 	// EXEC/EXECUTE keyword for stored procedure calls.
 	tokenEXEC
 	tokenRETURN
@@ -194,6 +193,9 @@ const (
 
 	// WAITFOR sub-keyword.
 	tokenDELAY
+
+	// Colon for label definitions (e.g. done: SELECT 'reached').
+	tokenColon
 )
 
 var keywords = map[string]tokenType{
@@ -325,12 +327,12 @@ var keywords = map[string]tokenType{
 	// EXEC/EXECUTE keywords.
 	"EXEC":    tokenEXEC,
 	"EXECUTE": tokenEXEC,
-	"RETURN":   tokenRETURN,
-	"GOTO":     tokenGOTO,
-	"THROW":    tokenTHROW,
-	"WAITFOR":  tokenWAITFOR,
-	"TRY":      tokenTRY,
-	"CATCH":    tokenCATCH,
+	"RETURN":  tokenRETURN,
+	"GOTO":    tokenGOTO,
+	"THROW":   tokenTHROW,
+	"WAITFOR": tokenWAITFOR,
+	"TRY":     tokenTRY,
+	"CATCH":   tokenCATCH,
 
 	// APPLY operator keyword.
 	"APPLY": tokenAPPLY,
@@ -467,6 +469,10 @@ func (l *lexer) scan() token {
 			return token{typ: tokenGTE, val: ">=", pos: start}
 		}
 		return token{typ: tokenGT, val: ">", pos: start}
+
+	case ch == ':':
+		l.pos++
+		return token{typ: tokenColon, val: ":", pos: start}
 
 	case ch == '\'':
 		return l.scanString()

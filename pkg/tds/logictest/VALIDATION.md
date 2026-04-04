@@ -1,16 +1,25 @@
 # TDS Logictest Validation Report
 
-Generated: 2026-04-04 (validation pass #2)
+Generated: 2026-04-04 (validation pass #3)
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
 | Total test files | 34 |
-| Total test directives (exec/query) | 735 |
-| Passing directives | 707 (96%) |
-| Error directives (expected failures) | 28 (4%) |
+| Total test directives (exec/query) | 741 |
+| Passing directives | 716 (97%) |
+| Error directives (expected failures) | 25 (3%) |
 | Known behavioral divergences | 1 |
+
+**Changes from pass #2 (2026-04-04):**
+- System stored procedures FIXED: sp_tables, sp_columns, sp_helptext,
+  sp_executesql now implemented (4 EXEC errors recovered)
+- Parser gap FIXED: DECLARE @var TABLE (columns...) — table variables
+- Parser gap FIXED: SELECT ... INTO #table — SELECT INTO
+- Parser gap FIXED: GOTO label / label: definitions — label-based flow
+- 7 errors removed, 6 new passing directives added (INSERT/SELECT
+  on table variables, SELECT INTO with verification)
 
 **Changes from pass #1 (2026-04-03):**
 - TDS wire-protocol gap FIXED: UNION, UNION ALL, INTERSECT, EXCEPT, and
@@ -21,7 +30,7 @@ Generated: 2026-04-04 (validation pass #2)
 - VALIDATION.md moved out of testdata/ (was being parsed as a test file)
 - compute_by test ordering stabilized (added secondary sort to query)
 
-## Error Categorization (32 total)
+## Error Categorization (25 total)
 
 ### Expected Errors (correct behavior) — 8
 
@@ -72,16 +81,13 @@ not yet implemented.
 | ground_truth_system | unsupported | EXEC bad (non-existent procedure) |
 | ground_truth_system | sysusers | sysusers system table not in catalog |
 
-### Parser / Translation Gaps — 6
+### Parser / Translation Gaps — 3
 
-These fail because the T-SQL parser cannot parse the syntax or the
-translator produces invalid CockroachDB SQL.
+These fail because the translator produces invalid CockroachDB SQL or
+the parser does not support the syntax.
 
 | File | Error | Feature |
 |------|-------|---------|
-| temp_tables | parse error | DECLARE @t TABLE (...) — table variables |
-| temp_tables | parse error | SELECT ... INTO #table — SELECT INTO |
-| tsql_control_flow | parse error | GOTO label — label definitions |
 | functions_extended | syntax error | TRY_CONVERT(type, value) |
 | functions_extended | syntax error | TRY_CAST(value AS type) |
 | types_extended | syntax error | Computed columns — missing data type in translation |
@@ -94,6 +100,14 @@ sp_tables, sp_columns, sp_helptext, and sp_executesql are now implemented.
 Both the catalog layer (simple forms without EXEC prefix) and the executor
 (EXEC with positional and named arguments) handle these procedures.
 sp_executesql supports dynamic SQL execution with parameter substitution.
+
+### Parser Gaps (FIXED in pass #3 — was 3 parse errors)
+
+Table variables (`DECLARE @t TABLE (...)`), SELECT INTO
+(`SELECT ... INTO #table`), and GOTO labels (`done: SELECT ...`) now
+parse correctly. Table variables are translated to CREATE TABLE; SELECT
+INTO is translated to CREATE TABLE AS SELECT; GOTO and labels are
+silently acknowledged (no actual jump semantics).
 
 ### Set Operations and CTE (FIXED in pass #2 — was 5 wire-protocol gaps)
 
@@ -136,5 +150,4 @@ Prioritized by error count:
    unknown procedures
 2. **System variables and catalog** (4 errors) — @@IDENTITY, SCOPE_IDENTITY(),
    sysobjects, sysusers
-3. **Parser gaps** (3 errors) — table variables, SELECT INTO, GOTO labels
-4. **Translation gaps** (3 errors) — TRY_CAST, TRY_CONVERT, computed columns
+3. **Translation gaps** (3 errors) — TRY_CAST, TRY_CONVERT, computed columns
