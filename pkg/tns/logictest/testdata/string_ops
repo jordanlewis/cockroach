@@ -1,0 +1,110 @@
+# String operation tests for Oracle SQL through TNS.
+# SUBSTR, concatenation, LIKE, UPPER, LOWER, TRIM, LENGTH, REPLACE.
+#
+# Note: Oracle function name mapping (SUBSTR→substring, INSTR→strpos,
+# LENGTHB→octet_length) only applies when the Oracle parser succeeds.
+# CockroachDB has native substr() and length() so passthrough works for
+# those. INSTR and LENGTHB have no CockroachDB native equivalent and
+# fail when the parser falls through.
+
+# -- SUBSTR --
+# CockroachDB supports substr() natively, so passthrough works.
+
+query
+SELECT SUBSTR('Hello', 1, 3) FROM DUAL
+----
+SUBSTR
+Hel
+
+query
+SELECT SUBSTR('abcdef', 3, 2) FROM DUAL
+----
+SUBSTR
+cd
+
+# -- String concatenation with || --
+
+query
+SELECT 'a' || 'b' || 'c' || 'd' FROM DUAL
+----
+?COLUMN?
+abcd
+
+# -- Concatenation with table data --
+
+exec
+CREATE TABLE lt_str (id NUMBER, first_name VARCHAR2(50), last_name VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_str (id, first_name, last_name) VALUES (1, 'John', 'Doe')
+----
+
+exec
+INSERT INTO lt_str (id, first_name, last_name) VALUES (2, 'Jane', 'Smith')
+----
+
+# Bug: multi-word concatenation results get quotes.
+query
+SELECT first_name || ' ' || last_name FROM lt_str ORDER BY id
+----
+?COLUMN?
+'John Doe'
+'Jane Smith'
+
+# -- UPPER / LOWER --
+
+query
+SELECT UPPER('hello') FROM DUAL
+----
+UPPER
+HELLO
+
+query
+SELECT LOWER('HELLO') FROM DUAL
+----
+LOWER
+hello
+
+# -- LENGTH --
+
+query
+SELECT LENGTH('Hello') FROM DUAL
+----
+LENGTH
+5
+
+# -- REPLACE --
+
+query
+SELECT REPLACE('hello', 'ell', 'ipp') FROM DUAL
+----
+REPLACE
+hippo
+
+# -- TRIM --
+
+query
+SELECT TRIM('  hello  ') FROM DUAL
+----
+BTRIM
+hello
+
+# -- LIKE with table data --
+
+query
+SELECT first_name FROM lt_str WHERE first_name LIKE 'J%' ORDER BY first_name
+----
+FIRST_NAME
+Jane
+John
+
+query
+SELECT first_name FROM lt_str WHERE first_name NOT LIKE 'John%'
+----
+FIRST_NAME
+Jane
+
+exec
+DROP TABLE lt_str
+----

@@ -1,0 +1,99 @@
+# Oracle-specific function tests through TNS.
+# SYSDATE, SYSTIMESTAMP, DECODE, SUBSTR, NVL, NVL2, CASE.
+#
+# Note: Some Oracle functions (INSTR, LENGTHB) don't exist in CockroachDB
+# natively and require parser+translator to map them (e.g. INSTR→strpos).
+# When the parser falls through to passthrough, these functions fail silently.
+
+exec
+CREATE TABLE lt_func (id NUMBER, val VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_func (id, val) VALUES (1, 'test')
+----
+
+# -- SYSDATE (→ now()::DATE) --
+
+query
+SELECT id FROM lt_func WHERE SYSDATE IS NOT NULL
+----
+ID
+1
+
+# -- SYSTIMESTAMP (→ now()) --
+
+query
+SELECT id FROM lt_func WHERE SYSTIMESTAMP IS NOT NULL
+----
+ID
+1
+
+# -- DECODE --
+# DECODE(expr, search1, result1, ..., default) → CASE expr WHEN ...
+
+exec
+CREATE TABLE lt_decode (id NUMBER, status VARCHAR2(1))
+----
+
+exec
+INSERT INTO lt_decode (id, status) VALUES (1, 'A')
+----
+
+exec
+INSERT INTO lt_decode (id, status) VALUES (2, 'I')
+----
+
+exec
+INSERT INTO lt_decode (id, status) VALUES (3, 'X')
+----
+
+query
+SELECT id, DECODE(status, 'A', 'Active', 'I', 'Inactive', 'Unknown') FROM lt_decode ORDER BY id
+----
+ID CASE
+1 Active
+2 Inactive
+3 Unknown
+
+# DECODE with only two pairs (no default).
+query
+SELECT id, DECODE(status, 'A', 'Active', 'I', 'Inactive') FROM lt_decode ORDER BY id
+----
+ID CASE
+1 Active
+2 Inactive
+3 NULL
+
+# -- SUBSTR --
+# CockroachDB has native substr(), so passthrough works.
+
+query
+SELECT SUBSTR('Hello', 1, 3) FROM DUAL
+----
+SUBSTR
+Hel
+
+# -- CASE expression (simple) --
+
+query
+SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM DUAL
+----
+CASE
+one
+
+# -- CASE expression (searched) --
+
+query
+SELECT CASE WHEN 1 > 2 THEN 'impossible' WHEN 1 = 1 THEN 'correct' ELSE 'wrong' END FROM DUAL
+----
+CASE
+correct
+
+exec
+DROP TABLE lt_func
+----
+
+exec
+DROP TABLE lt_decode
+----

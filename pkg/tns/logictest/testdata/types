@@ -1,0 +1,139 @@
+# Oracle data type handling through TNS.
+# Tests CREATE TABLE with Oracle types (translated via DDL type substitution)
+# and verifies values round-trip correctly.
+
+# -- NUMBER (→ DECIMAL) --
+
+exec
+CREATE TABLE lt_types_num (id NUMBER, val NUMBER)
+----
+
+exec
+INSERT INTO lt_types_num (id, val) VALUES (1, 42)
+----
+
+exec
+INSERT INTO lt_types_num (id, val) VALUES (2, -100)
+----
+
+exec
+INSERT INTO lt_types_num (id, val) VALUES (3, 0)
+----
+
+exec
+INSERT INTO lt_types_num (id, val) VALUES (4, 999999999)
+----
+
+query
+SELECT id, val FROM lt_types_num ORDER BY id
+----
+ID VAL
+1 42
+2 -100
+3 0
+4 999999999
+
+exec
+DROP TABLE lt_types_num
+----
+
+# -- NUMBER with scale (decimal values) --
+
+exec
+CREATE TABLE lt_types_dec (id NUMBER, price NUMBER)
+----
+
+exec
+INSERT INTO lt_types_dec (id, price) VALUES (1, 19.99)
+----
+
+exec
+INSERT INTO lt_types_dec (id, price) VALUES (2, 0.01)
+----
+
+exec
+INSERT INTO lt_types_dec (id, price) VALUES (3, -123.456)
+----
+
+query
+SELECT id, price FROM lt_types_dec ORDER BY id
+----
+ID PRICE
+1 19.99
+2 0.01
+3 -123.456
+
+exec
+DROP TABLE lt_types_dec
+----
+
+# -- VARCHAR2 (→ VARCHAR) --
+
+exec
+CREATE TABLE lt_types_vc (id NUMBER, name VARCHAR2(100))
+----
+
+exec
+INSERT INTO lt_types_vc (id, name) VALUES (1, 'hello')
+----
+
+exec
+INSERT INTO lt_types_vc (id, name) VALUES (2, 'world with spaces')
+----
+
+exec
+INSERT INTO lt_types_vc (id, name) VALUES (3, '')
+----
+
+# Bug: multi-word strings returned with surrounding single quotes.
+query
+SELECT id, name FROM lt_types_vc WHERE id IN (1, 2) ORDER BY id
+----
+ID NAME
+1 hello
+2 'world with spaces'
+
+exec
+DROP TABLE lt_types_vc
+----
+
+# -- Multiple Oracle types in one table --
+
+exec
+CREATE TABLE lt_types_mixed (id NUMBER, name VARCHAR2(200), description CLOB, data BLOB)
+----
+
+exec
+INSERT INTO lt_types_mixed (id, name, description) VALUES (1, 'test', 'a long description')
+----
+
+# Bug: multi-word CLOB (TEXT) values returned with quotes.
+query
+SELECT id, name, description FROM lt_types_mixed WHERE id = 1
+----
+ID NAME DESCRIPTION
+1 test 'a long description'
+
+exec
+DROP TABLE lt_types_mixed
+----
+
+# -- Integer arithmetic preserves numeric type --
+
+query
+SELECT 10 + 20 FROM DUAL
+----
+?COLUMN?
+30
+
+query
+SELECT 100 * 3 FROM DUAL
+----
+?COLUMN?
+300
+
+query
+SELECT 10 - 20 FROM DUAL
+----
+?COLUMN?
+-10

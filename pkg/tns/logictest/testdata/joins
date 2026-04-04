@@ -1,0 +1,171 @@
+# JOIN tests for Oracle SQL through TNS.
+# INNER, LEFT, RIGHT, FULL, CROSS JOIN, and self-join.
+
+exec
+CREATE TABLE lt_customers (id NUMBER, name VARCHAR2(50), city VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_customers (id, name, city) VALUES (1, 'alice', 'new york')
+----
+
+exec
+INSERT INTO lt_customers (id, name, city) VALUES (2, 'bob', 'boston')
+----
+
+exec
+INSERT INTO lt_customers (id, name, city) VALUES (3, 'carol', 'chicago')
+----
+
+exec
+CREATE TABLE lt_orders (id NUMBER, customer_id NUMBER, product VARCHAR2(50), amount NUMBER)
+----
+
+exec
+INSERT INTO lt_orders (id, customer_id, product, amount) VALUES (1, 1, 'widget', 100)
+----
+
+exec
+INSERT INTO lt_orders (id, customer_id, product, amount) VALUES (2, 1, 'gadget', 200)
+----
+
+exec
+INSERT INTO lt_orders (id, customer_id, product, amount) VALUES (3, 2, 'widget', 150)
+----
+
+exec
+INSERT INTO lt_orders (id, customer_id, product, amount) VALUES (4, 99, 'gizmo', 50)
+----
+
+# -- INNER JOIN --
+
+query
+SELECT c.name, o.product, o.amount FROM lt_customers c INNER JOIN lt_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+NAME PRODUCT AMOUNT
+alice gadget 200
+alice widget 100
+bob widget 150
+
+# -- LEFT JOIN --
+
+query
+SELECT c.name, o.product FROM lt_customers c LEFT JOIN lt_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+NAME PRODUCT
+alice gadget
+alice widget
+bob widget
+carol NULL
+
+# -- RIGHT JOIN --
+
+query
+SELECT c.name, o.product FROM lt_customers c RIGHT JOIN lt_orders o ON c.id = o.customer_id ORDER BY o.product, c.name
+----
+NAME PRODUCT
+alice gadget
+NULL gizmo
+alice widget
+bob widget
+
+# -- FULL JOIN --
+
+query
+SELECT c.name, o.product FROM lt_customers c FULL JOIN lt_orders o ON c.id = o.customer_id ORDER BY c.name, o.product
+----
+NAME PRODUCT
+NULL gizmo
+alice gadget
+alice widget
+bob widget
+carol NULL
+
+# -- CROSS JOIN --
+
+exec
+CREATE TABLE lt_colors (color VARCHAR2(20))
+----
+
+exec
+INSERT INTO lt_colors (color) VALUES ('red')
+----
+
+exec
+INSERT INTO lt_colors (color) VALUES ('blue')
+----
+
+exec
+CREATE TABLE lt_sizes (sz VARCHAR2(20))
+----
+
+exec
+INSERT INTO lt_sizes (sz) VALUES ('small')
+----
+
+exec
+INSERT INTO lt_sizes (sz) VALUES ('large')
+----
+
+query
+SELECT c.color, s.sz FROM lt_colors c CROSS JOIN lt_sizes s ORDER BY c.color, s.sz
+----
+COLOR SZ
+blue large
+blue small
+red large
+red small
+
+# -- Self-join --
+
+exec
+CREATE TABLE lt_emp (id NUMBER, name VARCHAR2(50), manager_id NUMBER)
+----
+
+exec
+INSERT INTO lt_emp (id, name, manager_id) VALUES (1, 'alice', NULL)
+----
+
+exec
+INSERT INTO lt_emp (id, name, manager_id) VALUES (2, 'bob', 1)
+----
+
+exec
+INSERT INTO lt_emp (id, name, manager_id) VALUES (3, 'carol', 1)
+----
+
+query
+SELECT e.name, m.name FROM lt_emp e INNER JOIN lt_emp m ON e.manager_id = m.id ORDER BY e.name
+----
+NAME NAME
+bob alice
+carol alice
+
+# -- JOIN with aggregation --
+
+query
+SELECT c.name, COUNT(*), SUM(o.amount) FROM lt_customers c INNER JOIN lt_orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY c.name
+----
+NAME COUNT SUM
+alice 2 300
+bob 1 150
+
+exec
+DROP TABLE lt_orders
+----
+
+exec
+DROP TABLE lt_customers
+----
+
+exec
+DROP TABLE lt_colors
+----
+
+exec
+DROP TABLE lt_sizes
+----
+
+exec
+DROP TABLE lt_emp
+----

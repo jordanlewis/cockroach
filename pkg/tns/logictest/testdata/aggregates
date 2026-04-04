@@ -1,0 +1,126 @@
+# Aggregate function tests for Oracle SQL through TNS.
+# COUNT, SUM, MIN, MAX, AVG, GROUP BY, HAVING, DISTINCT.
+
+exec
+CREATE TABLE lt_sales (id NUMBER, region VARCHAR2(20), product VARCHAR2(20), amount NUMBER)
+----
+
+exec
+INSERT INTO lt_sales (id, region, product, amount) VALUES (1, 'east', 'widget', 100)
+----
+
+exec
+INSERT INTO lt_sales (id, region, product, amount) VALUES (2, 'east', 'gadget', 200)
+----
+
+exec
+INSERT INTO lt_sales (id, region, product, amount) VALUES (3, 'west', 'widget', 150)
+----
+
+exec
+INSERT INTO lt_sales (id, region, product, amount) VALUES (4, 'west', 'gadget', 300)
+----
+
+exec
+INSERT INTO lt_sales (id, region, product, amount) VALUES (5, 'east', 'widget', 120)
+----
+
+# -- COUNT --
+
+query
+SELECT COUNT(*) FROM lt_sales
+----
+COUNT
+5
+
+query
+SELECT COUNT(*) FROM lt_sales WHERE region = 'east'
+----
+COUNT
+3
+
+# -- SUM --
+
+query
+SELECT SUM(amount) FROM lt_sales
+----
+SUM
+870
+
+# -- MIN and MAX --
+
+query
+SELECT MIN(amount), MAX(amount) FROM lt_sales
+----
+MIN MAX
+100 300
+
+# -- AVG --
+# Note: NUMBER → DECIMAL means AVG returns full precision.
+
+query
+SELECT AVG(amount) FROM lt_sales
+----
+AVG
+174.00000000000000000
+
+# -- GROUP BY --
+
+query
+SELECT region, COUNT(*) FROM lt_sales GROUP BY region ORDER BY region
+----
+REGION COUNT
+east 3
+west 2
+
+query
+SELECT region, SUM(amount) FROM lt_sales GROUP BY region ORDER BY region
+----
+REGION SUM
+east 420
+west 450
+
+# -- GROUP BY multiple columns --
+
+query
+SELECT region, product, SUM(amount) FROM lt_sales GROUP BY region, product ORDER BY region, product
+----
+REGION PRODUCT SUM
+east gadget 200
+east widget 220
+west gadget 300
+west widget 150
+
+# -- HAVING --
+
+query
+SELECT region, SUM(amount) FROM lt_sales GROUP BY region HAVING SUM(amount) > 430 ORDER BY region
+----
+REGION SUM
+west 450
+
+query
+SELECT product, COUNT(*) FROM lt_sales GROUP BY product HAVING COUNT(*) > 2
+----
+PRODUCT COUNT
+widget 3
+
+# -- DISTINCT --
+
+query rowsort
+SELECT DISTINCT region FROM lt_sales
+----
+REGION
+east
+west
+
+query rowsort
+SELECT DISTINCT product FROM lt_sales
+----
+PRODUCT
+gadget
+widget
+
+exec
+DROP TABLE lt_sales
+----

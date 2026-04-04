@@ -1,0 +1,64 @@
+# DUAL pseudo-table tests for Oracle SQL through TNS.
+# In Oracle, DUAL is a single-row, single-column table used for
+# evaluating expressions. TNS removes DUAL from FROM and returns
+# the expression directly.
+
+# -- Basic DUAL usage --
+
+query
+SELECT 1 FROM DUAL
+----
+?COLUMN?
+1
+
+query
+SELECT 'hello' FROM DUAL
+----
+?COLUMN?
+hello
+
+# -- Arithmetic on DUAL --
+
+query
+SELECT 2 + 3 FROM DUAL
+----
+?COLUMN?
+5
+
+query
+SELECT 10 * 20 FROM DUAL
+----
+?COLUMN?
+200
+
+# -- String concatenation on DUAL --
+
+query
+SELECT 'a' || 'b' || 'c' FROM DUAL
+----
+?COLUMN?
+abc
+
+# -- NULL on DUAL --
+
+query
+SELECT NULL FROM DUAL
+----
+?COLUMN?
+NULL
+
+# -- Multiple columns from DUAL --
+
+query
+SELECT 1, 'two', 3 FROM DUAL
+----
+?COLUMN? ?COLUMN? ?COLUMN?
+1 two 3
+
+# -- Expression with alias from DUAL --
+
+query
+SELECT 42 AS answer FROM DUAL
+----
+ANSWER
+42

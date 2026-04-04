@@ -1,0 +1,225 @@
+# Expression tests for Oracle SQL through TNS.
+# Arithmetic, comparisons, string concatenation, BETWEEN, IN, LIKE.
+
+# -- Arithmetic --
+
+query
+SELECT 1 + 2 FROM DUAL
+----
+?COLUMN?
+3
+
+query
+SELECT 10 - 3 FROM DUAL
+----
+?COLUMN?
+7
+
+query
+SELECT 4 * 5 FROM DUAL
+----
+?COLUMN?
+20
+
+# Note: NUMBER → DECIMAL means integer division returns full precision.
+query
+SELECT 10 / 2 FROM DUAL
+----
+?COLUMN?
+5.0000000000000000000
+
+# -- String concatenation (Oracle uses ||) --
+
+query
+SELECT 'foo' || 'bar' FROM DUAL
+----
+?COLUMN?
+foobar
+
+# Bug: multi-word string results get quotes.
+query
+SELECT 'hello' || ' ' || 'world' FROM DUAL
+----
+?COLUMN?
+'hello world'
+
+# -- Comparison operators in WHERE --
+
+exec
+CREATE TABLE lt_expr (id NUMBER, val NUMBER)
+----
+
+exec
+INSERT INTO lt_expr (id, val) VALUES (1, 10)
+----
+
+exec
+INSERT INTO lt_expr (id, val) VALUES (2, 20)
+----
+
+exec
+INSERT INTO lt_expr (id, val) VALUES (3, 30)
+----
+
+exec
+INSERT INTO lt_expr (id, val) VALUES (4, 40)
+----
+
+exec
+INSERT INTO lt_expr (id, val) VALUES (5, 50)
+----
+
+query
+SELECT id FROM lt_expr WHERE val = 30
+----
+ID
+3
+
+query
+SELECT id FROM lt_expr WHERE val != 30 ORDER BY id
+----
+ID
+1
+2
+4
+5
+
+query
+SELECT id FROM lt_expr WHERE val > 30 ORDER BY id
+----
+ID
+4
+5
+
+query
+SELECT id FROM lt_expr WHERE val < 30 ORDER BY id
+----
+ID
+1
+2
+
+query
+SELECT id FROM lt_expr WHERE val >= 30 ORDER BY id
+----
+ID
+3
+4
+5
+
+query
+SELECT id FROM lt_expr WHERE val <= 30 ORDER BY id
+----
+ID
+1
+2
+3
+
+# -- BETWEEN --
+
+query
+SELECT id FROM lt_expr WHERE val BETWEEN 20 AND 40 ORDER BY id
+----
+ID
+2
+3
+4
+
+query
+SELECT id FROM lt_expr WHERE val NOT BETWEEN 20 AND 40 ORDER BY id
+----
+ID
+1
+5
+
+# -- IN --
+
+query
+SELECT id FROM lt_expr WHERE val IN (10, 30, 50) ORDER BY id
+----
+ID
+1
+3
+5
+
+query
+SELECT id FROM lt_expr WHERE val NOT IN (10, 30, 50) ORDER BY id
+----
+ID
+2
+4
+
+# -- LIKE --
+
+exec
+CREATE TABLE lt_like (id NUMBER, name VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_like (id, name) VALUES (1, 'alice')
+----
+
+exec
+INSERT INTO lt_like (id, name) VALUES (2, 'bob')
+----
+
+exec
+INSERT INTO lt_like (id, name) VALUES (3, 'alicia')
+----
+
+exec
+INSERT INTO lt_like (id, name) VALUES (4, 'charlie')
+----
+
+query
+SELECT name FROM lt_like WHERE name LIKE 'ali%' ORDER BY name
+----
+NAME
+alice
+alicia
+
+query
+SELECT name FROM lt_like WHERE name LIKE '%ob'
+----
+NAME
+bob
+
+query
+SELECT name FROM lt_like WHERE name LIKE '%li%' ORDER BY name
+----
+NAME
+alice
+alicia
+charlie
+
+# -- Combined expressions --
+
+query
+SELECT id, val, val * 2 FROM lt_expr WHERE val > 10 AND val < 50 ORDER BY id
+----
+ID VAL ?COLUMN?
+2 20 40
+3 30 60
+4 40 80
+
+# -- Parenthesized expressions --
+
+query
+SELECT (2 + 3) * 4 FROM DUAL
+----
+?COLUMN?
+20
+
+query
+SELECT id FROM lt_expr WHERE (val > 10 AND val < 30) OR val = 50 ORDER BY id
+----
+ID
+2
+5
+
+exec
+DROP TABLE lt_expr
+----
+
+exec
+DROP TABLE lt_like
+----

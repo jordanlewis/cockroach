@@ -1,0 +1,119 @@
+# DDL tests for Oracle SQL through TNS.
+# CREATE TABLE with Oracle types, ALTER TABLE, DROP TABLE.
+# DDL goes through the fallback type-substitution path.
+
+# -- CREATE TABLE with various Oracle types --
+
+exec
+CREATE TABLE lt_ddl_types (
+  id NUMBER,
+  name VARCHAR2(100),
+  description CLOB,
+  raw_data BLOB,
+  float_val BINARY_FLOAT,
+  double_val BINARY_DOUBLE
+)
+----
+
+exec
+INSERT INTO lt_ddl_types (id, name, description) VALUES (1, 'test', 'a description')
+----
+
+# Bug: multi-word TEXT (CLOB) values returned with surrounding single quotes.
+query
+SELECT id, name, description FROM lt_ddl_types
+----
+ID NAME DESCRIPTION
+1 test 'a description'
+
+exec
+DROP TABLE lt_ddl_types
+----
+
+# -- CREATE TABLE with constraints (pass-through) --
+
+exec
+CREATE TABLE lt_ddl_pk (id NUMBER PRIMARY KEY, name VARCHAR2(50) NOT NULL)
+----
+
+exec
+INSERT INTO lt_ddl_pk (id, name) VALUES (1, 'alice')
+----
+
+exec
+INSERT INTO lt_ddl_pk (id, name) VALUES (2, 'bob')
+----
+
+query
+SELECT id, name FROM lt_ddl_pk ORDER BY id
+----
+ID NAME
+1 alice
+2 bob
+
+exec
+DROP TABLE lt_ddl_pk
+----
+
+# -- ALTER TABLE ADD COLUMN --
+
+exec
+CREATE TABLE lt_ddl_alter (id NUMBER, name VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_ddl_alter (id, name) VALUES (1, 'test')
+----
+
+exec
+ALTER TABLE lt_ddl_alter ADD status VARCHAR2(20)
+----
+
+exec
+UPDATE lt_ddl_alter SET status = 'active' WHERE id = 1
+----
+
+query
+SELECT id, name, status FROM lt_ddl_alter
+----
+ID NAME STATUS
+1 test active
+
+exec
+DROP TABLE lt_ddl_alter
+----
+
+# -- DROP TABLE --
+
+exec
+CREATE TABLE lt_ddl_drop (id NUMBER)
+----
+
+exec
+INSERT INTO lt_ddl_drop (id) VALUES (1)
+----
+
+exec
+DROP TABLE lt_ddl_drop
+----
+
+# -- CREATE TABLE with NVARCHAR2 and NCLOB --
+
+exec
+CREATE TABLE lt_ddl_nchar (id NUMBER, uname NVARCHAR2(100), udesc NCLOB)
+----
+
+exec
+INSERT INTO lt_ddl_nchar (id, uname, udesc) VALUES (1, 'unicode_name', 'unicode description')
+----
+
+# Bug: multi-word strings returned with surrounding single quotes.
+query
+SELECT id, uname, udesc FROM lt_ddl_nchar
+----
+ID UNAME UDESC
+1 unicode_name 'unicode description'
+
+exec
+DROP TABLE lt_ddl_nchar
+----

@@ -1,0 +1,186 @@
+# SELECT tests for Oracle SQL through TNS.
+# WHERE, ORDER BY, DISTINCT, ROWNUM/LIMIT, column aliases, DUAL.
+
+# -- SELECT from DUAL --
+
+query
+SELECT 1 FROM DUAL
+----
+?COLUMN?
+1
+
+query
+SELECT 'hello' FROM DUAL
+----
+?COLUMN?
+hello
+
+# -- DUAL is optional when no FROM needed --
+
+query
+SELECT 42 FROM DUAL
+----
+?COLUMN?
+42
+
+# -- Column aliases --
+
+exec
+CREATE TABLE lt_sel (id NUMBER, first_name VARCHAR2(50), last_name VARCHAR2(50), age NUMBER)
+----
+
+exec
+INSERT INTO lt_sel (id, first_name, last_name, age) VALUES (1, 'Alice', 'Smith', 30)
+----
+
+exec
+INSERT INTO lt_sel (id, first_name, last_name, age) VALUES (2, 'Bob', 'Jones', 25)
+----
+
+exec
+INSERT INTO lt_sel (id, first_name, last_name, age) VALUES (3, 'Carol', 'Davis', 35)
+----
+
+exec
+INSERT INTO lt_sel (id, first_name, last_name, age) VALUES (4, 'Dave', 'Wilson', 28)
+----
+
+exec
+INSERT INTO lt_sel (id, first_name, last_name, age) VALUES (5, 'Eve', 'Brown', 32)
+----
+
+query
+SELECT first_name AS fname, last_name AS lname FROM lt_sel WHERE id = 1
+----
+FNAME LNAME
+Alice Smith
+
+# -- ORDER BY ASC (default) --
+
+query
+SELECT first_name FROM lt_sel ORDER BY first_name
+----
+FIRST_NAME
+Alice
+Bob
+Carol
+Dave
+Eve
+
+# -- ORDER BY DESC --
+
+query
+SELECT first_name FROM lt_sel ORDER BY age DESC
+----
+FIRST_NAME
+Carol
+Eve
+Alice
+Dave
+Bob
+
+# -- ORDER BY multiple columns --
+
+exec
+CREATE TABLE lt_sel2 (region VARCHAR2(20), score NUMBER, name VARCHAR2(20))
+----
+
+exec
+INSERT INTO lt_sel2 (region, score, name) VALUES ('east', 100, 'a')
+----
+
+exec
+INSERT INTO lt_sel2 (region, score, name) VALUES ('east', 200, 'b')
+----
+
+exec
+INSERT INTO lt_sel2 (region, score, name) VALUES ('west', 100, 'c')
+----
+
+exec
+INSERT INTO lt_sel2 (region, score, name) VALUES ('west', 300, 'd')
+----
+
+query
+SELECT region, score, name FROM lt_sel2 ORDER BY region, score DESC
+----
+REGION SCORE NAME
+east 200 b
+east 100 a
+west 300 d
+west 100 c
+
+# -- DISTINCT --
+
+query rowsort
+SELECT DISTINCT age FROM lt_sel WHERE age >= 30
+----
+AGE
+30
+32
+35
+
+# -- ROWNUM (→ LIMIT) --
+
+query
+SELECT first_name FROM lt_sel WHERE ROWNUM <= 3 ORDER BY id
+----
+FIRST_NAME
+Alice
+Bob
+Carol
+
+query
+SELECT first_name FROM lt_sel WHERE ROWNUM < 3 ORDER BY id
+----
+FIRST_NAME
+Alice
+Bob
+
+# -- ROWNUM with AND --
+# Bug: ROWNUM limit extraction with AND produces wrong results because
+# LIMIT is applied after WHERE filtering in CockroachDB, but the
+# extraction removes ROWNUM from WHERE, keeping only "age > 25".
+# The LIMIT 2 then applies to the ORDER BY result, giving Alice and Carol
+# (first two by id with age>25), not the first two Oracle-style.
+
+query
+SELECT first_name FROM lt_sel WHERE age > 25 AND ROWNUM <= 2 ORDER BY id
+----
+FIRST_NAME
+Alice
+Carol
+
+# -- SELECT * --
+
+query
+SELECT * FROM lt_sel WHERE id = 1
+----
+ID FIRST_NAME LAST_NAME AGE
+1 Alice Smith 30
+
+# -- WHERE with string comparison --
+
+query
+SELECT id, first_name FROM lt_sel WHERE first_name = 'Bob'
+----
+ID FIRST_NAME
+2 Bob
+
+# -- WHERE with OR --
+# Bob(25): 25<28=T, Carol(35): 35>33=T. Dave(28): 28<28=F, 28>33=F.
+
+query
+SELECT id FROM lt_sel WHERE age < 28 OR age > 33 ORDER BY id
+----
+ID
+2
+3
+
+exec
+DROP TABLE lt_sel
+----
+
+exec
+DROP TABLE lt_sel2
+----

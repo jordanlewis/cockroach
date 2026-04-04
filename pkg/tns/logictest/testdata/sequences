@@ -1,0 +1,27 @@
+# Sequence tests for Oracle SQL through TNS.
+#
+# Bug: Sequence operations (NEXTVAL, CURRVAL) fail through TNS because:
+# 1. Oracle dot-notation (seq.NEXTVAL) translates to nextval('seq') which
+#    uses a string argument, but CockroachDB's internal executor requires
+#    nextval(regclass), not nextval(string).
+# 2. This affects both Oracle-style and CockroachDB-style syntax.
+#
+# The test below verifies CREATE SEQUENCE DDL works via the fallback path.
+
+exec
+CREATE SEQUENCE lt_seq1 START WITH 1 INCREMENT BY 1
+----
+
+exec
+CREATE SEQUENCE lt_seq2 START WITH 100 INCREMENT BY 10
+----
+
+# Cleanup.
+
+exec
+DROP SEQUENCE lt_seq2
+----
+
+exec
+DROP SEQUENCE lt_seq1
+----

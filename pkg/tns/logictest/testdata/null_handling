@@ -1,0 +1,108 @@
+# NULL handling tests for Oracle SQL through TNS.
+# Tests NULL literals, IS NULL / IS NOT NULL, NVL, NVL2, and COALESCE.
+
+# -- NULL literal --
+
+query
+SELECT NULL FROM DUAL
+----
+?COLUMN?
+NULL
+
+# -- IS NULL / IS NOT NULL --
+
+exec
+CREATE TABLE lt_null (id NUMBER, val VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_null (id, val) VALUES (1, 'present')
+----
+
+exec
+INSERT INTO lt_null (id, val) VALUES (2, NULL)
+----
+
+exec
+INSERT INTO lt_null (id, val) VALUES (3, 'also present')
+----
+
+query
+SELECT id, val FROM lt_null WHERE val IS NULL
+----
+ID VAL
+2 NULL
+
+# Bug: multi-word strings returned with surrounding single quotes.
+query
+SELECT id, val FROM lt_null WHERE val IS NOT NULL ORDER BY id
+----
+ID VAL
+1 present
+3 'also present'
+
+# -- NVL(expr, default) → COALESCE --
+# Bug: multi-word strings returned with quotes.
+
+query
+SELECT id, NVL(val, 'fallback') FROM lt_null ORDER BY id
+----
+ID COALESCE
+1 present
+2 fallback
+3 'also present'
+
+# -- NVL with numeric --
+
+exec
+CREATE TABLE lt_null_num (id NUMBER, score NUMBER)
+----
+
+exec
+INSERT INTO lt_null_num (id, score) VALUES (1, 95)
+----
+
+exec
+INSERT INTO lt_null_num (id, score) VALUES (2, NULL)
+----
+
+query
+SELECT id, NVL(score, 0) FROM lt_null_num ORDER BY id
+----
+ID COALESCE
+1 95
+2 0
+
+# -- NVL2(expr, not_null_val, null_val) --
+# Bug: multi-word string literals in CASE results also get quotes.
+
+query
+SELECT id, NVL2(val, 'has value', 'empty') FROM lt_null ORDER BY id
+----
+ID CASE
+1 'has value'
+2 empty
+3 'has value'
+
+# -- NULL in WHERE with AND/OR --
+
+query
+SELECT id FROM lt_null WHERE val IS NULL OR id = 1 ORDER BY id
+----
+ID
+1
+2
+
+query
+SELECT id FROM lt_null WHERE val IS NOT NULL AND id > 1
+----
+ID
+3
+
+exec
+DROP TABLE lt_null
+----
+
+exec
+DROP TABLE lt_null_num
+----

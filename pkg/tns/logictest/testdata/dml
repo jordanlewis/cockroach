@@ -1,0 +1,140 @@
+# DML tests for Oracle SQL through TNS.
+# INSERT, UPDATE, DELETE with various clauses.
+
+exec
+CREATE TABLE lt_dml (id NUMBER, name VARCHAR2(50), status VARCHAR2(10), score NUMBER)
+----
+
+# -- INSERT single row --
+
+exec
+INSERT INTO lt_dml (id, name, status, score) VALUES (1, 'alice', 'active', 90)
+----
+
+exec
+INSERT INTO lt_dml (id, name, status, score) VALUES (2, 'bob', 'active', 85)
+----
+
+exec
+INSERT INTO lt_dml (id, name, status, score) VALUES (3, 'carol', 'inactive', 70)
+----
+
+exec
+INSERT INTO lt_dml (id, name, status, score) VALUES (4, 'dave', 'active', 60)
+----
+
+exec
+INSERT INTO lt_dml (id, name, status, score) VALUES (5, 'eve', 'inactive', 95)
+----
+
+query
+SELECT id, name, status, score FROM lt_dml ORDER BY id
+----
+ID NAME STATUS SCORE
+1 alice active 90
+2 bob active 85
+3 carol inactive 70
+4 dave active 60
+5 eve inactive 95
+
+# -- UPDATE single column --
+
+exec
+UPDATE lt_dml SET score = 92 WHERE id = 1
+----
+
+query
+SELECT id, score FROM lt_dml WHERE id = 1
+----
+ID SCORE
+1 92
+
+# -- UPDATE multiple columns --
+
+exec
+UPDATE lt_dml SET status = 'active', score = 80 WHERE id = 3
+----
+
+query
+SELECT id, status, score FROM lt_dml WHERE id = 3
+----
+ID STATUS SCORE
+3 active 80
+
+# -- UPDATE with expression --
+
+exec
+UPDATE lt_dml SET score = score + 10 WHERE id = 4
+----
+
+query
+SELECT id, score FROM lt_dml WHERE id = 4
+----
+ID SCORE
+4 70
+
+# -- UPDATE multiple rows --
+
+exec
+UPDATE lt_dml SET status = 'reviewed' WHERE score >= 85
+----
+
+query
+SELECT id, name, status FROM lt_dml WHERE status = 'reviewed' ORDER BY id
+----
+ID NAME STATUS
+1 alice reviewed
+2 bob reviewed
+5 eve reviewed
+
+# -- DELETE single row --
+
+exec
+DELETE FROM lt_dml WHERE id = 4
+----
+
+query
+SELECT COUNT(*) FROM lt_dml
+----
+COUNT
+4
+
+# -- DELETE with compound WHERE --
+
+exec
+DELETE FROM lt_dml WHERE status = 'reviewed' AND score < 90
+----
+
+query rowsort
+SELECT id, name FROM lt_dml
+----
+ID NAME
+1 alice
+3 carol
+5 eve
+
+# -- INSERT ... SELECT --
+
+exec
+CREATE TABLE lt_dml_copy (id NUMBER, name VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_dml_copy (id, name) SELECT id, name FROM lt_dml
+----
+
+query rowsort
+SELECT id, name FROM lt_dml_copy
+----
+ID NAME
+1 alice
+3 carol
+5 eve
+
+exec
+DROP TABLE lt_dml_copy
+----
+
+exec
+DROP TABLE lt_dml
+----

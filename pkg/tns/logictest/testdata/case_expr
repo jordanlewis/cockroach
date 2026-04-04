@@ -1,0 +1,119 @@
+# CASE expression tests for Oracle SQL through TNS.
+# Simple CASE, searched CASE, nested CASE, CASE with NULL.
+
+# -- Simple CASE --
+
+query
+SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM DUAL
+----
+CASE
+one
+
+query
+SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM DUAL
+----
+CASE
+two
+
+query
+SELECT CASE 99 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM DUAL
+----
+CASE
+other
+
+# -- Simple CASE without ELSE (returns NULL on no match) --
+
+query
+SELECT CASE 99 WHEN 1 THEN 'one' WHEN 2 THEN 'two' END FROM DUAL
+----
+CASE
+NULL
+
+# -- Searched CASE --
+
+query
+SELECT CASE WHEN 5 > 10 THEN 'big' WHEN 5 > 3 THEN 'medium' ELSE 'small' END FROM DUAL
+----
+CASE
+medium
+
+# -- CASE in SELECT with table --
+
+exec
+CREATE TABLE lt_case (id NUMBER, score NUMBER)
+----
+
+exec
+INSERT INTO lt_case (id, score) VALUES (1, 95)
+----
+
+exec
+INSERT INTO lt_case (id, score) VALUES (2, 75)
+----
+
+exec
+INSERT INTO lt_case (id, score) VALUES (3, 50)
+----
+
+exec
+INSERT INTO lt_case (id, score) VALUES (4, 30)
+----
+
+query
+SELECT id, CASE WHEN score >= 90 THEN 'A' WHEN score >= 70 THEN 'B' WHEN score >= 50 THEN 'C' ELSE 'F' END FROM lt_case ORDER BY id
+----
+ID CASE
+1 A
+2 B
+3 C
+4 F
+
+# -- CASE in WHERE clause --
+
+query
+SELECT id, score FROM lt_case WHERE CASE WHEN score >= 70 THEN 'pass' ELSE 'fail' END = 'pass' ORDER BY id
+----
+ID SCORE
+1 95
+2 75
+
+# -- CASE in ORDER BY --
+
+query
+SELECT id, score FROM lt_case ORDER BY CASE WHEN score >= 70 THEN 0 ELSE 1 END, score DESC
+----
+ID SCORE
+1 95
+2 75
+3 50
+4 30
+
+# -- CASE with NULL handling --
+
+exec
+CREATE TABLE lt_case_null (id NUMBER, val VARCHAR2(20))
+----
+
+exec
+INSERT INTO lt_case_null (id, val) VALUES (1, 'present')
+----
+
+exec
+INSERT INTO lt_case_null (id, val) VALUES (2, NULL)
+----
+
+# Bug: CockroachDB uses source column name "VAL" for CASE referencing val.
+query
+SELECT id, CASE WHEN val IS NULL THEN 'missing' ELSE val END FROM lt_case_null ORDER BY id
+----
+ID VAL
+1 present
+2 missing
+
+exec
+DROP TABLE lt_case
+----
+
+exec
+DROP TABLE lt_case_null
+----
