@@ -262,9 +262,11 @@ func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 		} else {
 			b.WriteString(" NOT NULL")
 		}
-	} else {
+	} else if col.Identity == nil {
 		// Sybase/SQL Server default: columns are nullable unless NOT NULL
 		// is specified. Emit explicit NULL to match Sybase semantics.
+		// IDENTITY columns are implicitly NOT NULL in both T-SQL and
+		// CockroachDB, so we skip the explicit NULL for them.
 		b.WriteString(" NULL")
 	}
 }

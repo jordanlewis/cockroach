@@ -135,30 +135,40 @@ carol
 dave
 
 # --- UNION ---
-# Parses correctly but TDS wire-protocol doesn't return result sets for
-# compound SELECTs yet (no ColMetaData in response).
 
 query
 SELECT name FROM emp WHERE dept_id = 10 UNION SELECT name FROM emp WHERE dept_id = 20 ORDER BY name
 ----
+alice
+bob
+carol
+dave
 
 # --- UNION ALL ---
 
 query
 SELECT name FROM emp WHERE dept_id = 10 UNION ALL SELECT name FROM emp WHERE dept_id = 20 ORDER BY name
 ----
+alice
+bob
+carol
+dave
 
 # --- INTERSECT ---
 
 query
 SELECT dept_id FROM emp WHERE salary > 5500 INTERSECT SELECT dept_id FROM emp WHERE salary < 7000 ORDER BY dept_id
 ----
+10
+20
 
 # --- EXCEPT ---
 
 query
 SELECT dept_id FROM emp WHERE salary > 5000 EXCEPT SELECT dept_id FROM emp WHERE salary > 7000 ORDER BY dept_id
 ----
+10
+20
 
 # --- OFFSET-FETCH (SQL Server 2012+) ---
 
@@ -195,12 +205,13 @@ marketing  1
 sales  2
 
 # --- Common Table Expression (CTE) ---
-# CTE parses correctly but TDS wire-protocol doesn't return result sets
-# for WITH statements yet (no ColMetaData in response).
 
 query
 WITH ranked AS (SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) AS rn FROM emp) SELECT name, salary FROM ranked WHERE rn <= 3 ORDER BY salary DESC
 ----
+eve  8000
+dave  7000
+bob  6000
 
 # --- Window functions ---
 

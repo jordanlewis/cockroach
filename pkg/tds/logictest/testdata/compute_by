@@ -28,7 +28,7 @@ INSERT INTO compute_sales (id, region, product, amount) VALUES (4, 'west', 'gadg
 # COMPUTE SUM BY region — produces detail rows + aggregate result set.
 # The first result set is the detail rows (same as SELECT ... ORDER BY).
 query
-SELECT region, product, amount FROM compute_sales ORDER BY region COMPUTE SUM(amount) BY region
+SELECT region, product, amount FROM compute_sales ORDER BY region, product COMPUTE SUM(amount) BY region
 ----
 east  gadget  200
 east  widget  100

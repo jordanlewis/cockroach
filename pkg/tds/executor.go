@@ -382,7 +382,7 @@ func (e *Executor) executeBeginTryCatch(
 					return catchErr
 				}
 			}
-			return nil
+			return nil //nolint:returnerrcheck
 		}
 	}
 	return nil
