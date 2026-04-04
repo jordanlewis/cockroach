@@ -1,0 +1,82 @@
+# TO_CHAR and TO_DATE format model translation tests.
+# The translator has sophisticated Oracle→PostgreSQL format conversion
+# (format.go) but it was completely untested in logictests.
+#
+# Key translations tested:
+#   YYYY, MM, DD — same in Oracle and PG
+#   RR → YY, RRRR → YYYY
+#   MON → Mon, MONTH → Month
+
+# -- Setup: table with known dates --
+
+exec
+CREATE TABLE lt_dates (id NUMBER, d DATE)
+----
+
+exec
+INSERT INTO lt_dates (id, d) VALUES (1, TO_DATE('2024-03-15', 'YYYY-MM-DD'))
+----
+
+exec
+INSERT INTO lt_dates (id, d) VALUES (2, TO_DATE('2024-12-25', 'YYYY-MM-DD'))
+----
+
+query
+SELECT id FROM lt_dates ORDER BY id
+----
+ID
+1
+2
+
+# -- TO_CHAR with YYYY-MM-DD format --
+# Oracle YYYY, MM, DD map directly to PG equivalents.
+
+query
+SELECT TO_CHAR(d, 'YYYY-MM-DD') FROM lt_dates WHERE id = 1
+----
+TO_CHAR
+2024-03-15
+
+query
+SELECT TO_CHAR(d, 'YYYY-MM-DD') FROM lt_dates WHERE id = 2
+----
+TO_CHAR
+2024-12-25
+
+# -- TO_CHAR with DD/MM/YYYY format --
+
+query
+SELECT TO_CHAR(d, 'DD/MM/YYYY') FROM lt_dates WHERE id = 1
+----
+TO_CHAR
+15/03/2024
+
+# -- TO_DATE with DD-MM-YYYY format --
+
+exec
+INSERT INTO lt_dates (id, d) VALUES (3, TO_DATE('25-12-2023', 'DD-MM-YYYY'))
+----
+
+query
+SELECT TO_CHAR(d, 'YYYY-MM-DD') FROM lt_dates WHERE id = 3
+----
+TO_CHAR
+2023-12-25
+
+# -- TO_DATE with RRRR format (Oracle 4-digit year → YYYY) --
+
+exec
+INSERT INTO lt_dates (id, d) VALUES (4, TO_DATE('15-06-2025', 'DD-MM-RRRR'))
+----
+
+query
+SELECT TO_CHAR(d, 'YYYY-MM-DD') FROM lt_dates WHERE id = 4
+----
+TO_CHAR
+2025-06-15
+
+# -- Cleanup --
+
+exec
+DROP TABLE lt_dates
+----

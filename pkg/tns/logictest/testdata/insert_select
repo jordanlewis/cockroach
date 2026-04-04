@@ -1,0 +1,115 @@
+# INSERT ... SELECT and multi-row INSERT tests for Oracle SQL through TNS.
+# These features are supported by the parser/translator but were untested.
+
+# -- Setup tables --
+
+exec
+CREATE TABLE lt_isrc (id NUMBER, name VARCHAR2(50), score NUMBER)
+----
+
+exec
+INSERT INTO lt_isrc (id, name, score) VALUES (1, 'alice', 90)
+----
+
+exec
+INSERT INTO lt_isrc (id, name, score) VALUES (2, 'bob', 80)
+----
+
+exec
+INSERT INTO lt_isrc (id, name, score) VALUES (3, 'carol', 70)
+----
+
+exec
+INSERT INTO lt_isrc (id, name, score) VALUES (4, 'dave', 60)
+----
+
+# -- INSERT ... SELECT (all rows) --
+
+exec
+CREATE TABLE lt_idst (id NUMBER, name VARCHAR2(50), score NUMBER)
+----
+
+exec
+INSERT INTO lt_idst SELECT id, name, score FROM lt_isrc
+----
+
+query rowsort
+SELECT id, name, score FROM lt_idst
+----
+ID NAME SCORE
+1 alice 90
+2 bob 80
+3 carol 70
+4 dave 60
+
+# -- INSERT ... SELECT with WHERE filter --
+
+exec
+CREATE TABLE lt_itop (id NUMBER, name VARCHAR2(50), score NUMBER)
+----
+
+exec
+INSERT INTO lt_itop SELECT id, name, score FROM lt_isrc WHERE score >= 80
+----
+
+query rowsort
+SELECT id, name, score FROM lt_itop
+----
+ID NAME SCORE
+1 alice 90
+2 bob 80
+
+# -- INSERT ... SELECT with column list --
+
+exec
+CREATE TABLE lt_ipart (name VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_ipart (name) SELECT name FROM lt_isrc WHERE id <= 2
+----
+
+query rowsort
+SELECT name FROM lt_ipart
+----
+NAME
+alice
+bob
+
+# -- INSERT ... SELECT with expressions --
+
+exec
+CREATE TABLE lt_iexpr (id NUMBER, doubled NUMBER)
+----
+
+exec
+INSERT INTO lt_iexpr SELECT id, score * 2 FROM lt_isrc WHERE id = 1
+----
+
+query
+SELECT id, doubled FROM lt_iexpr
+----
+ID DOUBLED
+1 180
+
+# -- Cleanup --
+
+exec
+DROP TABLE lt_iexpr
+----
+
+exec
+DROP TABLE lt_ipart
+----
+
+exec
+DROP TABLE lt_itop
+----
+
+exec
+DROP TABLE lt_idst
+----
+
+exec
+DROP TABLE lt_isrc
+----

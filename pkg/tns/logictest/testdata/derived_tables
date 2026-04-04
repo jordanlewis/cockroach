@@ -1,0 +1,126 @@
+# Derived table (subquery in FROM) and multi-table FROM tests.
+# The parser supports SubqueryTableExpr and comma-separated FROM,
+# but these features were never tested in logictests.
+
+# -- Setup --
+
+exec
+CREATE TABLE lt_emp2 (id NUMBER, name VARCHAR2(50), dept_id NUMBER, salary NUMBER)
+----
+
+exec
+INSERT INTO lt_emp2 (id, name, dept_id, salary) VALUES (1, 'alice', 10, 90000)
+----
+
+exec
+INSERT INTO lt_emp2 (id, name, dept_id, salary) VALUES (2, 'bob', 10, 80000)
+----
+
+exec
+INSERT INTO lt_emp2 (id, name, dept_id, salary) VALUES (3, 'carol', 20, 70000)
+----
+
+exec
+INSERT INTO lt_emp2 (id, name, dept_id, salary) VALUES (4, 'dave', 20, 60000)
+----
+
+exec
+CREATE TABLE lt_dept2 (id NUMBER, dname VARCHAR2(50))
+----
+
+exec
+INSERT INTO lt_dept2 (id, dname) VALUES (10, 'engineering')
+----
+
+exec
+INSERT INTO lt_dept2 (id, dname) VALUES (20, 'marketing')
+----
+
+# -- Basic derived table --
+
+query
+SELECT sub.id, sub.name FROM (SELECT id, name FROM lt_emp2 WHERE salary > 75000) sub ORDER BY sub.id
+----
+ID NAME
+1 alice
+2 bob
+
+# -- Derived table with alias and aggregation --
+
+query
+SELECT stats.dept_id, stats.cnt, stats.avg_sal FROM (SELECT dept_id, COUNT(*) AS cnt, AVG(salary) AS avg_sal FROM lt_emp2 GROUP BY dept_id) stats ORDER BY stats.dept_id
+----
+DEPT_ID CNT AVG_SAL
+10 2 85000
+20 2 65000
+
+# -- Derived table joined with a regular table --
+
+query
+SELECT d.dname, sub.cnt FROM lt_dept2 d INNER JOIN (SELECT dept_id, COUNT(*) AS cnt FROM lt_emp2 GROUP BY dept_id) sub ON d.id = sub.dept_id ORDER BY d.dname
+----
+DNAME CNT
+engineering 2
+marketing 2
+
+# -- Multi-table FROM (implicit cross join) --
+
+exec
+CREATE TABLE lt_letters (letter VARCHAR2(5))
+----
+
+exec
+INSERT INTO lt_letters (letter) VALUES ('x')
+----
+
+exec
+INSERT INTO lt_letters (letter) VALUES ('y')
+----
+
+exec
+CREATE TABLE lt_nums (num NUMBER)
+----
+
+exec
+INSERT INTO lt_nums (num) VALUES (1)
+----
+
+exec
+INSERT INTO lt_nums (num) VALUES (2)
+----
+
+query
+SELECT l.letter, n.num FROM lt_letters l, lt_nums n ORDER BY l.letter, n.num
+----
+LETTER NUM
+x 1
+x 2
+y 1
+y 2
+
+# -- Nested derived tables --
+
+query
+SELECT outer_sub.name FROM (SELECT name FROM (SELECT id, name FROM lt_emp2 WHERE dept_id = 10) inner_sub ORDER BY id) outer_sub
+----
+NAME
+alice
+bob
+
+# -- Cleanup --
+
+exec
+DROP TABLE lt_nums
+----
+
+exec
+DROP TABLE lt_letters
+----
+
+exec
+DROP TABLE lt_dept2
+----
+
+exec
+DROP TABLE lt_emp2
+----

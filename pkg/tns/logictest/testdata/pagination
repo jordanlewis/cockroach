@@ -1,0 +1,90 @@
+# Oracle pagination tests: FETCH FIRST n ROWS ONLY (Oracle 12c+),
+# and ROWNUM in SELECT list. Both are supported by the parser but
+# were untested in logictests.
+
+# -- Setup --
+
+exec
+CREATE TABLE lt_page (id NUMBER, val VARCHAR2(20))
+----
+
+exec
+INSERT INTO lt_page (id, val) VALUES (1, 'alpha')
+----
+
+exec
+INSERT INTO lt_page (id, val) VALUES (2, 'beta')
+----
+
+exec
+INSERT INTO lt_page (id, val) VALUES (3, 'gamma')
+----
+
+exec
+INSERT INTO lt_page (id, val) VALUES (4, 'delta')
+----
+
+exec
+INSERT INTO lt_page (id, val) VALUES (5, 'epsilon')
+----
+
+# -- FETCH FIRST n ROWS ONLY --
+# Oracle 12c+ syntax: equivalent to LIMIT n.
+
+query
+SELECT id, val FROM lt_page ORDER BY id FETCH FIRST 3 ROWS ONLY
+----
+ID VAL
+1 alpha
+2 beta
+3 gamma
+
+# -- FETCH FIRST 1 ROWS ONLY (single row) --
+
+query
+SELECT id, val FROM lt_page ORDER BY id FETCH FIRST 1 ROWS ONLY
+----
+ID VAL
+1 alpha
+
+# -- FETCH NEXT n ROWS ONLY (synonym for FETCH FIRST) --
+
+query
+SELECT id, val FROM lt_page ORDER BY id FETCH NEXT 2 ROWS ONLY
+----
+ID VAL
+1 alpha
+2 beta
+
+# -- FETCH FIRST with WHERE --
+
+query
+SELECT id, val FROM lt_page WHERE id > 2 ORDER BY id FETCH FIRST 2 ROWS ONLY
+----
+ID VAL
+3 gamma
+4 delta
+
+# -- ROWNUM <= n (traditional Oracle pagination) --
+
+query
+SELECT id, val FROM lt_page WHERE ROWNUM <= 2 ORDER BY id
+----
+ID VAL
+1 alpha
+2 beta
+
+# -- ROWNUM < n --
+
+query
+SELECT id, val FROM lt_page WHERE ROWNUM < 3 ORDER BY id
+----
+ID VAL
+1 alpha
+2 beta
+
+# -- Cleanup --
+
+exec
+DROP TABLE lt_page
+----
