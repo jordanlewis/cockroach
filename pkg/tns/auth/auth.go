@@ -145,19 +145,29 @@ type Handshaker struct {
 
 	// Username is the authenticated user. Populated after Handshake completes.
 	Username string
+
+	// pendingPayload holds a TTI payload that was read during NSN
+	// detection but turned out not to be an NSN packet (i.e. the client
+	// skipped NSN and went straight to protocol negotiation). It is
+	// consumed by readDataPayloadOrPending.
+	pendingPayload []byte
 }
 
 // Handshake performs the full TNS authentication sequence:
 //  1. CONNECT/ACCEPT packet exchange
-//  2. Protocol negotiation
-//  3. Data type and charset negotiation
-//  4. O5LOGON challenge-response authentication
-//  5. NLS parameter exchange
+//  2. Native Services Negotiation (NSN/ANO) — optional, used by sqlplus
+//  3. Protocol negotiation
+//  4. Data type and charset negotiation
+//  5. O5LOGON challenge-response authentication
+//  6. NLS parameter exchange
 //
 // On success, it populates h.ConnectData and h.Username and returns nil.
 func (h *Handshaker) Handshake() error {
 	if err := h.handleConnect(); err != nil {
 		return errors.Wrap(err, "TNS connect")
+	}
+	if err := h.handleNSN(); err != nil {
+		return errors.Wrap(err, "native services negotiation")
 	}
 	if err := h.handleProtocolNeg(); err != nil {
 		return errors.Wrap(err, "protocol negotiation")
@@ -222,7 +232,7 @@ func (h *Handshaker) handleConnect() error {
 // a response. Protocol negotiation establishes the TTI capabilities each
 // side supports.
 func (h *Handshaker) handleProtocolNeg() error {
-	ttiPayload, err := h.readDataPayload()
+	ttiPayload, err := h.readDataPayloadOrPending()
 	if err != nil {
 		return err
 	}
