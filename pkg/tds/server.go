@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -60,6 +61,10 @@ type Server struct {
 	cfg      ServerConfig
 	listener net.Listener
 
+	// hostname is the cached result of os.Hostname(), used to populate
+	// @@SERVERNAME for each connection.
+	hostname string
+
 	mu       sync.Mutex
 	conns    map[*conn]struct{}
 	draining bool
@@ -82,9 +87,14 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.DefaultDatabase == "" {
 		cfg.DefaultDatabase = "master"
 	}
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "CockroachDB"
+	}
 	return &Server{
-		cfg:   cfg,
-		conns: make(map[*conn]struct{}),
+		cfg:      cfg,
+		hostname: hostname,
+		conns:    make(map[*conn]struct{}),
 	}
 }
 
@@ -187,7 +197,11 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		}
 
 		s.connCount.Add(1)
-		s.newConnCount.Add(1)
+		spid := s.newConnCount.Add(1)
+		if c.executor != nil {
+			c.executor.SetSPID(int(spid))
+			c.executor.SetServerName(s.hostname)
+		}
 
 		s.wg.Add(1)
 		go func() {

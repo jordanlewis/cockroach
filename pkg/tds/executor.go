@@ -49,6 +49,14 @@ type Executor struct {
 	// Updated after each INSERT that triggers a sequence via lastval().
 	lastIdentity string
 
+	// spid is the server process ID for this connection, assigned when
+	// the connection is registered. Used for @@SPID substitution.
+	spid int
+
+	// serverName is the server name reported for @@SERVERNAME, typically
+	// the host's machine name.
+	serverName string
+
 	// variables holds T-SQL session variables (DECLARE @var).
 	// Keys are variable names including the @ prefix (e.g. "@x").
 	// Values are SQL literal strings suitable for substitution.
@@ -95,6 +103,43 @@ func (e *Executor) substituteRowCount(sql string) string {
 // last identity value captured after an INSERT.
 func (e *Executor) substituteIdentity(sql string) string {
 	return strings.ReplaceAll(sql, "@@IDENTITY", e.lastIdentity)
+}
+
+// SetSPID sets the server process ID for this connection.
+func (e *Executor) SetSPID(spid int) {
+	e.spid = spid
+}
+
+// SetServerName sets the server name reported by @@SERVERNAME.
+func (e *Executor) SetServerName(name string) {
+	e.serverName = name
+}
+
+// substituteSPID replaces the @@SPID placeholder (emitted by the
+// translator) with the connection's server process ID.
+func (e *Executor) substituteSPID(sql string) string {
+	return strings.ReplaceAll(sql, "@@SPID", fmt.Sprintf("%d", e.spid))
+}
+
+// substituteServerName replaces the @@SERVERNAME placeholder (emitted
+// by the translator) with the server's hostname as a quoted string
+// literal.
+func (e *Executor) substituteServerName(sql string) string {
+	escaped := strings.ReplaceAll(e.serverName, "'", "''")
+	return strings.ReplaceAll(sql, "@@SERVERNAME",
+		fmt.Sprintf("'%s'", escaped))
+}
+
+// substituteAllVars applies all @@variable substitutions to a SQL
+// string. This is used by executeSelectWithCompute where the full
+// chain of substitutions needs to be applied to each query part.
+func (e *Executor) substituteAllVars(sql string) string {
+	sql = e.substituteTranCount(sql)
+	sql = e.substituteRowCount(sql)
+	sql = e.substituteIdentity(sql)
+	sql = e.substituteSPID(sql)
+	sql = e.substituteServerName(sql)
+	return sql
 }
 
 // executeInsertDML executes an INSERT statement and attempts to capture
@@ -593,14 +638,14 @@ func (e *Executor) executeSelectWithCompute(
 	parts := strings.Split(crdbSQL, ";\n")
 
 	// Execute the base SELECT (first part).
-	baseSQL := e.substituteIdentity(e.substituteRowCount(e.substituteTranCount(parts[0])))
+	baseSQL := e.substituteAllVars(parts[0])
 	if err := e.executeSelectNonFinal(ctx, baseSQL, tw); err != nil {
 		return err
 	}
 
 	// Execute each COMPUTE aggregate query.
 	for i := 1; i < len(parts); i++ {
-		aggSQL := e.substituteIdentity(e.substituteRowCount(e.substituteTranCount(parts[i])))
+		aggSQL := e.substituteAllVars(parts[i])
 		if i == len(parts)-1 {
 			// Last result set gets DONE(FINAL).
 			if err := e.executeSelect(ctx, aggSQL, tw); err != nil {
@@ -927,6 +972,8 @@ func (e *Executor) execParsedStmt(
 		crdbSQL = e.substituteTranCount(crdbSQL)
 		crdbSQL = e.substituteRowCount(crdbSQL)
 		crdbSQL = e.substituteIdentity(crdbSQL)
+		crdbSQL = e.substituteSPID(crdbSQL)
+		crdbSQL = e.substituteServerName(crdbSQL)
 		crdbSQL = e.substituteVars(crdbSQL)
 		return e.executeStatement(ctx, stmt, crdbSQL, tw)
 	}

@@ -39,29 +39,31 @@ SELECT @@TRANCOUNT
 ----
 0
 
-# @@SPID — unsupported @@variable, returns NULL.
+# @@SPID — returns the server process ID for this connection.
+# The exact value depends on connection order, so we validate it is a
+# positive integer rather than checking a specific value.
 query
-SELECT @@SPID
+SELECT CASE WHEN @@SPID > 0 THEN 'ok' ELSE 'fail' END
 ----
-NULL
+ok
 
-# @@SERVERNAME — unsupported @@variable, returns NULL.
+# @@SERVERNAME — returns the server's hostname.
 query
-SELECT @@SERVERNAME
+SELECT CASE WHEN @@SERVERNAME IS NOT NULL THEN 'ok' ELSE 'fail' END
 ----
-NULL
+ok
 
-# @@LANGUAGE — unsupported @@variable, returns NULL.
+# @@LANGUAGE — returns the current language setting.
 query
 SELECT @@LANGUAGE
 ----
-NULL
+us_english
 
-# @@MAX_CONNECTIONS — unsupported @@variable, returns NULL.
+# @@MAX_CONNECTIONS — returns the maximum number of simultaneous connections.
 query
 SELECT @@MAX_CONNECTIONS
 ----
-NULL
+32767
 
 # === Legacy system tables (sysobjects, syscolumns, sysusers) ===
 # These are caught by the catalog layer and translated to pg_catalog queries.
