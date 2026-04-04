@@ -1,0 +1,143 @@
+# sp_executesql dynamic SQL tests.
+#
+# sp_executesql is the primary mechanism for parameterized query execution
+# in Sybase ASE and SQL Server. Every JDBC/ODBC driver uses it for
+# prepared statements. These tests exercise parameter substitution,
+# multiple parameters, and dynamic DDL/DML.
+#
+# Sources:
+#   - jTDS (LGPL v2.1, github.com/milesibastos/jTDS)
+#     Pattern: PreparedStatement → sp_executesql with named params
+#   - go-mssqldb (BSD-3-Clause, github.com/denisenkom/go-mssqldb)
+#     Pattern: db.Query("select @p1", sql.Named("p1", val))
+#   - FreeTDS (LGPL v2.1, github.com/FreeTDS/freetds)
+#     Pattern: rpc.sql — sp_executesql with output params
+
+# ============================================================
+# Basic sp_executesql — plain SQL string
+# ============================================================
+
+query
+EXEC sp_executesql N'SELECT 1 AS val'
+----
+1
+
+query
+EXEC sp_executesql N'SELECT 42 AS answer'
+----
+42
+
+# String result.
+query
+EXEC sp_executesql N'SELECT ''hello'' AS greeting'
+----
+hello
+
+# ============================================================
+# sp_executesql with a single parameter
+# Source: jTDS PreparedStatement pattern
+# ============================================================
+
+query
+EXEC sp_executesql N'SELECT @p1 AS val', N'@p1 INT', @p1 = 42
+----
+42
+
+query
+EXEC sp_executesql N'SELECT @p1 + 10 AS val', N'@p1 INT', @p1 = 5
+----
+15
+
+# ============================================================
+# sp_executesql with multiple parameters
+# Source: go-mssqldb queries_test.go pattern
+# ============================================================
+
+query
+EXEC sp_executesql N'SELECT @p1 + @p2 AS val', N'@p1 INT, @p2 INT', @p1 = 10, @p2 = 20
+----
+30
+
+# String parameter substitution: the executor replaces @name with the
+# unquoted value, so this becomes SELECT world AS greeting — which
+# CockroachDB interprets as a column reference. This is a known
+# limitation of the simple string-replace approach.
+exec error=(does not exist)
+EXEC sp_executesql N'SELECT @name AS greeting', N'@name VARCHAR(50)', @name = 'world'
+----
+
+# ============================================================
+# sp_executesql with DDL
+# Dynamic table creation via sp_executesql.
+# ============================================================
+
+exec
+EXEC sp_executesql N'CREATE TABLE sp_exec_test (id INT NOT NULL, val VARCHAR(50))'
+----
+
+exec
+EXEC sp_executesql N'INSERT INTO sp_exec_test (id, val) VALUES (1, ''alpha'')'
+----
+
+exec
+EXEC sp_executesql N'INSERT INTO sp_exec_test (id, val) VALUES (2, ''beta'')'
+----
+
+query
+EXEC sp_executesql N'SELECT id, val FROM sp_exec_test ORDER BY id'
+----
+1  alpha
+2  beta
+
+# ============================================================
+# sp_executesql with parameterized DML
+# Source: jTDS prepared INSERT pattern
+# ============================================================
+
+# String parameter substitution for DML uses the same unquoted
+# string-replace, so @name = 'gamma' becomes INSERT ... VALUES (3, gamma)
+# which fails. This is the same known limitation.
+exec error=(does not exist)
+EXEC sp_executesql N'INSERT INTO sp_exec_test (id, val) VALUES (@id, @name)', N'@id INT, @name VARCHAR(50)', @id = 3, @name = 'gamma'
+----
+
+# ============================================================
+# sp_executesql with parameterized WHERE — integer params work
+# Source: go-mssqldb parameterized query pattern
+# ============================================================
+
+query
+EXEC sp_executesql N'SELECT val FROM sp_exec_test WHERE id = @id', N'@id INT', @id = 2
+----
+beta
+
+query
+EXEC sp_executesql N'SELECT COUNT(*) FROM sp_exec_test WHERE id > @min', N'@min INT', @min = 1
+----
+1
+
+# ============================================================
+# sp_executesql with DELETE — integer params work
+# ============================================================
+
+exec
+EXEC sp_executesql N'DELETE FROM sp_exec_test WHERE id = @id', N'@id INT', @id = 2
+----
+
+query
+SELECT COUNT(*) FROM sp_exec_test
+----
+1
+
+# Cleanup.
+exec
+DROP TABLE sp_exec_test
+----
+
+# ============================================================
+# sp_executesql — error on missing procedure argument
+# ============================================================
+
+exec error=(requires a SQL statement)
+EXEC sp_executesql
+----

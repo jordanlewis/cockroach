@@ -1,0 +1,138 @@
+# Batch execution patterns from real driver test suites.
+#
+# Real applications and drivers send multi-statement batches over TDS.
+# These tests exercise patterns observed in production drivers.
+#
+# Sources:
+#   - FreeTDS (LGPL v2.1, github.com/FreeTDS/freetds)
+#     Files: batch_stmt_ins_sel.sql, batch_stmt_ins_upd.sql, done_handling.sql
+#   - go-mssqldb (BSD-3-Clause, github.com/denisenkom/go-mssqldb)
+#     File: queries_test.go — multi-statement, CTE patterns
+
+# ============================================================
+# Multi-statement batch: CREATE + INSERT + SELECT
+# Source: FreeTDS batch_stmt_ins_sel.sql pattern
+# ============================================================
+
+exec
+CREATE TABLE batch_test (id INT NOT NULL, name VARCHAR(50), amount INT)
+----
+
+exec
+INSERT INTO batch_test (id, name, amount) VALUES (1, 'Alice', 100)
+----
+
+exec
+INSERT INTO batch_test (id, name, amount) VALUES (2, 'Bob', 200)
+----
+
+exec
+INSERT INTO batch_test (id, name, amount) VALUES (3, 'Carol', 300)
+----
+
+query colnames
+SELECT id, name, amount FROM batch_test ORDER BY id
+----
+id  name  amount
+1  Alice  100
+2  Bob  200
+3  Carol  300
+
+# ============================================================
+# INSERT...SELECT pattern
+# Source: FreeTDS batch_stmt_ins_sel.sql
+# ============================================================
+
+exec
+CREATE TABLE batch_copy (id INT NOT NULL, name VARCHAR(50), amount INT)
+----
+
+exec
+INSERT INTO batch_copy (id, name, amount) SELECT id, name, amount FROM batch_test WHERE amount >= 200
+----
+
+query
+SELECT COUNT(*) FROM batch_copy
+----
+2
+
+query colnames
+SELECT id, name FROM batch_copy ORDER BY id
+----
+id  name
+2  Bob
+3  Carol
+
+# ============================================================
+# UPDATE with subquery
+# Source: FreeTDS batch_stmt_ins_upd.sql pattern
+# ============================================================
+
+exec
+UPDATE batch_test SET amount = amount * 2 WHERE id IN (SELECT id FROM batch_copy)
+----
+
+query colnames
+SELECT id, amount FROM batch_test ORDER BY id
+----
+id  amount
+1  100
+2  400
+3  600
+
+# ============================================================
+# DELETE with WHERE subquery
+# After UPDATE, batch_test amounts are 100/400/600.
+# amount > 300 → ids 2,3. batch_copy has ids 2,3.
+# NOT IN (2,3) means nothing is deleted since all batch_copy
+# rows have ids in the subquery result.
+# ============================================================
+
+exec
+DELETE FROM batch_copy WHERE id NOT IN (SELECT id FROM batch_test WHERE amount > 300)
+----
+
+query
+SELECT COUNT(*) FROM batch_copy
+----
+2
+
+# ============================================================
+# CTE (Common Table Expression)
+# Source: go-mssqldb queries_test.go — recursive CTE
+# ============================================================
+
+query colnames
+WITH numbered AS (SELECT id, name, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn FROM batch_test) SELECT id, name, rn FROM numbered ORDER BY rn
+----
+id  name  rn
+3  Carol  1
+2  Bob  2
+1  Alice  3
+
+# ============================================================
+# Aggregation patterns
+# ============================================================
+
+query colnames
+SELECT COUNT(*) AS cnt, SUM(amount) AS total, MIN(amount) AS low, MAX(amount) AS high FROM batch_test
+----
+cnt  total  low  high
+3  1100  100  600
+
+query colnames
+SELECT name, amount, CASE WHEN amount >= 400 THEN 'high' ELSE 'low' END AS tier FROM batch_test ORDER BY id
+----
+name  amount  tier
+Alice  100  low
+Bob  400  high
+Carol  600  high
+
+# Cleanup.
+exec
+DROP TABLE batch_copy
+----
+
+exec
+DROP TABLE batch_test
+----

@@ -1,0 +1,218 @@
+# Ground-truth CAST/CONVERT type conversion tests from open-source drivers.
+#
+# Exercises CAST between type families to verify that the TDS frontend
+# correctly maps Sybase/SQL Server types to CockroachDB equivalents.
+#
+# Sources:
+#   - go-mssqldb (BSD-3-Clause, github.com/denisenkom/go-mssqldb)
+#     File: queries_test.go — type casting matrix
+#   - Babelfish (Apache 2.0, github.com/babelfish-for-postgresql/babelfish_extensions)
+#     File: test/JDBC/input/datatypes/
+
+# ============================================================
+# Integer CAST round-trip
+# Source: go-mssqldb queries_test.go (TestSelect)
+# ============================================================
+
+query
+SELECT CAST(1 AS INT)
+----
+1
+
+query
+SELECT CAST(1 AS BIGINT)
+----
+1
+
+query
+SELECT CAST(1 AS SMALLINT)
+----
+1
+
+query
+SELECT CAST(1 AS TINYINT)
+----
+1
+
+query
+SELECT CAST(1 AS BIT)
+----
+1
+
+query
+SELECT CAST(0 AS BIT)
+----
+0
+
+# ============================================================
+# Float/Real CAST
+# Source: go-mssqldb queries_test.go (TestSelect)
+# ============================================================
+
+query
+SELECT CAST(0.5 AS FLOAT)
+----
+0.5
+
+query
+SELECT CAST(0.5 AS REAL)
+----
+0.5
+
+query
+SELECT CAST(3.14159 AS DECIMAL(10,5))
+----
+3.14159
+
+query
+SELECT CAST(99.99 AS NUMERIC(10,2))
+----
+99.99
+
+# ============================================================
+# String CAST
+# Source: go-mssqldb queries_test.go (TestSelect)
+# ============================================================
+
+query
+SELECT CAST('abc' AS VARCHAR(10))
+----
+abc
+
+query
+SELECT CAST('abc' AS CHAR(5))
+----
+abc
+
+query
+SELECT CAST(N'abc' AS NVARCHAR(10))
+----
+abc
+
+query
+SELECT CAST(N'abc' AS NCHAR(5))
+----
+abc
+
+# ============================================================
+# NULL CAST across types
+# Source: go-mssqldb queries_test.go (TestSelect)
+# ============================================================
+
+query
+SELECT CAST(NULL AS INT)
+----
+NULL
+
+query
+SELECT CAST(NULL AS VARCHAR(10))
+----
+NULL
+
+query
+SELECT CAST(NULL AS FLOAT)
+----
+NULL
+
+query
+SELECT CAST(NULL AS DECIMAL(10,2))
+----
+NULL
+
+query
+SELECT CAST(NULL AS DATE)
+----
+NULL
+
+# ============================================================
+# Cross-type CAST — numeric to string and back
+# Source: Babelfish Numeric_Decimal_tests.sql patterns
+# ============================================================
+
+query
+SELECT CAST(CAST(42 AS VARCHAR(10)) AS INT)
+----
+42
+
+query
+SELECT CAST(CAST(3.14 AS VARCHAR(10)) AS FLOAT)
+----
+3.14
+
+# ============================================================
+# Date/time CAST
+# Source: go-mssqldb queries_test.go, Babelfish Date.sql
+# ============================================================
+
+query
+SELECT CAST('2000-01-01' AS DATE)
+----
+2000-01-01
+
+query
+SELECT CAST('2000-06-15 12:30:00' AS DATETIME)
+----
+2000-06-15 12:30:00+00
+
+# ============================================================
+# Integer boundary values
+# Source: go-mssqldb bulkcopy_test.go type matrix
+# ============================================================
+
+query
+SELECT CAST(2147483647 AS INT)
+----
+2147483647
+
+query
+SELECT CAST(-2147483648 AS INT)
+----
+-2147483648
+
+query
+SELECT CAST(32767 AS SMALLINT)
+----
+32767
+
+query
+SELECT CAST(-32768 AS SMALLINT)
+----
+-32768
+
+query
+SELECT CAST(255 AS TINYINT)
+----
+255
+
+query
+SELECT CAST(0 AS TINYINT)
+----
+0
+
+query
+SELECT CAST(9223372036854775807 AS BIGINT)
+----
+9223372036854775807
+
+# ============================================================
+# Decimal precision
+# Source: Babelfish Numeric_Decimal_tests.sql
+# ============================================================
+
+# CockroachDB's TDS wire format does not preserve trailing zeros
+# in DECIMAL values. CAST(1.0 AS DECIMAL(38,10)) returns 1, not
+# 1.0000000000. This matches CockroachDB's internal behavior.
+query
+SELECT CAST(1.0 AS DECIMAL(38,10))
+----
+1
+
+query
+SELECT CAST(0 AS DECIMAL(10,2))
+----
+0
+
+query
+SELECT CAST(-1.5 AS DECIMAL(10,2))
+----
+-1.5

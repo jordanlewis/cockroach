@@ -1,0 +1,139 @@
+# CONVERT function tests — type conversion with style codes.
+#
+# CONVERT(type, expr [, style]) is the T-SQL type conversion function.
+# The TDS frontend translates CONVERT(type, expr) to CAST(expr AS type).
+# Style codes are silently dropped (CockroachDB's CAST does not support
+# them). These tests document current behavior.
+#
+# Sources:
+#   - T-SQL reference documentation
+#   - Babelfish test patterns (Apache 2.0, test/JDBC/input/functions/)
+
+# ============================================================
+# Basic CONVERT — no style code
+# ============================================================
+
+query
+SELECT CONVERT(INT, '42')
+----
+42
+
+query
+SELECT CONVERT(VARCHAR, 123)
+----
+123
+
+query
+SELECT CONVERT(FLOAT, '3.14')
+----
+3.14
+
+# ============================================================
+# CONVERT with numeric types
+# Source: Babelfish Numeric_Decimal_tests.sql patterns
+# ============================================================
+
+query
+SELECT CONVERT(BIGINT, 2147483647)
+----
+2147483647
+
+query
+SELECT CONVERT(SMALLINT, 100)
+----
+100
+
+query
+SELECT CONVERT(TINYINT, 255)
+----
+255
+
+query
+SELECT CONVERT(DECIMAL(10,2), '123.45')
+----
+123.45
+
+query
+SELECT CONVERT(NUMERIC(18,4), '99.9999')
+----
+99.9999
+
+# ============================================================
+# CONVERT with string types
+# ============================================================
+
+query
+SELECT CONVERT(VARCHAR(10), 42)
+----
+42
+
+query
+SELECT CONVERT(CHAR(5), 'abc')
+----
+abc
+
+query
+SELECT CONVERT(NVARCHAR(20), 'hello')
+----
+hello
+
+# ============================================================
+# CONVERT with NULL
+# ============================================================
+
+query
+SELECT CONVERT(INT, NULL)
+----
+NULL
+
+query
+SELECT CONVERT(VARCHAR, NULL)
+----
+NULL
+
+# ============================================================
+# CONVERT — invalid conversion produces error
+# ============================================================
+
+query error=(could not parse)
+SELECT CONVERT(INT, 'not_a_number')
+----
+
+# ============================================================
+# CONVERT chained with arithmetic
+# ============================================================
+
+query
+SELECT CONVERT(INT, '10') + CONVERT(INT, '20')
+----
+30
+
+# ============================================================
+# CAST equivalents (standard SQL syntax)
+# CAST(expr AS type) passes through directly.
+# ============================================================
+
+query
+SELECT CAST(42 AS VARCHAR)
+----
+42
+
+query
+SELECT CAST('3.14' AS FLOAT)
+----
+3.14
+
+query
+SELECT CAST('2000-01-01' AS DATE)
+----
+2000-01-01
+
+query
+SELECT CAST(1 AS BIT)
+----
+1
+
+query
+SELECT CAST(0 AS BIT)
+----
+0

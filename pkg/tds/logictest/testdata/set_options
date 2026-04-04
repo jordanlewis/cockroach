@@ -1,0 +1,157 @@
+# SET option tests — driver connection initialization patterns.
+#
+# Every Sybase/SQL Server driver sends SET commands during connection
+# initialization. The TDS frontend acknowledges these silently.
+# These tests verify that all commonly-sent SET options are accepted
+# without error.
+#
+# Sources:
+#   - jTDS (LGPL v2.1, github.com/milesibastos/jTDS)
+#     Connection init sends: SET QUOTED_IDENTIFIER, SET TEXTSIZE
+#   - go-mssqldb (BSD-3-Clause, github.com/denisenkom/go-mssqldb)
+#     Connection init sends: SET ANSI_NULLS, SET ARITHABORT, SET QUOTED_IDENTIFIER
+#   - FreeTDS (LGPL v2.1, github.com/FreeTDS/freetds)
+#     done_handling.sql: SET NOCOUNT ON/OFF
+#   - thda/tds (BSD-3-Clause, github.com/thda/tds)
+#     stmt_test.go: SET TEXTSIZE
+
+# ============================================================
+# SET QUOTED_IDENTIFIER — controls identifier quoting behavior
+# Sent by: jTDS, go-mssqldb, ODBC drivers
+# ============================================================
+
+exec
+SET QUOTED_IDENTIFIER ON
+----
+
+exec
+SET QUOTED_IDENTIFIER OFF
+----
+
+# ============================================================
+# SET ANSI_NULLS — controls NULL comparison behavior
+# Sent by: go-mssqldb, ODBC drivers
+# ============================================================
+
+exec
+SET ANSI_NULLS ON
+----
+
+exec
+SET ANSI_NULLS OFF
+----
+
+# ============================================================
+# SET TEXTSIZE — controls max text/image size returned
+# Sent by: jTDS (default 65536), thda/tds
+# ============================================================
+
+exec
+SET TEXTSIZE 65536
+----
+
+exec
+SET TEXTSIZE 2147483647
+----
+
+# ============================================================
+# SET ARITHABORT — controls arithmetic error behavior
+# Sent by: go-mssqldb, ODBC drivers
+# ============================================================
+
+exec
+SET ARITHABORT ON
+----
+
+exec
+SET ARITHABORT OFF
+----
+
+# ============================================================
+# SET CONCAT_NULL_YIELDS_NULL — controls NULL concatenation
+# Sent by: ODBC drivers, ADO.NET
+# ============================================================
+
+exec
+SET CONCAT_NULL_YIELDS_NULL ON
+----
+
+exec
+SET CONCAT_NULL_YIELDS_NULL OFF
+----
+
+# ============================================================
+# SET ROWCOUNT — limits rows affected by DML
+# ============================================================
+
+exec
+SET ROWCOUNT 100
+----
+
+exec
+SET ROWCOUNT 0
+----
+
+# ============================================================
+# SET IDENTITY_INSERT — allows explicit identity values
+# Sent by applications that need to insert specific identity values.
+# ============================================================
+
+exec
+CREATE TABLE set_opt_ident (id INT IDENTITY(1,1) NOT NULL, val INT)
+----
+
+exec
+SET IDENTITY_INSERT set_opt_ident ON
+----
+
+exec
+SET IDENTITY_INSERT set_opt_ident OFF
+----
+
+exec
+DROP TABLE set_opt_ident
+----
+
+# ============================================================
+# SET TRANSACTION ISOLATION LEVEL — transaction isolation
+# Source: thda/tds session_test.go (TestIsolationLevels)
+# ============================================================
+
+exec
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+----
+
+exec
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+----
+
+exec
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
+----
+
+exec
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+----
+
+# ============================================================
+# Verify SET does not interfere with subsequent queries.
+# After SET commands, normal queries should still work.
+# ============================================================
+
+exec
+SET QUOTED_IDENTIFIER ON
+----
+
+exec
+SET ANSI_NULLS ON
+----
+
+exec
+SET ARITHABORT ON
+----
+
+query
+SELECT 1 AS val
+----
+1

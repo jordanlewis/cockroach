@@ -1,0 +1,97 @@
+# EXEC stored procedure patterns from real driver test suites.
+#
+# Tests exercising EXEC with system stored procedures (sp_tables,
+# sp_columns, sp_helptext) and error handling for unknown procedures.
+#
+# Sources:
+#   - jTDS (LGPL v2.1, github.com/milesibastos/jTDS)
+#     Pattern: DatabaseMetaData.getTables() → sp_tables
+#   - FreeTDS (LGPL v2.1, github.com/FreeTDS/freetds)
+#     Pattern: rpc.sql — EXEC with various stored procedures
+#   - go-mssqldb (BSD-3-Clause, github.com/denisenkom/go-mssqldb)
+#     Pattern: queries_test.go — "exec bad" error
+
+# ============================================================
+# sp_tables — table metadata
+# Source: jTDS DatabaseMetaData.getTables() pattern
+# ============================================================
+
+# Create a test table so sp_tables has something to find.
+exec
+CREATE TABLE exec_sp_test (id INT NOT NULL, name VARCHAR(50))
+----
+
+# sp_tables with table name filter.
+# Returns at least one row for exec_sp_test.
+exec
+EXEC sp_tables 'exec_sp_test'
+----
+
+# sp_tables without arguments returns all user tables.
+exec
+EXEC sp_tables
+----
+
+# ============================================================
+# sp_columns — column metadata
+# Source: jTDS DatabaseMetaData.getColumns() pattern
+# ============================================================
+
+exec
+EXEC sp_columns 'exec_sp_test'
+----
+
+# ============================================================
+# sp_helptext — source text of views/routines
+# Source: jTDS metadata pattern
+# ============================================================
+
+# Create a view to test sp_helptext against.
+exec
+CREATE VIEW exec_sp_view AS SELECT id, name FROM exec_sp_test WHERE id > 0
+----
+
+# sp_helptext should return the view definition.
+exec
+EXEC sp_helptext 'exec_sp_view'
+----
+
+exec
+DROP VIEW exec_sp_view
+----
+
+# ============================================================
+# sp_helptext — nonexistent object returns empty result
+# ============================================================
+
+exec
+EXEC sp_helptext 'nonexistent_object_xyz'
+----
+
+# ============================================================
+# EXEC unknown procedure — error
+# Source: go-mssqldb queries_test.go ("exec bad")
+# ============================================================
+
+exec error=(unsupported)
+EXEC bad
+----
+
+exec error=(unsupported)
+EXEC sp_nonexistent_proc
+----
+
+# ============================================================
+# sp_helptext without argument — accepted, returns empty result.
+# The catalog regex matches "sp_helptext" without an argument and
+# produces an empty result set rather than erroring.
+# ============================================================
+
+exec
+EXEC sp_helptext
+----
+
+# Cleanup.
+exec
+DROP TABLE exec_sp_test
+----

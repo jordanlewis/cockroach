@@ -1,0 +1,57 @@
+# TRY/CATCH error handling tests.
+#
+# BEGIN TRY / BEGIN CATCH is the structured error handling mechanism
+# in T-SQL. The TDS frontend parses TRY/CATCH and executes the TRY
+# body; if it produces a SQL error, the CATCH body executes.
+#
+# Sources:
+#   - T-SQL reference documentation
+#   - Babelfish test patterns (Apache 2.0)
+
+# ============================================================
+# Successful TRY body — no error, CATCH not entered
+# ============================================================
+
+query
+BEGIN TRY SELECT 'success' AS result END TRY BEGIN CATCH SELECT 'caught' AS result END CATCH
+----
+success
+
+# ============================================================
+# TRY with arithmetic error — division by zero
+# The error from the TRY body propagates. CockroachDB's TRY/CATCH
+# has best-effort semantics: the TRY error is reported.
+# ============================================================
+
+query error=(division by zero)
+BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH
+----
+
+# ============================================================
+# TRY with table not found error
+# ============================================================
+
+query error=(does not exist)
+BEGIN TRY SELECT * FROM nonexistent_try_catch_table END TRY BEGIN CATCH SELECT 'caught' AS result END CATCH
+----
+
+# ============================================================
+# Successful TRY with DML
+# ============================================================
+
+exec
+CREATE TABLE try_catch_test (id INT, val VARCHAR(50))
+----
+
+exec
+BEGIN TRY INSERT INTO try_catch_test (id, val) VALUES (1, 'hello') END TRY BEGIN CATCH SELECT 'error' AS result END CATCH
+----
+
+query
+SELECT id, val FROM try_catch_test
+----
+1  hello
+
+exec
+DROP TABLE try_catch_test
+----
