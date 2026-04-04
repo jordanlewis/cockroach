@@ -1624,8 +1624,8 @@ func translateArgs(args []parser.Expr) []string {
 
 // translateSystemVariable maps T-SQL @@variables to CRDB equivalents.
 // [Both] @@ROWCOUNT, @@IDENTITY, @@VERSION, and @@TRANCOUNT are supported
-// by both SQL Server and Sybase ASE. Sybase ASE also has @@SERVERNAME,
-// @@SPID, and other @@variables that are not yet implemented here.
+// by both SQL Server and Sybase ASE. [Both] @@SPID, @@SERVERNAME,
+// @@LANGUAGE, and @@MAX_CONNECTIONS are also supported.
 func translateSystemVariable(name string) string {
 	switch strings.ToUpper(name) {
 	case "@@ROWCOUNT":
@@ -1646,6 +1646,24 @@ func translateSystemVariable(name string) string {
 		// support nested transactions. The executor tracks this state and
 		// substitutes the value before execution.
 		return "@@TRANCOUNT"
+	case "@@SPID":
+		// [Both] @@SPID returns the server process ID for the current
+		// connection. The executor tracks this per-connection state and
+		// substitutes the value before execution.
+		return "@@SPID"
+	case "@@SERVERNAME":
+		// [Both] @@SERVERNAME returns the name of the local server. The
+		// executor substitutes the server's hostname before execution.
+		return "@@SERVERNAME"
+	case "@@LANGUAGE":
+		// [Both] @@LANGUAGE returns the current language name.
+		// CockroachDB always uses us_english.
+		return "'us_english'"
+	case "@@MAX_CONNECTIONS":
+		// [Both] @@MAX_CONNECTIONS returns the maximum number of
+		// simultaneous user connections allowed. Returns 32767
+		// (matching the SQL Server default).
+		return "32767"
 	default:
 		// Return as a comment for unsupported variables.
 		return fmt.Sprintf("NULL /* unsupported: %s */", name)
