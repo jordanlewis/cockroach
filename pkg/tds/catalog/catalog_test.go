@@ -188,6 +188,14 @@ func TestTranslateSysobjects(t *testing.T) {
 		require.Contains(t, result, "pg_catalog.pg_class")
 		require.NotContains(t, result, "dbo.")
 	})
+
+	t.Run("ORDER BY bare column", func(t *testing.T) {
+		result, err := TranslateCatalogQuery(
+			"SELECT name FROM sysobjects WHERE type = 'U' ORDER BY name")
+		require.NoError(t, err)
+		require.Contains(t, result, "ORDER BY relname")
+		require.NotContains(t, result, "ORDER BY name")
+	})
 }
 
 func TestIsCatalogQuery_Syscolumns(t *testing.T) {
@@ -229,6 +237,52 @@ func TestTranslateSyscolumns(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, result, "information_schema.columns")
 		require.NotContains(t, result, "dbo.")
+	})
+}
+
+func TestIsCatalogQuery_Sysusers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"basic", "SELECT * FROM sysusers WHERE uid = 1", true},
+		{"with dbo prefix", "SELECT name FROM dbo.sysusers", true},
+		{"case insensitive", "SELECT * FROM SYSUSERS", true},
+		{"not sysusers", "SELECT * FROM users", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsCatalogQuery(tt.input))
+		})
+	}
+}
+
+func TestTranslateSysusers(t *testing.T) {
+	t.Run("basic query", func(t *testing.T) {
+		result, err := TranslateCatalogQuery(
+			"SELECT sysusers.name FROM sysusers WHERE sysusers.uid = 1")
+		require.NoError(t, err)
+		require.Contains(t, result, "pg_catalog.pg_roles")
+		require.Contains(t, result, "rolname")
+		require.Contains(t, result, "oid = 1")
+		require.NotContains(t, result, "sysusers")
+	})
+
+	t.Run("with dbo prefix", func(t *testing.T) {
+		result, err := TranslateCatalogQuery(
+			"SELECT name FROM dbo.sysusers WHERE uid = 1")
+		require.NoError(t, err)
+		require.Contains(t, result, "pg_catalog.pg_roles")
+		require.NotContains(t, result, "dbo.")
+	})
+
+	t.Run("suid column mapped", func(t *testing.T) {
+		result, err := TranslateCatalogQuery(
+			"SELECT sysusers.suid FROM sysusers")
+		require.NoError(t, err)
+		require.Contains(t, result, "oid")
+		require.NotContains(t, result, "suid")
 	})
 }
 

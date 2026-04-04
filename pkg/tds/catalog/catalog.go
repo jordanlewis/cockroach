@@ -77,6 +77,9 @@ var (
 	// [Both] sp_helptext returns the source text of a view or routine.
 	reSpHelptext = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helptext(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
 
+	// reSysusers matches queries that reference the sysusers system table.
+	reSysusers = regexp.MustCompile(`(?i)\bFROM\s+(?:dbo\.)?sysusers\b`)
+
 	// reSetCommand matches common Sybase/SQL Server SET commands that drivers
 	// send during connection initialization. These are acknowledged silently.
 	// [Both] Most SET options are common to both dialects.
@@ -117,6 +120,8 @@ const (
 	QuerySysobjects
 	// QuerySyscolumns is a query referencing the syscolumns table.
 	QuerySyscolumns
+	// QuerySysusers is a query referencing the sysusers table.
+	QuerySysusers
 	// QuerySet is a recognized SET command.
 	QuerySet
 )
@@ -162,6 +167,9 @@ func classifyQuery(sql string) QueryType {
 	if reSyscolumns.MatchString(trimmed) {
 		return QuerySyscolumns
 	}
+	if reSysusers.MatchString(trimmed) {
+		return QuerySysusers
+	}
 	return QueryNone
 }
 
@@ -188,6 +196,8 @@ func TranslateCatalogQuery(sql string) (string, error) {
 		return translateSysobjects(sql), nil
 	case QuerySyscolumns:
 		return translateSyscolumns(sql), nil
+	case QuerySysusers:
+		return translateSysusers(sql), nil
 	case QuerySet:
 		// SET commands are acknowledged without executing anything.
 		// Return empty string to signal "send DONE token with no results."
@@ -377,6 +387,30 @@ func translateSyscolumns(sql string) string {
 	return translated
 }
 
+// translateSysusers translates queries against sysusers to equivalent
+// pg_catalog.pg_roles queries. The mapping is:
+//
+//	sysusers.uid    -> pg_roles.oid
+//	sysusers.name   -> pg_roles.rolname
+//	sysusers.suid   -> pg_roles.oid (server user ID = role OID)
+func translateSysusers(sql string) string {
+	translated := reSysusers.ReplaceAllString(sql, "FROM pg_catalog.pg_roles")
+
+	// Map column references.
+	translated = replaceColumnRef(translated, "sysusers", "uid", "oid")
+	translated = replaceColumnRef(translated, "sysusers", "name", "rolname")
+	translated = replaceColumnRef(translated, "sysusers", "suid", "oid")
+
+	// Replace bare column references.
+	translated = replaceBareColumnRef(translated, "uid", "oid")
+	translated = replaceBareColumnRef(translated, "suid", "oid")
+
+	// Clean up any remaining dbo. prefix.
+	translated = regexp.MustCompile(`(?i)\bdbo\.\b`).ReplaceAllString(translated, "")
+
+	return translated
+}
+
 // replaceColumnRef replaces table.column references with the translated
 // column name. For example, replaceColumnRef(sql, "sysobjects", "name", "relname")
 // replaces "sysobjects.name" with "relname".
@@ -385,13 +419,12 @@ func replaceColumnRef(sql, table, oldCol, newCol string) string {
 	return pattern.ReplaceAllString(sql, newCol)
 }
 
-// replaceBareColumnRef replaces bare column references in SELECT lists
-// (without table prefix), but only if they appear as standalone words.
-// This is conservative: it only replaces exact word-boundary matches.
+// replaceBareColumnRef replaces bare column references (without table
+// prefix) in SELECT lists, ORDER BY, and GROUP BY clauses. It matches
+// standalone words preceded by a clause keyword or comma.
 func replaceBareColumnRef(sql, oldCol, newCol string) string {
-	// Only replace SELECT-list occurrences: look for the column name
-	// preceded by SELECT/comma and followed by comma/FROM/AS/whitespace.
-	pattern := regexp.MustCompile(`(?i)(?:SELECT|,)\s+` + oldCol + `\b`)
+	pattern := regexp.MustCompile(
+		`(?i)(?:SELECT|ORDER\s+BY|GROUP\s+BY|,)\s+` + oldCol + `\b`)
 	return pattern.ReplaceAllStringFunc(sql, func(match string) string {
 		reOld := regexp.MustCompile(`(?i)\b` + oldCol + `\b`)
 		return reOld.ReplaceAllString(match, newCol)

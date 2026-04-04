@@ -377,7 +377,7 @@ func TestTranslateSystemVariables(t *testing.T) {
 		{
 			name:     "@@IDENTITY",
 			input:    "SELECT @@IDENTITY",
-			expected: "SELECT lastval()",
+			expected: "SELECT @@IDENTITY",
 		},
 		{
 			name:     "@@VERSION",

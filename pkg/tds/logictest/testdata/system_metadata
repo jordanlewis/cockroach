@@ -19,16 +19,19 @@ SELECT @@ERROR
 ----
 NULL
 
-# @@IDENTITY — translated to lastval().
-# Fails because there's no previous NEXTVAL call in this session.
-query error=(lastval)
+# @@IDENTITY — returns the last identity value inserted in the session.
+# Returns NULL at session start (no prior INSERT with identity column).
+query
 SELECT @@IDENTITY
 ----
+NULL
 
-# SCOPE_IDENTITY() — passes through as unknown function.
-query error=(unknown function)
+# SCOPE_IDENTITY() — equivalent to @@IDENTITY in CockroachDB's TDS layer
+# (no nested scopes). Returns NULL at session start.
+query
 SELECT SCOPE_IDENTITY()
 ----
+NULL
 
 # @@TRANCOUNT — returns the current transaction nesting level.
 query
@@ -60,21 +63,24 @@ SELECT @@MAX_CONNECTIONS
 ----
 NULL
 
-# === Legacy system tables (sysobjects, syscolumns) ===
+# === Legacy system tables (sysobjects, syscolumns, sysusers) ===
 # These are caught by the catalog layer and translated to pg_catalog queries.
-# Column names get translated (name→relname in SELECT), but ORDER BY name
-# is NOT translated (bug in replaceBareColumnRef — only handles SELECT list).
 
-# sysobjects query for user tables — translated to pg_class.
-# Note: ORDER BY name fails because the catalog translation doesn't
-# replace bare column refs in ORDER BY clauses.
-query error=(does not exist)
-SELECT name FROM sysobjects WHERE type = 'U' ORDER BY name
+exec
+CREATE TABLE sysobj_test (id INT NOT NULL, val VARCHAR(50))
 ----
 
-# Note: sysobjects queries without ORDER BY would succeed and return
-# many rows from pg_catalog.pg_class (all CockroachDB internal tables).
-# Testing exact row counts is impractical since the system table set varies.
+# sysobjects query with ORDER BY name — verifies that bare column
+# references in ORDER BY are translated correctly. The relname value
+# from pg_class comes through as a quoted name type.
+query
+SELECT name FROM sysobjects WHERE type = 'U' AND sysobjects.name = 'sysobj_test' ORDER BY name
+----
+'sysobj_test'
+
+exec
+DROP TABLE sysobj_test
+----
 
 # === sp_ system procedures ===
 

@@ -1295,6 +1295,13 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("var_pop(%s)", strings.Join(args, ", "))
 
+	case "SCOPE_IDENTITY":
+		// [Both] SCOPE_IDENTITY() returns the last identity value inserted
+		// in the current scope. In CockroachDB's TDS layer, this is
+		// equivalent to @@IDENTITY since there are no nested scopes
+		// (no stored procedures or triggers).
+		return "@@IDENTITY"
+
 	case "CHECKSUM_AGG":
 		// [SQL Server] CHECKSUM_AGG — no CRDB equivalent.
 		args := translateArgs(e.Args)
@@ -1627,7 +1634,11 @@ func translateSystemVariable(name string) string {
 		// value before execution (same pattern as @@TRANCOUNT).
 		return "@@ROWCOUNT"
 	case "@@IDENTITY":
-		return "lastval()"
+		// [Both] @@IDENTITY returns the last identity value inserted in
+		// the current session. The executor tracks this state and
+		// substitutes the value before execution (same pattern as
+		// @@ROWCOUNT and @@TRANCOUNT).
+		return "@@IDENTITY"
 	case "@@VERSION":
 		return "version()"
 	case "@@TRANCOUNT":

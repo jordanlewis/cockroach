@@ -61,6 +61,18 @@ exec
 INSERT INTO gt_sysvar_identity (val) VALUES (200)
 ----
 
+# @@IDENTITY should return the last identity value (2 after second INSERT).
+query
+SELECT @@IDENTITY
+----
+2
+
+# SCOPE_IDENTITY() should return the same value as @@IDENTITY.
+query
+SELECT SCOPE_IDENTITY()
+----
+2
+
 # Verify the identity values were assigned correctly.
 query colnames
 SELECT id, val FROM gt_sysvar_identity ORDER BY id
@@ -165,9 +177,13 @@ PRINT 'test message'
 # sysusers system table query
 # Source: jamdb_sybase prepared_statement_SUITE.erl
 # "select * from sysusers where uid=1" returns the dbo user.
-# CockroachDB does not have the Sybase sysusers system table.
+# Translated to pg_catalog.pg_roles (uid → oid).
 # ============================================================
 
-query error=(sysusers)
-SELECT * FROM sysusers WHERE uid = 1
+# sysusers is now translated to pg_roles. The 'admin' role always
+# exists in CockroachDB, so we can use it for a deterministic test.
+# The rolname value from pg_roles comes through as a quoted name type.
+query
+SELECT sysusers.name FROM sysusers WHERE sysusers.name = 'admin'
 ----
+'admin'

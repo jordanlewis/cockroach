@@ -1,6 +1,6 @@
 # TDS Logictest Validation Report
 
-Generated: 2026-04-04 (validation pass #4)
+Generated: 2026-04-04 (validation pass #5)
 
 ## Summary
 
@@ -8,9 +8,15 @@ Generated: 2026-04-04 (validation pass #4)
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 741 |
-| Passing directives | 719 (97%) |
-| Error directives (expected failures) | 22 (3%) |
+| Passing directives | 723 (98%) |
+| Error directives (expected failures) | 18 (2%) |
 | Known behavioral divergences | 2 |
+
+**Changes from pass #4 (2026-04-04):**
+- @@IDENTITY FIXED: executor-level tracking replaces lastval() (was 2 errors)
+- SCOPE_IDENTITY() FIXED: translates to @@IDENTITY placeholder
+- sysobjects ORDER BY FIXED: bare column refs in ORDER BY/GROUP BY now translated
+- sysusers FIXED: queries translated to pg_catalog.pg_roles
 
 **Changes from pass #3 (2026-04-04):**
 - TRY_CAST FIXED: falls back to CAST (CockroachDB has no try_cast);
@@ -35,7 +41,7 @@ Generated: 2026-04-04 (validation pass #4)
 - VALIDATION.md moved out of testdata/ (was being parsed as a test file)
 - compute_by test ordering stabilized (added secondary sort to query)
 
-## Error Categorization (22 total)
+## Error Categorization (18 total)
 
 ### Expected Errors (correct behavior) — 8
 
@@ -72,21 +78,23 @@ error-handling paths.
 | select_extended | unsupported: PIVOT | PIVOT (parsed, translation not yet implemented) |
 | select_extended | unsupported: UNPIVOT | UNPIVOT (parsed, translation not yet implemented) |
 
-### System Metadata / EXEC Gaps — 6
+### System Metadata / EXEC Gaps — 2
 
-System stored procedures, system variables, and catalog tables that are
-not yet implemented.
+System stored procedures that are not yet implemented.
 
 | File | Error | Root Cause |
 |------|-------|------------|
-| system_metadata | lastval | @@IDENTITY → lastval() fails without prior nextval() |
-| system_metadata | unknown function | SCOPE_IDENTITY() not translated |
-| system_metadata | does not exist | sysobjects ORDER BY name — catalog gap |
 | tsql_control_flow | unsupported | EXEC with named parameters (@id = 1) |
 | ground_truth_system | unsupported | EXEC bad (non-existent procedure) |
-| ground_truth_system | sysusers | sysusers system table not in catalog |
 
 ## Completed Features (previously errors, now passing)
+
+### System Variables and Catalog (FIXED in pass #5 — was 4 gaps)
+
+@@IDENTITY now uses executor-level tracking instead of lastval(), returning
+NULL before any INSERT and the correct identity value after. SCOPE_IDENTITY()
+translates to the same mechanism. sysobjects ORDER BY now correctly translates
+bare column references. sysusers queries are translated to pg_catalog.pg_roles.
 
 ### TRY_CAST, TRY_CONVERT, Computed Columns (FIXED in pass #4)
 
@@ -155,7 +163,5 @@ INSERT...SELECT, MERGE, OUTPUT, UPDATE...FROM, DELETE...JOIN.
 
 Prioritized by error count:
 
-1. **System variables and catalog** (4 errors) — @@IDENTITY, SCOPE_IDENTITY(),
-   sysobjects, sysusers
-2. **System procedures EXEC** (1 error) — EXEC with named params for
+1. **System procedures EXEC** (1 error) — EXEC with named params for
    unknown procedures

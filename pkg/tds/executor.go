@@ -44,6 +44,11 @@ type Executor struct {
 	activeKVTxn *kv.Txn
 	tranCount   int
 
+	// lastIdentity holds the last identity value from an INSERT into a
+	// table with an identity column. Initially "NULL" (no insert yet).
+	// Updated after each INSERT that triggers a sequence via lastval().
+	lastIdentity string
+
 	// variables holds T-SQL session variables (DECLARE @var).
 	// Keys are variable names including the @ prefix (e.g. "@x").
 	// Values are SQL literal strings suitable for substitution.
@@ -55,6 +60,7 @@ func NewExecutor(db isql.DB, defaultDatabase string) *Executor {
 	return &Executor{
 		db:              db,
 		currentDatabase: defaultDatabase,
+		lastIdentity:    "NULL",
 	}
 }
 
@@ -82,6 +88,80 @@ func (e *Executor) substituteTranCount(sql string) string {
 // session variable.
 func (e *Executor) substituteRowCount(sql string) string {
 	return strings.ReplaceAll(sql, "@@ROWCOUNT", fmt.Sprintf("%d", e.lastRowsAffected))
+}
+
+// substituteIdentity replaces the @@IDENTITY placeholder (emitted by
+// the translator for both @@IDENTITY and SCOPE_IDENTITY()) with the
+// last identity value captured after an INSERT.
+func (e *Executor) substituteIdentity(sql string) string {
+	return strings.ReplaceAll(sql, "@@IDENTITY", e.lastIdentity)
+}
+
+// executeInsertDML executes an INSERT statement and attempts to capture
+// the last identity value using RETURNING lastval(). If the table has
+// no identity column (no sequence), the RETURNING lastval() fails and
+// the INSERT is retried without RETURNING. The identity value is only
+// updated when a sequence was triggered by the INSERT.
+func (e *Executor) executeInsertDML(
+	ctx context.Context, sql string, tw *tdswire.TokenWriter,
+) error {
+	// Inside an explicit transaction, we can't safely use RETURNING
+	// lastval() because a failure (e.g., table has no identity column)
+	// would leave the INSERT's mutations in the KV transaction buffer,
+	// causing duplicate rows on retry.
+	if e.activeKVTxn != nil {
+		return e.executeDML(ctx, sql, tw)
+	}
+
+	executor := e.db.Executor()
+
+	// Try INSERT ... RETURNING lastval() to capture identity value in
+	// the same executor session. The RETURNING clause is evaluated after
+	// the INSERT, so lastval() returns the sequence value triggered by
+	// the identity column. If the INSERT already has a RETURNING clause
+	// (from T-SQL OUTPUT translation), append lastval() to it.
+	var returningSQL string
+	if strings.Contains(strings.ToUpper(sql), "RETURNING") {
+		returningSQL = sql + ", lastval()"
+	} else {
+		returningSQL = sql + " RETURNING lastval()"
+	}
+	rows, _, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("tds-insert"),
+		e.currentKVTxn(),
+		e.executorOverride(),
+		returningSQL,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "lastval") {
+			// No sequence was triggered — execute without RETURNING.
+			// CockroachDB rolls back the INSERT when RETURNING fails,
+			// so we need to re-execute.
+			return e.executeDML(ctx, sql, tw)
+		}
+		// INSERT itself failed.
+		return writeErrorToken(tw, 50000, 1, 16, err.Error())
+	}
+
+	// Capture identity from the last row's lastval() result.
+	rowCount := len(rows)
+	e.lastRowsAffected = rowCount
+	if rowCount > 0 {
+		lastRow := rows[rowCount-1]
+		if len(lastRow) > 0 {
+			d := lastRow[len(lastRow)-1]
+			if d != tree.DNull {
+				e.lastIdentity = tree.AsStringWithFlags(d, tree.FmtSimple)
+			}
+		}
+	}
+
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneFinal | tdswire.DoneCount,
+		RowCount:  uint64(rowCount),
+	})
 }
 
 // currentKVTxn returns the active KV transaction, or nil if no
@@ -234,7 +314,7 @@ func (e *Executor) executeStatement(
 		return e.executeDDL(ctx, crdbSQL, tw)
 
 	case *parser.InsertStmt:
-		return e.executeDML(ctx, crdbSQL, tw)
+		return e.executeInsertDML(ctx, crdbSQL, tw)
 
 	case *parser.DeclareTableVarStmt:
 		return e.executeDDL(ctx, crdbSQL, tw)
@@ -513,14 +593,14 @@ func (e *Executor) executeSelectWithCompute(
 	parts := strings.Split(crdbSQL, ";\n")
 
 	// Execute the base SELECT (first part).
-	baseSQL := e.substituteRowCount(e.substituteTranCount(parts[0]))
+	baseSQL := e.substituteIdentity(e.substituteRowCount(e.substituteTranCount(parts[0])))
 	if err := e.executeSelectNonFinal(ctx, baseSQL, tw); err != nil {
 		return err
 	}
 
 	// Execute each COMPUTE aggregate query.
 	for i := 1; i < len(parts); i++ {
-		aggSQL := e.substituteRowCount(e.substituteTranCount(parts[i]))
+		aggSQL := e.substituteIdentity(e.substituteRowCount(e.substituteTranCount(parts[i])))
 		if i == len(parts)-1 {
 			// Last result set gets DONE(FINAL).
 			if err := e.executeSelect(ctx, aggSQL, tw); err != nil {
@@ -846,6 +926,7 @@ func (e *Executor) execParsedStmt(
 		}
 		crdbSQL = e.substituteTranCount(crdbSQL)
 		crdbSQL = e.substituteRowCount(crdbSQL)
+		crdbSQL = e.substituteIdentity(crdbSQL)
 		crdbSQL = e.substituteVars(crdbSQL)
 		return e.executeStatement(ctx, stmt, crdbSQL, tw)
 	}
