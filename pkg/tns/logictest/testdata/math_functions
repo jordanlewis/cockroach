@@ -1,0 +1,212 @@
+# Math function tests for Oracle SQL through TNS.
+# Tests passthrough math functions: ROUND, TRUNC, MOD, ABS, CEIL, FLOOR, SIGN.
+# These are all mapped via the default lowercasing rule in mapFuncName
+# and are natively supported by CockroachDB.
+
+# -- ROUND --
+
+query
+SELECT ROUND(3.14159, 2) FROM DUAL
+----
+ROUND
+3.14
+
+query
+SELECT ROUND(3.14159, 0) FROM DUAL
+----
+ROUND
+3
+
+query
+SELECT ROUND(2.5, 0) FROM DUAL
+----
+ROUND
+3
+
+query
+SELECT ROUND(123.456, -1) FROM DUAL
+----
+ROUND
+120
+
+# -- TRUNC (truncate toward zero) --
+
+query
+SELECT TRUNC(3.99, 0) FROM DUAL
+----
+TRUNC
+3
+
+query
+SELECT TRUNC(3.14159, 2) FROM DUAL
+----
+TRUNC
+3.14
+
+query
+SELECT TRUNC(-3.7, 0) FROM DUAL
+----
+TRUNC
+-3
+
+# -- MOD --
+
+query
+SELECT MOD(10, 3) FROM DUAL
+----
+MOD
+1
+
+query
+SELECT MOD(10, 5) FROM DUAL
+----
+MOD
+0
+
+query
+SELECT MOD(7, 2) FROM DUAL
+----
+MOD
+1
+
+# -- ABS --
+
+query
+SELECT ABS(-5) FROM DUAL
+----
+ABS
+5
+
+query
+SELECT ABS(5) FROM DUAL
+----
+ABS
+5
+
+query
+SELECT ABS(0) FROM DUAL
+----
+ABS
+0
+
+# -- CEIL --
+
+query
+SELECT CEIL(3.2) FROM DUAL
+----
+CEIL
+4
+
+query
+SELECT CEIL(-3.2) FROM DUAL
+----
+CEIL
+-3
+
+query
+SELECT CEIL(5) FROM DUAL
+----
+CEIL
+5
+
+# -- FLOOR --
+
+query
+SELECT FLOOR(3.9) FROM DUAL
+----
+FLOOR
+3
+
+query
+SELECT FLOOR(-3.2) FROM DUAL
+----
+FLOOR
+-4
+
+query
+SELECT FLOOR(5) FROM DUAL
+----
+FLOOR
+5
+
+# -- SIGN --
+
+query
+SELECT SIGN(42) FROM DUAL
+----
+SIGN
+1
+
+query
+SELECT SIGN(-42) FROM DUAL
+----
+SIGN
+-1
+
+query
+SELECT SIGN(0) FROM DUAL
+----
+SIGN
+0
+
+# -- Math functions with table data --
+
+exec
+CREATE TABLE lt_math (id NUMBER, val NUMBER)
+----
+
+exec
+INSERT INTO lt_math (id, val) VALUES (1, 3.14159)
+----
+
+exec
+INSERT INTO lt_math (id, val) VALUES (2, -7.5)
+----
+
+exec
+INSERT INTO lt_math (id, val) VALUES (3, 100)
+----
+
+query
+SELECT id, ROUND(val, 1) FROM lt_math ORDER BY id
+----
+ID ROUND
+1 3.1
+2 -7.5
+3 100
+
+query
+SELECT id, ABS(val) FROM lt_math ORDER BY id
+----
+ID ABS
+1 3.14159
+2 7.5
+3 100
+
+query
+SELECT id, CEIL(val), FLOOR(val) FROM lt_math ORDER BY id
+----
+ID CEIL FLOOR
+1 4 3
+2 -7 -8
+3 100 100
+
+query
+SELECT id, SIGN(val) FROM lt_math ORDER BY id
+----
+ID SIGN
+1 1
+2 -1
+3 1
+
+# -- Combined math expressions --
+
+query
+SELECT ABS(-10) + MOD(17, 5) FROM DUAL
+----
+?COLUMN?
+12
+
+exec
+DROP TABLE lt_math
+----

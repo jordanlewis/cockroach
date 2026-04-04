@@ -1,0 +1,218 @@
+# Advanced expression tests for Oracle SQL through TNS.
+# COALESCE, GREATEST, LEAST, NULLIF, unary negation, NOT EXISTS.
+# These functions pass through the translator via default lowercasing
+# and are natively supported by CockroachDB.
+
+# -- COALESCE (directly, not via NVL) --
+
+query
+SELECT COALESCE(NULL, NULL, 'third') FROM DUAL
+----
+COALESCE
+third
+
+query
+SELECT COALESCE('first', 'second', 'third') FROM DUAL
+----
+COALESCE
+first
+
+query
+SELECT COALESCE(NULL, 42) FROM DUAL
+----
+COALESCE
+42
+
+# -- GREATEST --
+
+query
+SELECT GREATEST(1, 5, 3) FROM DUAL
+----
+GREATEST
+5
+
+query
+SELECT GREATEST(10, 20, 30) FROM DUAL
+----
+GREATEST
+30
+
+query
+SELECT GREATEST(-1, -5, -3) FROM DUAL
+----
+GREATEST
+-1
+
+# -- LEAST --
+
+query
+SELECT LEAST(1, 5, 3) FROM DUAL
+----
+LEAST
+1
+
+query
+SELECT LEAST(10, 20, 30) FROM DUAL
+----
+LEAST
+10
+
+query
+SELECT LEAST(-1, -5, -3) FROM DUAL
+----
+LEAST
+-5
+
+# -- NULLIF --
+
+query
+SELECT NULLIF(1, 1) FROM DUAL
+----
+NULLIF
+NULL
+
+query
+SELECT NULLIF(1, 2) FROM DUAL
+----
+NULLIF
+1
+
+query
+SELECT NULLIF('same', 'same') FROM DUAL
+----
+NULLIF
+NULL
+
+query
+SELECT NULLIF('a', 'b') FROM DUAL
+----
+NULLIF
+a
+
+# -- Unary negation --
+
+query
+SELECT -5 FROM DUAL
+----
+?COLUMN?
+-5
+
+query
+SELECT -(3 + 2) FROM DUAL
+----
+?COLUMN?
+-5
+
+# -- NOT EXISTS --
+
+exec
+CREATE TABLE lt_adv (id NUMBER, val NUMBER)
+----
+
+exec
+INSERT INTO lt_adv (id, val) VALUES (1, 10)
+----
+
+exec
+INSERT INTO lt_adv (id, val) VALUES (2, 20)
+----
+
+exec
+INSERT INTO lt_adv (id, val) VALUES (3, 30)
+----
+
+exec
+CREATE TABLE lt_adv2 (id NUMBER, ref_id NUMBER)
+----
+
+exec
+INSERT INTO lt_adv2 (id, ref_id) VALUES (1, 1)
+----
+
+exec
+INSERT INTO lt_adv2 (id, ref_id) VALUES (2, 3)
+----
+
+# NOT EXISTS: find rows in lt_adv that have no reference in lt_adv2
+
+query
+SELECT a.id FROM lt_adv a WHERE NOT EXISTS (SELECT 1 FROM lt_adv2 b WHERE b.ref_id = a.id)
+----
+ID
+2
+
+# -- COALESCE / GREATEST / LEAST with table data --
+
+exec
+CREATE TABLE lt_scores (id NUMBER, math NUMBER, science NUMBER, english NUMBER)
+----
+
+exec
+INSERT INTO lt_scores (id, math, science, english) VALUES (1, 90, 85, 92)
+----
+
+exec
+INSERT INTO lt_scores (id, math, science, english) VALUES (2, 70, 95, 80)
+----
+
+exec
+INSERT INTO lt_scores (id, math, science, english) VALUES (3, 88, 88, 88)
+----
+
+query
+SELECT id, GREATEST(math, science, english) FROM lt_scores ORDER BY id
+----
+ID GREATEST
+1 92
+2 95
+3 88
+
+query
+SELECT id, LEAST(math, science, english) FROM lt_scores ORDER BY id
+----
+ID LEAST
+1 85
+2 70
+3 88
+
+# -- NULLIF with table data --
+
+exec
+CREATE TABLE lt_nullif (id NUMBER, val1 NUMBER, val2 NUMBER)
+----
+
+exec
+INSERT INTO lt_nullif (id, val1, val2) VALUES (1, 10, 10)
+----
+
+exec
+INSERT INTO lt_nullif (id, val1, val2) VALUES (2, 10, 20)
+----
+
+exec
+INSERT INTO lt_nullif (id, val1, val2) VALUES (3, 30, 30)
+----
+
+query
+SELECT id, NULLIF(val1, val2) FROM lt_nullif ORDER BY id
+----
+ID NULLIF
+1 NULL
+2 10
+3 NULL
+
+exec
+DROP TABLE lt_nullif
+----
+
+exec
+DROP TABLE lt_scores
+----
+
+exec
+DROP TABLE lt_adv2
+----
+
+exec
+DROP TABLE lt_adv
+----
