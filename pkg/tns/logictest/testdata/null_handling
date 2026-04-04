@@ -33,7 +33,7 @@ SELECT id, val FROM lt_null WHERE val IS NULL
 ID VAL
 2 NULL
 
-# Bug: multi-word strings returned with surrounding single quotes.
+# Bug(co-0w4): multi-word strings returned with surrounding single quotes.
 query
 SELECT id, val FROM lt_null WHERE val IS NOT NULL ORDER BY id
 ----
@@ -42,7 +42,8 @@ ID VAL
 3 'also present'
 
 # -- NVL(expr, default) → COALESCE --
-# Bug: multi-word strings returned with quotes.
+# Bug(co-0w4): multi-word strings returned with quotes.
+# Bug(co-p6v): column name shows COALESCE instead of NVL.
 
 query
 SELECT id, NVL(val, 'fallback') FROM lt_null ORDER BY id
@@ -74,7 +75,8 @@ ID COALESCE
 2 0
 
 # -- NVL2(expr, not_null_val, null_val) --
-# Bug: multi-word string literals in CASE results also get quotes.
+# Bug(co-0w4): multi-word string literals in CASE results also get quotes.
+# Bug(co-p6v): column name shows CASE instead of NVL2.
 
 query
 SELECT id, NVL2(val, 'has value', 'empty') FROM lt_null ORDER BY id

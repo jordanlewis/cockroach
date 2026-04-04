@@ -56,7 +56,7 @@ MIN MAX
 100 300
 
 # -- AVG --
-# Note: NUMBER → DECIMAL means AVG returns full precision.
+# Bug(co-4ov): NUMBER → DECIMAL means AVG returns full precision.
 
 query
 SELECT AVG(amount) FROM lt_sales

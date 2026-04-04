@@ -21,7 +21,7 @@ SELECT 4 * 5 FROM DUAL
 ?COLUMN?
 20
 
-# Note: NUMBER → DECIMAL means integer division returns full precision.
+# Bug(co-4ov): NUMBER → DECIMAL means integer division returns full precision.
 query
 SELECT 10 / 2 FROM DUAL
 ----
@@ -36,7 +36,7 @@ SELECT 'foo' || 'bar' FROM DUAL
 ?COLUMN?
 foobar
 
-# Bug: multi-word string results get quotes.
+# Bug(co-0w4): multi-word string results get quotes.
 query
 SELECT 'hello' || ' ' || 'world' FROM DUAL
 ----

@@ -58,7 +58,7 @@ NAME
 engineering
 
 # -- NOT IN subquery --
-# Bug: NOT IN with subquery returns empty result. The translator may have
+# Bug(co-an5): NOT IN with subquery returns empty result. The translator may have
 # an issue with NOT IN + subquery combination, or the CockroachDB
 # execution differs from Oracle semantics here.
 
@@ -76,7 +76,7 @@ NAME
 engineering
 
 # -- Subquery in FROM clause --
-# Note: DECIMAL precision from AVG.
+# Bug(co-4ov): DECIMAL precision from AVG.
 
 query
 SELECT sub.dept_id, sub.avg_sal FROM (SELECT dept_id, AVG(salary) AS avg_sal FROM lt_sub_emp GROUP BY dept_id) sub ORDER BY sub.dept_id

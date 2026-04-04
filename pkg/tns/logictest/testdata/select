@@ -138,7 +138,7 @@ Alice
 Bob
 
 # -- ROWNUM with AND --
-# Bug: ROWNUM limit extraction with AND produces wrong results because
+# Bug(co-7xi): ROWNUM limit extraction with AND produces wrong results because
 # LIMIT is applied after WHERE filtering in CockroachDB, but the
 # extraction removes ROWNUM from WHERE, keeping only "age > 25".
 # The LIMIT 2 then applies to the ORDER BY result, giving Alice and Carol

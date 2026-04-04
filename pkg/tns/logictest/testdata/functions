@@ -1,7 +1,7 @@
 # Oracle-specific function tests through TNS.
 # SYSDATE, SYSTIMESTAMP, DECODE, SUBSTR, NVL, NVL2, CASE.
 #
-# Note: Some Oracle functions (INSTR, LENGTHB) don't exist in CockroachDB
+# Bug(co-trr): Some Oracle functions (INSTR, LENGTHB) don't exist in CockroachDB
 # natively and require parser+translator to map them (e.g. INSTR→strpos).
 # When the parser falls through to passthrough, these functions fail silently.
 

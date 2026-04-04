@@ -19,7 +19,7 @@ exec
 INSERT INTO lt_ddl_types (id, name, description) VALUES (1, 'test', 'a description')
 ----
 
-# Bug: multi-word TEXT (CLOB) values returned with surrounding single quotes.
+# Bug(co-0w4): multi-word TEXT (CLOB) values returned with surrounding single quotes.
 query
 SELECT id, name, description FROM lt_ddl_types
 ----
@@ -107,7 +107,7 @@ exec
 INSERT INTO lt_ddl_nchar (id, uname, udesc) VALUES (1, 'unicode_name', 'unicode description')
 ----
 
-# Bug: multi-word strings returned with surrounding single quotes.
+# Bug(co-0w4): multi-word strings returned with surrounding single quotes.
 query
 SELECT id, uname, udesc FROM lt_ddl_nchar
 ----

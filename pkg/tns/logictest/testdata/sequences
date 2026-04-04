@@ -1,6 +1,6 @@
 # Sequence tests for Oracle SQL through TNS.
 #
-# Bug: Sequence operations (NEXTVAL, CURRVAL) fail through TNS because:
+# Bug(co-118): Sequence operations (NEXTVAL, CURRVAL) fail through TNS because:
 # 1. Oracle dot-notation (seq.NEXTVAL) translates to nextval('seq') which
 #    uses a string argument, but CockroachDB's internal executor requires
 #    nextval(regclass), not nextval(string).
