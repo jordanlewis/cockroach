@@ -1,6 +1,5 @@
 # JOIN tests: INNER, LEFT, RIGHT, FULL, CROSS, self-join, multi-table.
 # Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
-# JOINs are not yet supported by the TDS parser.
 
 # Set up test tables.
 exec
