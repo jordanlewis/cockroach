@@ -81,23 +81,30 @@ SELECT name FROM sysobjects WHERE type = 'U' ORDER BY name
 # sp_help and sp_helpdb are handled by catalog layer.
 # EXEC/EXECUTE prefix is optional for sp_ procs in the catalog regex.
 
-# sp_tables — not recognized by catalog, parsed but unsupported.
-exec error=(unsupported)
+# sp_tables — returns table metadata from information_schema.tables.
+# Uses exec (not query) because the result set depends on tables
+# created by prior tests when running the full suite.
+exec
 EXEC sp_tables
 ----
 
-# sp_columns — not recognized by catalog.
-exec error=(unsupported)
+# sp_columns — returns column metadata for a specific table.
+# Uses exec because the column list depends on runtime state.
+exec
 EXEC sp_columns 'test_tbl'
 ----
 
-# sp_helptext — not recognized by catalog.
-exec error=(unsupported)
+# sp_helptext — returns the source text of a view or routine.
+# 'sp_help' is not an actual view or routine in CockroachDB, so this
+# returns an empty result set.
+exec
 EXEC sp_helptext 'sp_help'
 ----
 
-# === Dynamic SQL (parsed but unsupported) ===
+# === Dynamic SQL ===
 
-exec error=(unsupported)
+# sp_executesql — executes the given SQL string dynamically.
+query
 EXEC sp_executesql N'SELECT 1'
 ----
+1

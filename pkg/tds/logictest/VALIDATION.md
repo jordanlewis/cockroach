@@ -8,8 +8,8 @@ Generated: 2026-04-04 (validation pass #2)
 |--------|-------|
 | Total test files | 34 |
 | Total test directives (exec/query) | 735 |
-| Passing directives | 703 (96%) |
-| Error directives (expected failures) | 32 (4%) |
+| Passing directives | 707 (96%) |
+| Error directives (expected failures) | 28 (4%) |
 | Known behavioral divergences | 1 |
 
 **Changes from pass #1 (2026-04-03):**
@@ -58,7 +58,7 @@ error-handling paths.
 | select_extended | unsupported: PIVOT | PIVOT (parsed, translation not yet implemented) |
 | select_extended | unsupported: UNPIVOT | UNPIVOT (parsed, translation not yet implemented) |
 
-### System Metadata / EXEC Gaps — 10
+### System Metadata / EXEC Gaps — 6
 
 System stored procedures, system variables, and catalog tables that are
 not yet implemented.
@@ -68,10 +68,6 @@ not yet implemented.
 | system_metadata | lastval | @@IDENTITY → lastval() fails without prior nextval() |
 | system_metadata | unknown function | SCOPE_IDENTITY() not translated |
 | system_metadata | does not exist | sysobjects ORDER BY name — catalog gap |
-| system_metadata | unsupported | EXEC sp_tables |
-| system_metadata | unsupported | EXEC sp_columns |
-| system_metadata | unsupported | EXEC sp_helptext |
-| system_metadata | unsupported | EXEC sp_executesql (dynamic SQL) |
 | tsql_control_flow | unsupported | EXEC with named parameters (@id = 1) |
 | ground_truth_system | unsupported | EXEC bad (non-existent procedure) |
 | ground_truth_system | sysusers | sysusers system table not in catalog |
@@ -91,6 +87,13 @@ translator produces invalid CockroachDB SQL.
 | types_extended | syntax error | Computed columns — missing data type in translation |
 
 ## Completed Features (previously errors, now passing)
+
+### System Stored Procedures (FIXED in pass #3 — was 4 EXEC gaps)
+
+sp_tables, sp_columns, sp_helptext, and sp_executesql are now implemented.
+Both the catalog layer (simple forms without EXEC prefix) and the executor
+(EXEC with positional and named arguments) handle these procedures.
+sp_executesql supports dynamic SQL execution with parameter substitution.
 
 ### Set Operations and CTE (FIXED in pass #2 — was 5 wire-protocol gaps)
 
@@ -129,8 +132,8 @@ INSERT...SELECT, MERGE, OUTPUT, UPDATE...FROM, DELETE...JOIN.
 
 Prioritized by error count:
 
-1. **System procedures EXEC** (5 errors) — sp_tables, sp_columns,
-   sp_helptext, sp_executesql, EXEC with named params
+1. **System procedures EXEC** (1 error) — EXEC with named params for
+   unknown procedures
 2. **System variables and catalog** (4 errors) — @@IDENTITY, SCOPE_IDENTITY(),
    sysobjects, sysusers
 3. **Parser gaps** (3 errors) — table variables, SELECT INTO, GOTO labels

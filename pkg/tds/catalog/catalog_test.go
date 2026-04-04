@@ -281,6 +281,141 @@ func TestTranslateSetCommands(t *testing.T) {
 	}
 }
 
+func TestIsCatalogQuery_SpTables(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"bare", "sp_tables", true},
+		{"exec prefix", "EXEC sp_tables", true},
+		{"with table name", "sp_tables users", true},
+		{"exec with table name", "EXEC sp_tables 'users'", true},
+		{"case insensitive", "SP_TABLES", true},
+		{"with semicolon", "sp_tables;", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsCatalogQuery(tt.input))
+		})
+	}
+}
+
+func TestTranslateSpTables(t *testing.T) {
+	t.Run("no argument", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_tables")
+		require.NoError(t, err)
+		require.Contains(t, result, "information_schema.tables")
+		require.Contains(t, result, "TABLE_QUALIFIER")
+		require.Contains(t, result, "TABLE_OWNER")
+		require.Contains(t, result, "TABLE_NAME")
+		require.Contains(t, result, "TABLE_TYPE")
+		require.NotContains(t, result, "AND table_name")
+	})
+
+	t.Run("with table name", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_tables users")
+		require.NoError(t, err)
+		require.Contains(t, result, "AND table_name = 'users'")
+	})
+
+	t.Run("with quoted table name", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_tables 'my_table'")
+		require.NoError(t, err)
+		require.Contains(t, result, "AND table_name = 'my_table'")
+	})
+
+	t.Run("exec prefix", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("EXEC sp_tables 'orders'")
+		require.NoError(t, err)
+		require.Contains(t, result, "AND table_name = 'orders'")
+	})
+}
+
+func TestIsCatalogQuery_SpColumns(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"bare", "sp_columns", true},
+		{"with table name", "sp_columns users", true},
+		{"exec prefix", "EXEC sp_columns users", true},
+		{"quoted arg", "EXEC sp_columns 'users'", true},
+		{"case insensitive", "SP_COLUMNS", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsCatalogQuery(tt.input))
+		})
+	}
+}
+
+func TestTranslateSpColumns(t *testing.T) {
+	t.Run("no argument", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_columns")
+		require.NoError(t, err)
+		require.Contains(t, result, "information_schema.columns")
+		require.Contains(t, result, "COLUMN_NAME")
+		require.Contains(t, result, "TYPE_NAME")
+		require.NotContains(t, result, "AND table_name")
+	})
+
+	t.Run("with table name", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_columns users")
+		require.NoError(t, err)
+		require.Contains(t, result, "AND table_name = 'users'")
+	})
+
+	t.Run("exec prefix with quoted name", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("EXEC sp_columns 'orders'")
+		require.NoError(t, err)
+		require.Contains(t, result, "AND table_name = 'orders'")
+	})
+}
+
+func TestIsCatalogQuery_SpHelptext(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"bare with arg", "sp_helptext myview", true},
+		{"exec prefix", "EXEC sp_helptext myview", true},
+		{"quoted arg", "EXEC sp_helptext 'myview'", true},
+		{"bare no arg", "sp_helptext", true},
+		{"case insensitive", "SP_HELPTEXT myview", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsCatalogQuery(tt.input))
+		})
+	}
+}
+
+func TestTranslateSpHelptext(t *testing.T) {
+	t.Run("with object name", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_helptext myview")
+		require.NoError(t, err)
+		require.Contains(t, result, "pg_catalog.pg_views")
+		require.Contains(t, result, "viewname = 'myview'")
+		require.Contains(t, result, "pg_catalog.pg_proc")
+		require.Contains(t, result, "proname = 'myview'")
+	})
+
+	t.Run("no argument returns empty", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("sp_helptext")
+		require.NoError(t, err)
+		require.Contains(t, result, "WHERE false")
+	})
+
+	t.Run("exec prefix", func(t *testing.T) {
+		result, err := TranslateCatalogQuery("EXEC sp_helptext 'my_proc'")
+		require.NoError(t, err)
+		require.Contains(t, result, "viewname = 'my_proc'")
+	})
+}
+
 func TestIsCatalogQuery_NonCatalogQueries(t *testing.T) {
 	tests := []struct {
 		name  string

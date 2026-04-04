@@ -65,6 +65,18 @@ var (
 	// reSyscolumns matches queries that reference the syscolumns system table.
 	reSyscolumns = regexp.MustCompile(`(?i)\bFROM\s+(?:dbo\.)?syscolumns\b`)
 
+	// reSpTables matches sp_tables with an optional table name argument.
+	// [Both] sp_tables returns metadata for tables/views.
+	reSpTables = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_tables(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+
+	// reSpColumns matches sp_columns with a required table name argument.
+	// [Both] sp_columns returns column metadata for a table.
+	reSpColumns = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_columns(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+
+	// reSpHelptext matches sp_helptext with a required object name argument.
+	// [Both] sp_helptext returns the source text of a view or routine.
+	reSpHelptext = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helptext(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+
 	// reSetCommand matches common Sybase/SQL Server SET commands that drivers
 	// send during connection initialization. These are acknowledged silently.
 	// [Both] Most SET options are common to both dialects.
@@ -95,6 +107,12 @@ const (
 	QuerySpHelpDB
 	// QuerySpHelp is an sp_help invocation.
 	QuerySpHelp
+	// QuerySpTables is an sp_tables invocation.
+	QuerySpTables
+	// QuerySpColumns is an sp_columns invocation.
+	QuerySpColumns
+	// QuerySpHelptext is an sp_helptext invocation.
+	QuerySpHelptext
 	// QuerySysobjects is a query referencing the sysobjects table.
 	QuerySysobjects
 	// QuerySyscolumns is a query referencing the syscolumns table.
@@ -126,6 +144,15 @@ func classifyQuery(sql string) QueryType {
 	if reSpHelp.MatchString(trimmed) {
 		return QuerySpHelp
 	}
+	if reSpTables.MatchString(trimmed) {
+		return QuerySpTables
+	}
+	if reSpColumns.MatchString(trimmed) {
+		return QuerySpColumns
+	}
+	if reSpHelptext.MatchString(trimmed) {
+		return QuerySpHelptext
+	}
 	if reSetCommand.MatchString(trimmed) {
 		return QuerySet
 	}
@@ -151,6 +178,12 @@ func TranslateCatalogQuery(sql string) (string, error) {
 		return translateSpHelpDB(sql), nil
 	case QuerySpHelp:
 		return translateSpHelp(sql), nil
+	case QuerySpTables:
+		return translateSpTables(sql), nil
+	case QuerySpColumns:
+		return translateSpColumns(sql), nil
+	case QuerySpHelptext:
+		return translateSpHelptext(sql), nil
 	case QuerySysobjects:
 		return translateSysobjects(sql), nil
 	case QuerySyscolumns:
@@ -211,6 +244,77 @@ func translateSpHelp(sql string) string {
 		"FROM information_schema.tables " +
 		"WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'crdb_internal') " +
 		"ORDER BY table_name"
+}
+
+// translateSpTables converts sp_tables to an information_schema.tables
+// query. Without arguments, it returns all user tables and views. With
+// a table name argument, it filters by that name.
+func translateSpTables(sql string) string {
+	matches := reSpTables.FindStringSubmatch(sql)
+	base := "SELECT table_catalog AS TABLE_QUALIFIER, " +
+		"table_schema AS TABLE_OWNER, " +
+		"table_name AS TABLE_NAME, " +
+		"CASE table_type WHEN 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS TABLE_TYPE, " +
+		"'' AS REMARKS " +
+		"FROM information_schema.tables " +
+		"WHERE table_schema NOT IN " +
+		"('information_schema', 'pg_catalog', 'crdb_internal', 'pg_extension')"
+	if matches != nil && matches[1] != "" {
+		tableName := stripQuotes(matches[1])
+		base += fmt.Sprintf(" AND table_name = '%s'",
+			strings.ReplaceAll(tableName, "'", "''"))
+	}
+	return base + " ORDER BY TABLE_TYPE, TABLE_QUALIFIER, TABLE_OWNER, TABLE_NAME"
+}
+
+// translateSpColumns converts sp_columns to an information_schema.columns
+// query. With a table name argument, it returns column metadata for that
+// table. Without an argument, it returns columns for all user tables.
+func translateSpColumns(sql string) string {
+	matches := reSpColumns.FindStringSubmatch(sql)
+	base := "SELECT table_catalog AS TABLE_QUALIFIER, " +
+		"table_schema AS TABLE_OWNER, " +
+		"table_name AS TABLE_NAME, " +
+		"column_name AS COLUMN_NAME, " +
+		"data_type AS TYPE_NAME, " +
+		"COALESCE(character_maximum_length, numeric_precision, 0)::INT8 AS PRECISION, " +
+		"COALESCE(character_octet_length, numeric_precision, 0)::INT8 AS LENGTH, " +
+		"numeric_scale::INT8 AS SCALE, " +
+		"CASE is_nullable WHEN 'YES' THEN 1 ELSE 0 END AS NULLABLE, " +
+		"column_default AS COLUMN_DEF, " +
+		"ordinal_position AS ORDINAL_POSITION " +
+		"FROM information_schema.columns " +
+		"WHERE table_schema NOT IN " +
+		"('information_schema', 'pg_catalog', 'crdb_internal', 'pg_extension')"
+	if matches != nil && matches[1] != "" {
+		tableName := stripQuotes(matches[1])
+		base += fmt.Sprintf(" AND table_name = '%s'",
+			strings.ReplaceAll(tableName, "'", "''"))
+	}
+	return base + " ORDER BY TABLE_QUALIFIER, TABLE_OWNER, TABLE_NAME, ORDINAL_POSITION"
+}
+
+// translateSpHelptext converts sp_helptext to a query that returns the
+// definition text of a view or routine. It checks pg_catalog.pg_views
+// first; if the object is a routine, it falls back to
+// pg_catalog.pg_proc.
+func translateSpHelptext(sql string) string {
+	matches := reSpHelptext.FindStringSubmatch(sql)
+	if matches == nil || matches[1] == "" {
+		return "SELECT '' AS Text WHERE false"
+	}
+	objName := stripQuotes(matches[1])
+	escaped := strings.ReplaceAll(objName, "'", "''")
+	// Use a UNION to check both views and routines. Views are more
+	// commonly queried, so they come first.
+	return fmt.Sprintf(
+		"SELECT definition AS \"Text\" FROM pg_catalog.pg_views "+
+			"WHERE viewname = '%s' "+
+			"UNION ALL "+
+			"SELECT prosrc AS \"Text\" FROM pg_catalog.pg_proc "+
+			"WHERE proname = '%s' "+
+			"LIMIT 1",
+		escaped, escaped)
 }
 
 // translateSysobjects translates queries against sysobjects to equivalent

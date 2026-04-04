@@ -812,8 +812,7 @@ func (e *Executor) execParsedStmt(
 		// PRINT is silently acknowledged (CockroachDB has no print channel).
 		return nil
 	case *parser.ExecStmt:
-		return writeErrorToken(tw, 2812, 1, 16,
-			fmt.Sprintf("unsupported: stored procedure '%s' is not available in CockroachDB TDS", s.Procedure))
+		return e.execStoredProcedure(ctx, s, tw)
 	case *parser.ThrowStmt:
 		return e.executeThrow(s, tw)
 	case *parser.GotoStmt:
@@ -1000,6 +999,170 @@ func (e *Executor) substituteVars(sql string) string {
 		sql = strings.ReplaceAll(sql, name, val)
 	}
 	return sql
+}
+
+// execStoredProcedure dispatches a parsed EXEC statement to the
+// appropriate handler based on the procedure name. Known system
+// procedures (sp_tables, sp_columns, sp_helptext, sp_executesql) are
+// handled directly; unknown procedures return error 2812.
+func (e *Executor) execStoredProcedure(
+	ctx context.Context, s *parser.ExecStmt, tw *tdswire.TokenWriter,
+) error {
+	// Normalize to lowercase for matching. Strip any schema prefix
+	// (e.g. "dbo.sp_tables" → "sp_tables").
+	proc := strings.ToLower(s.Procedure)
+	if idx := strings.LastIndex(proc, "."); idx >= 0 {
+		proc = proc[idx+1:]
+	}
+
+	switch proc {
+	case "sp_tables":
+		return e.execSpTables(ctx, s, tw)
+	case "sp_columns":
+		return e.execSpColumns(ctx, s, tw)
+	case "sp_helptext":
+		return e.execSpHelptext(ctx, s, tw)
+	case "sp_executesql":
+		return e.execSpExecutesql(ctx, s, tw)
+	default:
+		return writeErrorToken(tw, 2812, 1, 16,
+			fmt.Sprintf("unsupported: stored procedure '%s' is not available in CockroachDB TDS",
+				s.Procedure))
+	}
+}
+
+// execSpTables handles EXEC sp_tables [@table_name]. It translates the
+// call to a query against information_schema.tables.
+func (e *Executor) execSpTables(
+	ctx context.Context, s *parser.ExecStmt, tw *tdswire.TokenWriter,
+) error {
+	sql := "SELECT table_catalog AS TABLE_QUALIFIER, " +
+		"table_schema AS TABLE_OWNER, " +
+		"table_name AS TABLE_NAME, " +
+		"CASE table_type WHEN 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS TABLE_TYPE, " +
+		"'' AS REMARKS " +
+		"FROM information_schema.tables " +
+		"WHERE table_schema NOT IN " +
+		"('information_schema', 'pg_catalog', 'crdb_internal', 'pg_extension')"
+
+	if tableName, ok := getExecArgString(s, 0, "@table_name"); ok {
+		sql += fmt.Sprintf(" AND table_name = '%s'",
+			strings.ReplaceAll(tableName, "'", "''"))
+	}
+	if tableOwner, ok := getExecArgString(s, 1, "@table_owner"); ok {
+		sql += fmt.Sprintf(" AND table_schema = '%s'",
+			strings.ReplaceAll(tableOwner, "'", "''"))
+	}
+	if tableQualifier, ok := getExecArgString(s, 2, "@table_qualifier"); ok {
+		sql += fmt.Sprintf(" AND table_catalog = '%s'",
+			strings.ReplaceAll(tableQualifier, "'", "''"))
+	}
+
+	sql += " ORDER BY TABLE_TYPE, TABLE_QUALIFIER, TABLE_OWNER, TABLE_NAME"
+	return e.executeSelect(ctx, sql, tw)
+}
+
+// execSpColumns handles EXEC sp_columns [@table_name]. It translates
+// the call to a query against information_schema.columns.
+func (e *Executor) execSpColumns(
+	ctx context.Context, s *parser.ExecStmt, tw *tdswire.TokenWriter,
+) error {
+	sql := "SELECT table_catalog AS TABLE_QUALIFIER, " +
+		"table_schema AS TABLE_OWNER, " +
+		"table_name AS TABLE_NAME, " +
+		"column_name AS COLUMN_NAME, " +
+		"data_type AS TYPE_NAME, " +
+		"COALESCE(character_maximum_length, numeric_precision, 0)::INT8 AS PRECISION, " +
+		"COALESCE(character_octet_length, numeric_precision, 0)::INT8 AS LENGTH, " +
+		"numeric_scale::INT8 AS SCALE, " +
+		"CASE is_nullable WHEN 'YES' THEN 1 ELSE 0 END AS NULLABLE, " +
+		"column_default AS COLUMN_DEF, " +
+		"ordinal_position AS ORDINAL_POSITION " +
+		"FROM information_schema.columns " +
+		"WHERE table_schema NOT IN " +
+		"('information_schema', 'pg_catalog', 'crdb_internal', 'pg_extension')"
+
+	if tableName, ok := getExecArgString(s, 0, "@table_name"); ok {
+		sql += fmt.Sprintf(" AND table_name = '%s'",
+			strings.ReplaceAll(tableName, "'", "''"))
+	}
+	if tableOwner, ok := getExecArgString(s, 1, "@table_owner"); ok {
+		sql += fmt.Sprintf(" AND table_schema = '%s'",
+			strings.ReplaceAll(tableOwner, "'", "''"))
+	}
+
+	sql += " ORDER BY TABLE_QUALIFIER, TABLE_OWNER, TABLE_NAME, ORDINAL_POSITION"
+	return e.executeSelect(ctx, sql, tw)
+}
+
+// execSpHelptext handles EXEC sp_helptext <objname>. It looks up the
+// object definition in pg_views or pg_proc and returns the source text.
+func (e *Executor) execSpHelptext(
+	ctx context.Context, s *parser.ExecStmt, tw *tdswire.TokenWriter,
+) error {
+	objName, ok := getExecArgString(s, 0, "@objname")
+	if !ok {
+		return writeErrorToken(tw, 15003, 1, 16,
+			"sp_helptext requires an object name argument")
+	}
+	escaped := strings.ReplaceAll(objName, "'", "''")
+	sql := fmt.Sprintf(
+		"SELECT definition AS \"Text\" FROM pg_catalog.pg_views "+
+			"WHERE viewname = '%s' "+
+			"UNION ALL "+
+			"SELECT prosrc AS \"Text\" FROM pg_catalog.pg_proc "+
+			"WHERE proname = '%s' "+
+			"LIMIT 1",
+		escaped, escaped)
+	return e.executeSelect(ctx, sql, tw)
+}
+
+// execSpExecutesql handles EXEC sp_executesql N'<sql>' [, N'<params>',
+// @p1=val1, ...]. The first argument is the SQL statement to execute.
+// Optional parameter definitions and values are substituted into the
+// SQL before execution.
+func (e *Executor) execSpExecutesql(
+	ctx context.Context, s *parser.ExecStmt, tw *tdswire.TokenWriter,
+) error {
+	if len(s.Args) == 0 {
+		return writeErrorToken(tw, 15003, 1, 16,
+			"sp_executesql requires a SQL statement argument")
+	}
+
+	// Extract the SQL string from the first argument.
+	sqlStr := exprToString(s.Args[0].Value)
+
+	// If there are parameter values (args beyond the param definition
+	// string), substitute them into the SQL. The third and subsequent
+	// arguments are named parameter values.
+	if len(s.Args) > 2 {
+		for _, arg := range s.Args[2:] {
+			if arg.Name != "" {
+				val := exprToString(arg.Value)
+				sqlStr = strings.ReplaceAll(sqlStr, arg.Name, val)
+			}
+		}
+	}
+
+	// Execute the dynamic SQL through the normal batch path.
+	return e.ExecuteBatch(ctx, sqlStr, tw)
+}
+
+// getExecArgString extracts a string value from an EXEC argument by
+// positional index or named parameter. Named parameters take precedence.
+// Returns the unquoted string value and true if found.
+func getExecArgString(s *parser.ExecStmt, pos int, name string) (string, bool) {
+	// Check named parameters first.
+	for _, arg := range s.Args {
+		if strings.EqualFold(arg.Name, name) {
+			return exprToString(arg.Value), true
+		}
+	}
+	// Fall back to positional.
+	if pos < len(s.Args) && s.Args[pos].Name == "" {
+		return exprToString(s.Args[pos].Value), true
+	}
+	return "", false
 }
 
 // ExecuteBatchToBytes is a convenience method that executes a SQL batch
