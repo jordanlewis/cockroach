@@ -34,24 +34,26 @@ ID VAL
 2 NULL
 
 # Bug(co-0w4): multi-word strings returned with surrounding single quotes.
+# Correct Oracle behavior: no quotes around multi-word strings.
 query
 SELECT id, val FROM lt_null WHERE val IS NOT NULL ORDER BY id
 ----
 ID VAL
 1 present
-3 'also present'
+3 also present
 
 # -- NVL(expr, default) → COALESCE --
 # Bug(co-0w4): multi-word strings returned with quotes.
 # Bug(co-p6v): column name shows COALESCE instead of NVL.
+# Correct Oracle behavior: column name is NVL (or expression-based), no quotes on strings.
 
 query
 SELECT id, NVL(val, 'fallback') FROM lt_null ORDER BY id
 ----
-ID COALESCE
+ID NVL
 1 present
 2 fallback
-3 'also present'
+3 also present
 
 # -- NVL with numeric --
 
@@ -70,21 +72,22 @@ INSERT INTO lt_null_num (id, score) VALUES (2, NULL)
 query
 SELECT id, NVL(score, 0) FROM lt_null_num ORDER BY id
 ----
-ID COALESCE
+ID NVL
 1 95
 2 0
 
 # -- NVL2(expr, not_null_val, null_val) --
 # Bug(co-0w4): multi-word string literals in CASE results also get quotes.
 # Bug(co-p6v): column name shows CASE instead of NVL2.
+# Correct Oracle behavior: column name is NVL2, no quotes on strings.
 
 query
 SELECT id, NVL2(val, 'has value', 'empty') FROM lt_null ORDER BY id
 ----
-ID CASE
-1 'has value'
+ID NVL2
+1 has value
 2 empty
-3 'has value'
+3 has value
 
 # -- NULL in WHERE with AND/OR --
 

@@ -20,11 +20,12 @@ INSERT INTO lt_ddl_types (id, name, description) VALUES (1, 'test', 'a descripti
 ----
 
 # Bug(co-0w4): multi-word TEXT (CLOB) values returned with surrounding single quotes.
+# Correct Oracle behavior: no quotes around text values.
 query
 SELECT id, name, description FROM lt_ddl_types
 ----
 ID NAME DESCRIPTION
-1 test 'a description'
+1 test a description
 
 exec
 DROP TABLE lt_ddl_types
@@ -108,11 +109,12 @@ INSERT INTO lt_ddl_nchar (id, uname, udesc) VALUES (1, 'unicode_name', 'unicode 
 ----
 
 # Bug(co-0w4): multi-word strings returned with surrounding single quotes.
+# Correct Oracle behavior: no quotes around text values.
 query
 SELECT id, uname, udesc FROM lt_ddl_nchar
 ----
 ID UNAME UDESC
-1 unicode_name 'unicode description'
+1 unicode_name unicode description
 
 exec
 DROP TABLE lt_ddl_nchar

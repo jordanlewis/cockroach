@@ -22,11 +22,12 @@ SELECT 4 * 5 FROM DUAL
 20
 
 # Bug(co-4ov): NUMBER → DECIMAL means integer division returns full precision.
+# Correct Oracle behavior: 10/2 = 5 (integer result for exact division).
 query
 SELECT 10 / 2 FROM DUAL
 ----
 ?COLUMN?
-5.0000000000000000000
+5
 
 # -- String concatenation (Oracle uses ||) --
 
@@ -37,11 +38,12 @@ SELECT 'foo' || 'bar' FROM DUAL
 foobar
 
 # Bug(co-0w4): multi-word string results get quotes.
+# Correct Oracle behavior: concatenation result has no quotes.
 query
 SELECT 'hello' || ' ' || 'world' FROM DUAL
 ----
 ?COLUMN?
-'hello world'
+hello world
 
 # -- Comparison operators in WHERE --
 

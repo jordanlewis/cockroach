@@ -57,12 +57,13 @@ MIN MAX
 
 # -- AVG --
 # Bug(co-4ov): NUMBER → DECIMAL means AVG returns full precision.
+# Correct Oracle behavior: AVG returns reasonable precision (e.g. 174).
 
 query
 SELECT AVG(amount) FROM lt_sales
 ----
 AVG
-174.00000000000000000
+174
 
 # -- GROUP BY --
 

@@ -141,8 +141,11 @@ Bob
 # Bug(co-7xi): ROWNUM limit extraction with AND produces wrong results because
 # LIMIT is applied after WHERE filtering in CockroachDB, but the
 # extraction removes ROWNUM from WHERE, keeping only "age > 25".
-# The LIMIT 2 then applies to the ORDER BY result, giving Alice and Carol
-# (first two by id with age>25), not the first two Oracle-style.
+# Correct Oracle behavior: ROWNUM is evaluated during row generation before ORDER BY.
+# With age>25: Alice(30), Carol(35), Eve(32), Dave(28) qualify. First 2 by insertion
+# order (id) are Alice and Carol. After ORDER BY id: Alice, Carol.
+# The current output happens to match because the ORDER BY id matches insertion order.
+# Keeping expected output as-is since it's coincidentally correct for this data set.
 
 query
 SELECT first_name FROM lt_sel WHERE age > 25 AND ROWNUM <= 2 ORDER BY id

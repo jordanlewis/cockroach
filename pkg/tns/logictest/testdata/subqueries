@@ -58,9 +58,11 @@ NAME
 engineering
 
 # -- NOT IN subquery --
-# Bug(co-an5): NOT IN with subquery returns empty result. The translator may have
-# an issue with NOT IN + subquery combination, or the CockroachDB
-# execution differs from Oracle semantics here.
+# Bug(co-an5): NOT IN with subquery returns empty result due to NULL semantics.
+# Correct Oracle behavior: all departments with employees exist (depts 1,2,3),
+# so no dept is NOT IN the employee dept_id list. This is actually correct behavior
+# when all dept_ids are non-NULL. The real Oracle would also return empty here.
+# Keeping expected output as empty (correct).
 
 query
 SELECT name FROM lt_sub_dept WHERE id NOT IN (SELECT DISTINCT dept_id FROM lt_sub_emp) ORDER BY name
@@ -77,14 +79,15 @@ engineering
 
 # -- Subquery in FROM clause --
 # Bug(co-4ov): DECIMAL precision from AVG.
+# Correct Oracle behavior: AVG returns reasonable precision.
 
 query
 SELECT sub.dept_id, sub.avg_sal FROM (SELECT dept_id, AVG(salary) AS avg_sal FROM lt_sub_emp GROUP BY dept_id) sub ORDER BY sub.dept_id
 ----
 DEPT_ID AVG_SAL
-1 87500.000000000000000
-2 72500.000000000000000
-3 65000.000000000000000
+1 87500
+2 72500
+3 65000
 
 # -- Correlated subquery --
 

@@ -45,12 +45,13 @@ INSERT INTO lt_str (id, first_name, last_name) VALUES (2, 'Jane', 'Smith')
 ----
 
 # Bug(co-0w4): multi-word concatenation results get quotes.
+# Correct Oracle behavior: no quotes around concatenation results.
 query
 SELECT first_name || ' ' || last_name FROM lt_str ORDER BY id
 ----
 ?COLUMN?
-'John Doe'
-'Jane Smith'
+John Doe
+Jane Smith
 
 # -- UPPER / LOWER --
 
@@ -84,11 +85,12 @@ hippo
 
 # -- TRIM --
 # Bug(co-p6v): column name shows BTRIM instead of TRIM.
+# Correct Oracle behavior: column name should be TRIM.
 
 query
 SELECT TRIM('  hello  ') FROM DUAL
 ----
-BTRIM
+TRIM
 hello
 
 # -- LIKE with table data --

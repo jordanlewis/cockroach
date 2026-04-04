@@ -86,12 +86,13 @@ INSERT INTO lt_types_vc (id, name) VALUES (3, '')
 ----
 
 # Bug(co-0w4): multi-word strings returned with surrounding single quotes.
+# Correct Oracle behavior: strings should NOT have surrounding quotes.
 query
 SELECT id, name FROM lt_types_vc WHERE id IN (1, 2) ORDER BY id
 ----
 ID NAME
 1 hello
-2 'world with spaces'
+2 world with spaces
 
 exec
 DROP TABLE lt_types_vc
@@ -108,11 +109,12 @@ INSERT INTO lt_types_mixed (id, name, description) VALUES (1, 'test', 'a long de
 ----
 
 # Bug(co-0w4): multi-word CLOB (TEXT) values returned with quotes.
+# Correct Oracle behavior: no surrounding quotes on text values.
 query
 SELECT id, name, description FROM lt_types_mixed WHERE id = 1
 ----
 ID NAME DESCRIPTION
-1 test 'a long description'
+1 test a long description
 
 exec
 DROP TABLE lt_types_mixed

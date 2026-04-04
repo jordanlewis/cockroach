@@ -48,10 +48,12 @@ exec
 INSERT INTO lt_decode (id, status) VALUES (3, 'X')
 ----
 
+# Bug(co-p6v): column name shows CASE instead of DECODE.
+# Correct Oracle behavior: column name should be DECODE.
 query
 SELECT id, DECODE(status, 'A', 'Active', 'I', 'Inactive', 'Unknown') FROM lt_decode ORDER BY id
 ----
-ID CASE
+ID DECODE
 1 Active
 2 Inactive
 3 Unknown
@@ -60,7 +62,7 @@ ID CASE
 query
 SELECT id, DECODE(status, 'A', 'Active', 'I', 'Inactive') FROM lt_decode ORDER BY id
 ----
-ID CASE
+ID DECODE
 1 Active
 2 Inactive
 3 NULL
