@@ -76,3 +76,6 @@ pkg/testutils/serverutils/*_generated.go
 .vscode/
 CLAUDE.local.md
 .claude/*.local.*
+.claude/commands/
+.beads/
+.runtime/
