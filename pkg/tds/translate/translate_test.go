@@ -1482,7 +1482,11 @@ func TestTranslateUnpivot(t *testing.T) {
 	}
 }
 
-func TestTranslateExecUnsupported(t *testing.T) {
+// TestTranslateExecNoOp verifies that the translator returns empty for
+// EXEC statements. EXEC is dispatched directly to execStoredProcedure
+// from the executor's execParsedStmt and should never reach the
+// translator in practice; the translator returns empty as a safe no-op.
+func TestTranslateExecNoOp(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -1497,9 +1501,9 @@ func TestTranslateExecUnsupported(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			batch, err := parser.Parse(tc.input)
 			require.NoError(t, err)
-			_, err = Statement(batch.Stmts[0])
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "unsupported")
+			result, err := Statement(batch.Stmts[0])
+			require.NoError(t, err)
+			require.Empty(t, result)
 		})
 	}
 }

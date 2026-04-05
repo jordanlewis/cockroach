@@ -347,6 +347,11 @@ func TestIsCatalogQuery_SpTables(t *testing.T) {
 		{"exec with table name", "EXEC sp_tables 'users'", true},
 		{"case insensitive", "SP_TABLES", true},
 		{"with semicolon", "sp_tables;", true},
+		// Named parameters must NOT match the catalog regex — they are
+		// handled by the parser/executor path.
+		{"named param no spaces", "EXEC sp_tables @table_name='users'", false},
+		{"named param with spaces", "EXEC sp_tables @table_name = 'users'", false},
+		{"named param multiple", "EXEC sp_tables @table_name='t', @table_owner='public'", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -397,6 +402,8 @@ func TestIsCatalogQuery_SpColumns(t *testing.T) {
 		{"exec prefix", "EXEC sp_columns users", true},
 		{"quoted arg", "EXEC sp_columns 'users'", true},
 		{"case insensitive", "SP_COLUMNS", true},
+		{"named param", "EXEC sp_columns @table_name='users'", false},
+		{"named param spaces", "EXEC sp_columns @table_name = 'users'", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -439,6 +446,8 @@ func TestIsCatalogQuery_SpHelptext(t *testing.T) {
 		{"quoted arg", "EXEC sp_helptext 'myview'", true},
 		{"bare no arg", "sp_helptext", true},
 		{"case insensitive", "SP_HELPTEXT myview", true},
+		{"named param", "EXEC sp_helptext @objname='myview'", false},
+		{"named param spaces", "EXEC sp_helptext @objname = 'myview'", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

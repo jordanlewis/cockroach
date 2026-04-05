@@ -190,9 +190,10 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.RaiserrorStmt:
 		return "", nil
 	case *parser.ExecStmt:
-		return "", fmt.Errorf(
-			"unsupported: stored procedure '%s' is not available in CockroachDB TDS",
-			s.Procedure)
+		// EXEC statements are dispatched directly to execStoredProcedure
+		// from the executor's execParsedStmt and should never reach the
+		// translator. Return empty to be safe.
+		return "", nil
 	case *parser.ThrowStmt:
 		return "", nil
 	case *parser.GotoStmt:
