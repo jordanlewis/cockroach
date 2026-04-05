@@ -1,11 +1,7 @@
 # Cursor support coverage tests.
 #
 # T-SQL cursors (DECLARE CURSOR, OPEN, FETCH NEXT, CLOSE, DEALLOCATE)
-# are not currently supported by the TDS frontend. These tests document
-# the expected errors so that future cursor implementation work has
-# clear test coverage to validate against.
-#
-# Cursor syntax reference (SQL Server / Sybase ASE):
+# are implemented by the TDS frontend. The cursor lifecycle:
 #   DECLARE cursor_name CURSOR FOR select_statement
 #   OPEN cursor_name
 #   FETCH NEXT FROM cursor_name [INTO @var1, @var2, ...]
@@ -13,43 +9,109 @@
 #   DEALLOCATE cursor_name
 
 # ============================================================
-# DECLARE CURSOR — parse error (parser expects @variable)
+# Setup: create a table for cursor tests
 # ============================================================
 
-# The TDS parser requires DECLARE names to start with @, so bare
-# cursor names like "mycursor" fail at parse time.
-exec error=(parse error)
-DECLARE mycursor CURSOR FOR SELECT 1
+exec
+CREATE TABLE cursor_test (id INT PRIMARY KEY, name VARCHAR(50))
+----
+
+exec
+INSERT INTO cursor_test VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
 ----
 
 # ============================================================
-# OPEN — parse error (not a recognized statement)
+# DECLARE CURSOR — basic syntax
 # ============================================================
 
-exec error=(parse error)
-OPEN mycursor
+exec
+DECLARE cur1 CURSOR FOR SELECT id, name FROM cursor_test ORDER BY id
 ----
 
 # ============================================================
-# FETCH NEXT — parse error (not a recognized statement)
+# Full cursor lifecycle: DECLARE, OPEN, FETCH, CLOSE, DEALLOCATE
 # ============================================================
 
-exec error=(parse error)
-FETCH NEXT FROM mycursor
+exec rowsort
+DECLARE cur2 CURSOR FOR SELECT id, name FROM cursor_test ORDER BY id;
+OPEN cur2;
+FETCH NEXT FROM cur2;
+FETCH NEXT FROM cur2;
+FETCH NEXT FROM cur2;
+FETCH NEXT FROM cur2;
+CLOSE cur2;
+DEALLOCATE cur2
+----
+1 alice
+2 bob
+3 charlie
+
+# ============================================================
+# DECLARE CURSOR with WHERE clause
+# ============================================================
+
+exec rowsort
+DECLARE cur3 CURSOR FOR SELECT id, name FROM cursor_test WHERE id > 1 ORDER BY id;
+OPEN cur3;
+FETCH NEXT FROM cur3;
+FETCH NEXT FROM cur3;
+FETCH NEXT FROM cur3;
+CLOSE cur3;
+DEALLOCATE cur3
+----
+2 bob
+3 charlie
+
+# ============================================================
+# FETCH past end returns empty result set
+# ============================================================
+
+exec
+DECLARE cur4 CURSOR FOR SELECT id FROM cursor_test WHERE id = 1;
+OPEN cur4;
+FETCH NEXT FROM cur4;
+FETCH NEXT FROM cur4
+----
+1
+
+# ============================================================
+# Error: OPEN without DECLARE
+# ============================================================
+
+exec error=(not declared)
+OPEN nonexistent
 ----
 
 # ============================================================
-# CLOSE — parse error (not a recognized statement)
+# Error: FETCH without OPEN
 # ============================================================
 
-exec error=(parse error)
-CLOSE mycursor
+exec error=(not open)
+DECLARE cur5 CURSOR FOR SELECT 1;
+FETCH NEXT FROM cur5
 ----
 
 # ============================================================
-# DEALLOCATE — parse error (not a recognized statement)
+# Error: CLOSE without OPEN
 # ============================================================
 
-exec error=(parse error)
-DEALLOCATE mycursor
+exec error=(not open)
+DECLARE cur6 CURSOR FOR SELECT 1;
+CLOSE cur6
+----
+
+# ============================================================
+# Error: DEALLOCATE non-existent cursor
+# ============================================================
+
+exec error=(not declared)
+DEALLOCATE nonexistent
+----
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE cursor_test
 ----

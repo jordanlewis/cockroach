@@ -61,6 +61,23 @@ type Executor struct {
 	// Keys are variable names including the @ prefix (e.g. "@x").
 	// Values are SQL literal strings suitable for substitution.
 	variables map[string]string
+
+	// cursors holds declared T-SQL cursor state. Keys are cursor names
+	// (bare identifiers without @ prefix). Cursors are batch-scoped.
+	cursors map[string]*cursorState
+}
+
+// cursorState tracks the lifecycle of a server-side cursor. A cursor is
+// declared with a query, opened to buffer its result set, fetched one row
+// at a time, then closed and deallocated.
+type cursorState struct {
+	query parser.Statement // the SELECT statement from DECLARE CURSOR
+
+	// Populated when the cursor is opened.
+	rows []tree.Datums      // buffered result rows
+	cols []resultColumnInfo // column metadata
+	pos  int                // next row to fetch (0-based)
+	open bool               // true after OPEN, false after CLOSE
 }
 
 // NewExecutor creates an Executor bound to the given isql.DB.
@@ -519,6 +536,171 @@ func (e *Executor) executeBeginTryCatch(
 	return nil
 }
 
+// executeDeclareCursor handles DECLARE cursor_name CURSOR FOR select_stmt.
+// Stores the cursor definition for later OPEN.
+func (e *Executor) executeDeclareCursor(
+	s *parser.DeclareCursorStmt, tw *tdswire.TokenWriter,
+) error {
+	if e.cursors == nil {
+		e.cursors = make(map[string]*cursorState)
+	}
+	e.cursors[s.Name] = &cursorState{query: s.Query}
+	return nil
+}
+
+// executeOpenCursor handles OPEN cursor_name. Executes the cursor's
+// SELECT query and buffers all result rows for subsequent FETCH calls.
+func (e *Executor) executeOpenCursor(
+	ctx context.Context, s *parser.OpenCursorStmt, tw *tdswire.TokenWriter,
+) error {
+	cs := e.getCursor(s.Name)
+	if cs == nil {
+		return writeErrorToken(tw, 16916, 1, 16,
+			fmt.Sprintf("cursor %q is not declared", s.Name))
+	}
+	if cs.open {
+		return writeErrorToken(tw, 16915, 1, 16,
+			fmt.Sprintf("cursor %q is already open", s.Name))
+	}
+
+	// Translate and execute the cursor's SELECT query.
+	crdbSQL, err := translate.Statement(cs.query)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("T-SQL translation error: %s", err))
+	}
+	crdbSQL = e.substituteVars(crdbSQL)
+
+	executor := e.db.Executor()
+	rows, resultCols, err := executor.QueryBufferedExWithCols(
+		ctx,
+		redact.Sprint("tds-cursor-open"),
+		e.currentKVTxn(),
+		e.executorOverride(),
+		crdbSQL,
+	)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16, err.Error())
+	}
+
+	rcInfos := make([]resultColumnInfo, len(resultCols))
+	for i, rc := range resultCols {
+		rcInfos[i] = resultColumnInfo{Name: rc.Name, Typ: rc.Typ}
+	}
+
+	cs.rows = rows
+	cs.cols = rcInfos
+	cs.pos = 0
+	cs.open = true
+	return nil
+}
+
+// executeFetchCursor handles FETCH NEXT FROM cursor_name [INTO @v1, ...].
+// Returns the next row from the cursor's buffered result set, or an
+// empty result set when all rows have been consumed.
+func (e *Executor) executeFetchCursor(
+	ctx context.Context, s *parser.FetchCursorStmt, tw *tdswire.TokenWriter,
+) error {
+	cs := e.getCursor(s.Name)
+	if cs == nil {
+		return writeErrorToken(tw, 16916, 1, 16,
+			fmt.Sprintf("cursor %q is not declared", s.Name))
+	}
+	if !cs.open {
+		return writeErrorToken(tw, 16917, 1, 16,
+			fmt.Sprintf("cursor %q is not open", s.Name))
+	}
+
+	md, typeInfos, err := mapResultColumns(cs.cols)
+	if err != nil {
+		return writeErrorToken(tw, 50000, 1, 16,
+			fmt.Sprintf("type mapping error: %s", err))
+	}
+
+	if err := tw.WriteColMetaData(md); err != nil {
+		return err
+	}
+
+	rowCount := uint64(0)
+	if cs.pos < len(cs.rows) {
+		datums := cs.rows[cs.pos]
+		cs.pos++
+
+		// If INTO variables are specified, store fetched values.
+		if len(s.Into) > 0 {
+			if e.variables == nil {
+				e.variables = make(map[string]string)
+			}
+			for i, varName := range s.Into {
+				if i < len(datums) {
+					d := datums[i]
+					if d == tree.DNull {
+						e.variables[varName] = "NULL"
+					} else {
+						e.variables[varName] = tree.AsStringWithFlags(d, tree.FmtSimple)
+					}
+				}
+			}
+		}
+
+		row, err := mapDatumsToRow(datums, typeInfos)
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteRow(md, row); err != nil {
+			return err
+		}
+		rowCount = 1
+	}
+
+	return tw.WriteDone(tdswire.DoneToken{
+		TokenType: tdswire.TokenDone,
+		Status:    tdswire.DoneFinal | tdswire.DoneCount,
+		RowCount:  rowCount,
+	})
+}
+
+// executeCloseCursor handles CLOSE cursor_name. Marks the cursor as
+// closed and releases its buffered result set.
+func (e *Executor) executeCloseCursor(s *parser.CloseCursorStmt, tw *tdswire.TokenWriter) error {
+	cs := e.getCursor(s.Name)
+	if cs == nil {
+		return writeErrorToken(tw, 16916, 1, 16,
+			fmt.Sprintf("cursor %q is not declared", s.Name))
+	}
+	if !cs.open {
+		return writeErrorToken(tw, 16917, 1, 16,
+			fmt.Sprintf("cursor %q is not open", s.Name))
+	}
+	cs.open = false
+	cs.rows = nil
+	cs.cols = nil
+	cs.pos = 0
+	return nil
+}
+
+// executeDeallocateCursor handles DEALLOCATE cursor_name. Removes the
+// cursor from the session state entirely.
+func (e *Executor) executeDeallocateCursor(
+	s *parser.DeallocateCursorStmt, tw *tdswire.TokenWriter,
+) error {
+	cs := e.getCursor(s.Name)
+	if cs == nil {
+		return writeErrorToken(tw, 16916, 1, 16,
+			fmt.Sprintf("cursor %q is not declared", s.Name))
+	}
+	delete(e.cursors, s.Name)
+	return nil
+}
+
+// getCursor looks up a cursor by name and returns nil if not found.
+func (e *Executor) getCursor(name string) *cursorState {
+	if e.cursors == nil {
+		return nil
+	}
+	return e.cursors[name]
+}
+
 // exprToString extracts the string value from a parser expression.
 // For string literals, it returns the unquoted value. For other
 // expression types, it returns the String() representation.
@@ -962,6 +1144,16 @@ func (e *Executor) execParsedStmt(
 		return nil
 	case *parser.BeginTryCatchStmt:
 		return e.executeBeginTryCatch(ctx, s, tw)
+	case *parser.DeclareCursorStmt:
+		return e.executeDeclareCursor(s, tw)
+	case *parser.OpenCursorStmt:
+		return e.executeOpenCursor(ctx, s, tw)
+	case *parser.FetchCursorStmt:
+		return e.executeFetchCursor(ctx, s, tw)
+	case *parser.CloseCursorStmt:
+		return e.executeCloseCursor(s, tw)
+	case *parser.DeallocateCursorStmt:
+		return e.executeDeallocateCursor(s, tw)
 	default:
 		// Regular statement: translate then execute.
 		crdbSQL, err := translate.Statement(stmt)

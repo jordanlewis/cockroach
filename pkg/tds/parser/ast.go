@@ -1329,6 +1329,70 @@ func (s *DeclareTableVarStmt) String() string {
 	return fmt.Sprintf("DECLARE %s TABLE (%s)", s.Name, strings.Join(cols, ", "))
 }
 
+// DeclareCursorStmt represents DECLARE cursor_name CURSOR FOR select_stmt.
+// Cursor names are bare identifiers (no @ prefix) unlike T-SQL variables.
+type DeclareCursorStmt struct {
+	Name  string    // cursor name (bare identifier, no @ prefix)
+	Query Statement // the SELECT statement to cursor over
+}
+
+func (*DeclareCursorStmt) statementNode() {}
+
+func (s *DeclareCursorStmt) String() string {
+	return fmt.Sprintf("DECLARE %s CURSOR FOR %s", formatIdent(s.Name), s.Query)
+}
+
+// OpenCursorStmt represents OPEN cursor_name.
+type OpenCursorStmt struct {
+	Name string
+}
+
+func (*OpenCursorStmt) statementNode() {}
+
+func (s *OpenCursorStmt) String() string {
+	return fmt.Sprintf("OPEN %s", formatIdent(s.Name))
+}
+
+// FetchCursorStmt represents FETCH NEXT FROM cursor_name [INTO @v1, @v2, ...].
+type FetchCursorStmt struct {
+	Name string   // cursor name
+	Into []string // optional INTO variable names (including @ prefix)
+}
+
+func (*FetchCursorStmt) statementNode() {}
+
+func (s *FetchCursorStmt) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "FETCH NEXT FROM %s", formatIdent(s.Name))
+	if len(s.Into) > 0 {
+		b.WriteString(" INTO ")
+		b.WriteString(strings.Join(s.Into, ", "))
+	}
+	return b.String()
+}
+
+// CloseCursorStmt represents CLOSE cursor_name.
+type CloseCursorStmt struct {
+	Name string
+}
+
+func (*CloseCursorStmt) statementNode() {}
+
+func (s *CloseCursorStmt) String() string {
+	return fmt.Sprintf("CLOSE %s", formatIdent(s.Name))
+}
+
+// DeallocateCursorStmt represents DEALLOCATE cursor_name.
+type DeallocateCursorStmt struct {
+	Name string
+}
+
+func (*DeallocateCursorStmt) statementNode() {}
+
+func (s *DeallocateCursorStmt) String() string {
+	return fmt.Sprintf("DEALLOCATE %s", formatIdent(s.Name))
+}
+
 // SetVarStmt represents SET @var = expr (variable assignment).
 type SetVarStmt struct {
 	Name string // variable name including the @ prefix
