@@ -114,6 +114,21 @@ DROP TABLE set_opt_ident
 ----
 
 # ============================================================
+# SET CHAINED — ASE auto-commit control
+# CHAINED OFF = auto-commit (CockroachDB default).
+# CHAINED ON = implicit transactions (BEGIN TRAN before each stmt).
+# go-ase driver sends this during connection initialization.
+# ============================================================
+
+exec
+SET CHAINED OFF
+----
+
+exec
+SET CHAINED ON
+----
+
+# ============================================================
 # SET TRANSACTION ISOLATION LEVEL — transaction isolation
 # Source: thda/tds session_test.go (TestIsolationLevels)
 # ============================================================

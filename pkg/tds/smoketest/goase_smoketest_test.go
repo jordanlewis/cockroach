@@ -992,21 +992,15 @@ func TestGoASESmokeTest(t *testing.T) {
 
 		// SET CHAINED ON/OFF is ASE-specific auto-commit control.
 		// In ASE, SET CHAINED ON means "no auto-commit" (like BEGIN TRAN
-		// before every statement). This is unlikely to work on CRDB.
+		// before every statement). CHAINED OFF = auto-commit (CRDB default).
+		// Silently acknowledged by the catalog layer.
 		t.Run("SET_CHAINED", func(t *testing.T) {
 			resp := sendBatch(t, tc.pr, tc.pw, "SET CHAINED OFF")
 			result := parseTokenStream(t, resp)
 			if result.Error != nil {
-				findings = append(findings, finding{
-					area:      "driver-init",
-					attempted: "SET CHAINED OFF (ASE-specific auto-commit)",
-					err:       result.Error.Message,
-					category:  "ase-specific",
-				})
-				t.Logf("FINDING: SET CHAINED OFF not supported: %s", result.Error.Message)
-			} else {
-				t.Log("SET CHAINED OFF: OK")
+				t.Fatalf("SET CHAINED OFF should be acknowledged: %s", result.Error.Message)
 			}
+			t.Log("SET CHAINED OFF: OK")
 		})
 
 		// SET TRANSACTION ISOLATION LEVEL (go-ase apps may set this).

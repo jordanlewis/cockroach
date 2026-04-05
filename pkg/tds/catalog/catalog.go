@@ -95,6 +95,8 @@ var (
 	// [Both] Most SET options are common to both dialects.
 	// [SQL Server] SET IDENTITY_INSERT is SQL Server-specific.
 	// [Both] SET ROWCOUNT is supported by both dialects.
+	// [ASE] SET CHAINED controls auto-commit mode (OFF = auto-commit,
+	// ON = implicit transactions). CockroachDB defaults to auto-commit.
 	reSetCommand = regexp.MustCompile(
 		`(?i)^\s*SET\s+(?:` +
 			`QUOTED_IDENTIFIER\s+(?:ON|OFF)` +
@@ -104,6 +106,7 @@ var (
 			`|CONCAT_NULL_YIELDS_NULL\s+(?:ON|OFF)` +
 			`|ROWCOUNT\s+\d+` +
 			`|IDENTITY_INSERT\s+\S+\s+(?:ON|OFF)` +
+			`|CHAINED\s+(?:ON|OFF)` +
 			`)\s*;?\s*$`,
 	)
 )
