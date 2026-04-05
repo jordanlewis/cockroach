@@ -87,17 +87,17 @@ func TestTranslate(t *testing.T) {
 		{
 			name:   "nextval",
 			oracle: "SELECT emp_seq.NEXTVAL FROM DUAL",
-			crdb:   "SELECT nextval('emp_seq')",
+			crdb:   "SELECT nextval('emp_seq'::regclass)",
 		},
 		{
 			name:   "currval",
 			oracle: "SELECT emp_seq.CURRVAL FROM DUAL",
-			crdb:   "SELECT currval('emp_seq')",
+			crdb:   "SELECT currval('emp_seq'::regclass)",
 		},
 		{
 			name:   "insert with nextval",
 			oracle: "INSERT INTO employees (id, name) VALUES (emp_seq.NEXTVAL, 'John')",
-			crdb:   "INSERT INTO employees (id, name) VALUES (nextval('emp_seq'), 'John')",
+			crdb:   "INSERT INTO employees (id, name) VALUES (nextval('emp_seq'::regclass), 'John')",
 		},
 
 		// TO_CHAR format translation.

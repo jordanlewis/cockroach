@@ -1,12 +1,7 @@
 # Sequence tests for Oracle SQL through TNS.
 #
-# Bug(co-118): Sequence operations (NEXTVAL, CURRVAL) fail through TNS because:
-# 1. Oracle dot-notation (seq.NEXTVAL) translates to nextval('seq') which
-#    uses a string argument, but CockroachDB's internal executor requires
-#    nextval(regclass), not nextval(string).
-# 2. This affects both Oracle-style and CockroachDB-style syntax.
-#
-# The test below verifies CREATE SEQUENCE DDL works via the fallback path.
+# Verifies that Oracle sequence operations (seq.NEXTVAL, seq.CURRVAL) are
+# correctly translated to CockroachDB's nextval/currval with ::regclass cast.
 
 exec
 CREATE SEQUENCE lt_seq1 START WITH 1 INCREMENT BY 1
@@ -16,7 +11,60 @@ exec
 CREATE SEQUENCE lt_seq2 START WITH 100 INCREMENT BY 10
 ----
 
+# NEXTVAL generates the next value from a sequence.
+
+query
+SELECT lt_seq1.NEXTVAL FROM DUAL
+----
+NEXTVAL
+1
+
+query
+SELECT lt_seq1.NEXTVAL FROM DUAL
+----
+NEXTVAL
+2
+
+# Sequences with custom START and INCREMENT.
+
+query
+SELECT lt_seq2.NEXTVAL FROM DUAL
+----
+NEXTVAL
+100
+
+query
+SELECT lt_seq2.NEXTVAL FROM DUAL
+----
+NEXTVAL
+110
+
+# NEXTVAL in INSERT statements.
+
+exec
+CREATE TABLE lt_seq_tbl (id INT PRIMARY KEY, name VARCHAR(50))
+----
+
+exec
+INSERT INTO lt_seq_tbl (id, name) VALUES (lt_seq1.NEXTVAL, 'Alice')
+----
+
+exec
+INSERT INTO lt_seq_tbl (id, name) VALUES (lt_seq1.NEXTVAL, 'Bob')
+----
+
+query
+SELECT id, name FROM lt_seq_tbl ORDER BY id
+----
+ID NAME
+3 Alice
+4 Bob
+
 # Cleanup.
+
+exec
+DROP TABLE lt_seq_tbl
+----
 
 exec
 DROP SEQUENCE lt_seq2

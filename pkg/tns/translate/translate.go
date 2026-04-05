@@ -15,8 +15,8 @@
 //   - NVL2(a, b, c) → CASE WHEN a IS NOT NULL THEN b ELSE c END
 //   - DECODE(expr, s1, r1, ..., def) → CASE expr WHEN s1 THEN r1 ... ELSE def END
 //   - TO_CHAR(expr, fmt) with Oracle format model → to_char with PG format
-//   - seq.NEXTVAL → nextval('seq')
-//   - seq.CURRVAL → currval('seq')
+//   - seq.NEXTVAL → nextval('seq'::regclass)
+//   - seq.CURRVAL → currval('seq'::regclass)
 //   - NUMBER → DECIMAL, VARCHAR2 → VARCHAR (via types package)
 //   - :bind variables → $N positional parameters
 package translate
@@ -617,9 +617,9 @@ func (t *translator) translateExpr(expr parser.Expr) (string, error) {
 		seqName := strings.ToLower(e.Sequence)
 		switch e.Op {
 		case parser.SeqNextVal:
-			return fmt.Sprintf("nextval('%s')", seqName), nil
+			return fmt.Sprintf("nextval('%s'::regclass)", seqName), nil
 		case parser.SeqCurrVal:
-			return fmt.Sprintf("currval('%s')", seqName), nil
+			return fmt.Sprintf("currval('%s'::regclass)", seqName), nil
 		default:
 			return "", errors.Newf("unknown sequence operation: %s", e.Op)
 		}
