@@ -201,6 +201,15 @@ func (p *parser) parseSelect() (*SelectStmt, error) {
 		stmt.Limit = limitExpr
 	}
 
+	// FOR UPDATE
+	if p.cur.Type == IDENT && p.cur.Literal == "FOR" {
+		p.next()
+		if _, err := p.expect(UPDATE); err != nil {
+			return nil, err
+		}
+		stmt.ForUpdate = true
+	}
+
 	return stmt, nil
 }
 
@@ -787,6 +796,17 @@ func (p *parser) parseComparison() (Expr, error) {
 		p.next()
 		if _, err := p.expect(LPAREN); err != nil {
 			return nil, err
+		}
+		// IN (SELECT ...) — subquery form.
+		if p.cur.Type == SELECT {
+			sel, err := p.parseSelect()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(RPAREN); err != nil {
+				return nil, err
+			}
+			return &InExpr{Expr: left, Subquery: sel, Not: not}, nil
 		}
 		vals, err := p.parseExprList()
 		if err != nil {

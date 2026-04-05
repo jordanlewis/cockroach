@@ -533,6 +533,17 @@ func (t *translator) translateExpr(expr parser.Expr) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		not := ""
+		if e.Not {
+			not = " NOT"
+		}
+		if e.Subquery != nil {
+			sub, err := t.translateSelect(e.Subquery)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("(%s%s IN (%s))", inner, not, sub), nil
+		}
 		vals := make([]string, len(e.Values))
 		for i, v := range e.Values {
 			s, err := t.translateExpr(v)
@@ -540,10 +551,6 @@ func (t *translator) translateExpr(expr parser.Expr) (string, error) {
 				return "", err
 			}
 			vals[i] = s
-		}
-		not := ""
-		if e.Not {
-			not = " NOT"
 		}
 		return fmt.Sprintf("(%s%s IN (%s))", inner, not, strings.Join(vals, ", ")), nil
 
