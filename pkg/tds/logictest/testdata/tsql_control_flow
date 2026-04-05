@@ -1,8 +1,11 @@
 # T-SQL control flow and variable tests: DECLARE, SET, IF/ELSE, WHILE,
-# BEGIN/END, BREAK, CONTINUE, PRINT.
+# BEGIN/END, BREAK, CONTINUE, TRY/CATCH, GOTO, EXEC, RAISERROR, THROW,
+# RETURN, WAITFOR, PRINT.
 # Sources: T-SQL reference documentation, Babelfish test patterns (Apache 2.0).
 
-# --- DECLARE variable ---
+# ============================================================
+# DECLARE variable
+# ============================================================
 
 exec
 DECLARE @x INT
@@ -14,7 +17,9 @@ exec
 DECLARE @name VARCHAR(50) = 'test'
 ----
 
-# --- SET variable ---
+# ============================================================
+# SET variable
+# ============================================================
 
 exec
 DECLARE @x INT; SET @x = 42
@@ -27,7 +32,9 @@ DECLARE @x INT; SET @x = 42; SELECT @x AS val
 ----
 42
 
-# --- IF / ELSE ---
+# ============================================================
+# IF / ELSE
+# ============================================================
 
 query
 IF 1 = 1 SELECT 'true' AS result
@@ -53,7 +60,9 @@ IF EXISTS (SELECT 1) SELECT 'exists' AS result
 ----
 exists
 
-# --- WHILE loop ---
+# ============================================================
+# WHILE loop
+# ============================================================
 
 query
 DECLARE @i INT = 0; WHILE @i < 3 BEGIN SET @i = @i + 1 END; SELECT @i AS val
@@ -77,7 +86,10 @@ DECLARE @i INT = 0; DECLARE @sum INT = 0; WHILE @i < 5 BEGIN SET @i = @i + 1; IF
 ----
 12
 
-# --- BEGIN TRY / BEGIN CATCH ---
+# ============================================================
+# BEGIN TRY / BEGIN CATCH
+# ============================================================
+
 # TRY/CATCH is parsed. The TRY body executes; if it produces a SQL error,
 # that error is sent to the client. CATCH body execution is best-effort
 # (SQL errors are sent on the wire, not propagated as Go errors).
@@ -86,7 +98,10 @@ exec error=(division by zero)
 BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH
 ----
 
-# --- GOTO with labels ---
+# ============================================================
+# GOTO with labels
+# ============================================================
+
 # GOTO and labels are parsed but silently acknowledged (no actual jump).
 # Both SELECT statements execute since label-based flow is not implemented.
 
@@ -94,7 +109,9 @@ exec
 GOTO done; SELECT 'skipped'; done: SELECT 'reached'
 ----
 
-# --- EXEC / EXECUTE (stored procedure call) ---
+# ============================================================
+# EXEC / EXECUTE (stored procedure call)
+# ============================================================
 
 # EXEC sp_help is handled by catalog layer (not a parse error).
 # sp_help translates to INFORMATION_SCHEMA queries.
@@ -102,7 +119,7 @@ exec
 EXEC sp_help
 ----
 
-# EXECUTE sp_help with argument — also handled by catalog.
+# EXECUTE sp_help with argument --- also handled by catalog.
 exec
 EXECUTE sp_help 'users'
 ----
@@ -113,41 +130,58 @@ exec error=(unsupported)
 EXEC sp_getuser @id = 1, @name = 'test'
 ----
 
-# --- RETURN statement ---
+# ============================================================
+# RETURN statement
+# ============================================================
+
 # RETURN is parsed and silently acknowledged (stored procedure context only).
 
 exec
 RETURN 0
 ----
 
-# --- RAISERROR (Sybase ASE syntax) ---
+# ============================================================
+# RAISERROR (Sybase ASE syntax)
+# ============================================================
 
 exec error=(Test error)
 RAISERROR 50000, 'Test error'
 ----
 
-# --- THROW (SQL Server 2012+) ---
+# ============================================================
+# THROW (SQL Server 2012+)
+# ============================================================
+
 # THROW raises a user-defined error, similar to RAISERROR.
 
 exec error=(Custom error)
 THROW 50000, 'Custom error', 1
 ----
 
-# --- PRINT ---
+# ============================================================
+# PRINT
+# ============================================================
+
 # PRINT is silently acknowledged (no print channel in TDS frontend).
 
 exec
 PRINT 'Hello from T-SQL'
 ----
 
-# --- WAITFOR ---
+# ============================================================
+# WAITFOR
+# ============================================================
+
 # WAITFOR is parsed and silently acknowledged (delay/scheduling not supported).
 
 exec
 WAITFOR DELAY '00:00:01'
 ----
 
-# --- SET NOCOUNT ---
+# ============================================================
+# SET NOCOUNT
+# ============================================================
+
 # Caught by executor SET catch-all, silently acknowledged.
 
 exec
@@ -157,7 +191,9 @@ SET NOCOUNT ON
 # Note: SET QUOTED_IDENTIFIER, SET ANSI_NULLS, SET TEXTSIZE, SET ARITHABORT
 # are already tested in the 'catalog' test file and work (silently acknowledged).
 
-# --- Variable used in expressions ---
+# ============================================================
+# Variable used in expressions
+# ============================================================
 
 query
 DECLARE @a INT = 10; DECLARE @b INT = 20; SELECT @a + @b AS total
@@ -177,3 +213,150 @@ query
 DECLARE @v INT = 0; IF @v = 0 BEGIN SELECT 'zero' AS label END ELSE BEGIN SELECT 'nonzero' AS label END
 ----
 zero
+
+# ============================================================
+# ============================================================
+#
+#  ERROR DIRECTIVE TESTS
+#
+#  The following tests exercise error paths for control flow
+#  statements. Each uses exec error=() or query error=() to
+#  verify that the expected error is produced.
+#
+# ============================================================
+# ============================================================
+
+# ============================================================
+# Error 1: DECLARE without @ prefix
+# The parser requires variable names to start with @.
+# ============================================================
+
+exec error=(expected @variable)
+DECLARE x INT
+----
+
+# ============================================================
+# Error 2: DECLARE with expression that fails at runtime
+# Division by zero in the default expression.
+# ============================================================
+
+exec error=(evaluating default)
+DECLARE @x INT = 1/0
+----
+
+# ============================================================
+# Error 3: SET @var with expression that fails at runtime
+# Division by zero during variable assignment.
+# ============================================================
+
+exec error=(evaluating SET)
+DECLARE @x INT; SET @x = 1/0
+----
+
+# ============================================================
+# Error 4: IF with condition that fails at runtime
+# Division by zero when evaluating the IF condition.
+# ============================================================
+
+exec error=(evaluating IF condition)
+IF 1/0 = 1 SELECT 'yes'
+----
+
+# ============================================================
+# Error 5: WHILE with condition that fails at runtime
+# Division by zero when evaluating the WHILE condition.
+# ============================================================
+
+exec error=(evaluating WHILE condition)
+WHILE 1/0 = 1 BEGIN SELECT 1 END
+----
+
+# ============================================================
+# Error 6: BREAK outside of WHILE loop
+# BREAK is only valid inside a WHILE body.
+# ============================================================
+
+exec error=(BREAK used outside)
+BREAK
+----
+
+# ============================================================
+# Error 7: CONTINUE outside of WHILE loop
+# CONTINUE is only valid inside a WHILE body.
+# ============================================================
+
+exec error=(CONTINUE used outside)
+CONTINUE
+----
+
+# ============================================================
+# Error 8: Unterminated BEGIN...END block
+# BEGIN without a matching END.
+# ============================================================
+
+exec error=(unterminated)
+BEGIN SELECT 1
+----
+
+# ============================================================
+# Error 9: BEGIN TRY without matching CATCH
+# TRY/CATCH requires both blocks.
+# ============================================================
+
+exec error=(parse error)
+BEGIN TRY SELECT 1 END TRY
+----
+
+# ============================================================
+# Error 10: GOTO without label name
+# GOTO requires an identifier to jump to.
+# ============================================================
+
+exec error=(expected identifier)
+GOTO
+----
+
+# ============================================================
+# Error 11: WAITFOR without DELAY or TIME keyword
+# WAITFOR requires either DELAY or TIME.
+# ============================================================
+
+exec error=(expected DELAY or TIME)
+WAITFOR 'abc'
+----
+
+# ============================================================
+# Error 12: RAISERROR with non-integer error number
+# The Sybase ASE RAISERROR syntax requires an integer first.
+# ============================================================
+
+exec error=(expected error number)
+RAISERROR 'not_a_number'
+----
+
+# ============================================================
+# Error 13: EXEC unknown stored procedure
+# Unknown procedures return an unsupported error.
+# ============================================================
+
+exec error=(unsupported)
+EXEC sp_nonexistent_controlflow_test
+----
+
+# ============================================================
+# Error 14: sp_executesql without SQL argument
+# sp_executesql requires at least one argument.
+# ============================================================
+
+exec error=(requires a SQL statement)
+EXEC sp_executesql
+----
+
+# ============================================================
+# Error 15: Nested error in WHILE body
+# An error inside a WHILE loop body propagates up.
+# ============================================================
+
+exec error=(does not exist)
+DECLARE @i INT = 0; WHILE @i < 1 BEGIN SELECT * FROM nonexistent_ctrl_flow_table; SET @i = @i + 1 END
+----

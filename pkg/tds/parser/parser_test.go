@@ -2085,4 +2085,416 @@ func TestParseLabelStmtString(t *testing.T) {
 	}
 }
 
+// TestParseControlFlow tests parsing of all T-SQL control flow
+// statements: DECLARE, SET, IF/ELSE, WHILE, BEGIN/END, BREAK,
+// CONTINUE, TRY/CATCH, GOTO, RETURN, WAITFOR, THROW.
+func TestParseControlFlow(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		stmtType string
+	}{
+		{
+			name:     "declare scalar",
+			input:    "DECLARE @x INT",
+			stmtType: "*parser.DeclareVarStmt",
+		},
+		{
+			name:     "declare with default",
+			input:    "DECLARE @name VARCHAR(50) = 'test'",
+			stmtType: "*parser.DeclareVarStmt",
+		},
+		{
+			name:     "set variable",
+			input:    "DECLARE @x INT; SET @x = 42",
+			stmtType: "*parser.DeclareVarStmt",
+		},
+		{
+			name:     "if simple",
+			input:    "IF 1 = 1 SELECT 'yes'",
+			stmtType: "*parser.IfStmt",
+		},
+		{
+			name:     "if else",
+			input:    "IF 1 = 2 SELECT 'yes' ELSE SELECT 'no'",
+			stmtType: "*parser.IfStmt",
+		},
+		{
+			name:     "if begin end",
+			input:    "IF 1 = 1 BEGIN SELECT 1 END",
+			stmtType: "*parser.IfStmt",
+		},
+		{
+			name:     "while",
+			input:    "WHILE 1 = 1 BEGIN BREAK END",
+			stmtType: "*parser.WhileStmt",
+		},
+		{
+			name:     "begin end block",
+			input:    "BEGIN SELECT 1; SELECT 2 END",
+			stmtType: "*parser.BeginEndBlock",
+		},
+		{
+			name:     "break",
+			input:    "BREAK",
+			stmtType: "*parser.BreakStmt",
+		},
+		{
+			name:     "continue",
+			input:    "CONTINUE",
+			stmtType: "*parser.ContinueStmt",
+		},
+		{
+			name:     "try catch",
+			input:    "BEGIN TRY SELECT 1 END TRY BEGIN CATCH SELECT 2 END CATCH",
+			stmtType: "*parser.BeginTryCatchStmt",
+		},
+		{
+			name:     "goto",
+			input:    "GOTO done",
+			stmtType: "*parser.GotoStmt",
+		},
+		{
+			name:     "return no value",
+			input:    "RETURN",
+			stmtType: "*parser.ReturnStmt",
+		},
+		{
+			name:     "return with value",
+			input:    "RETURN 0",
+			stmtType: "*parser.ReturnStmt",
+		},
+		{
+			name:     "waitfor delay",
+			input:    "WAITFOR DELAY '00:00:01'",
+			stmtType: "*parser.WaitforStmt",
+		},
+		{
+			name:     "throw",
+			input:    "THROW 50000, 'error', 1",
+			stmtType: "*parser.ThrowStmt",
+		},
+		{
+			name:     "print",
+			input:    "PRINT 'hello'",
+			stmtType: "*parser.PrintStmt",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch, err := Parse(tc.input)
+			if err != nil {
+				t.Fatalf("Parse(%q) failed: %v", tc.input, err)
+			}
+			if len(batch.Stmts) == 0 {
+				t.Fatalf("expected at least 1 statement")
+			}
+			typeSuffix := strings.TrimPrefix(tc.stmtType, "*parser.")
+			if !strings.Contains(stmtTypeName(batch.Stmts[0]), typeSuffix) {
+				t.Errorf("expected stmt type containing %q, got %q",
+					typeSuffix, stmtTypeName(batch.Stmts[0]))
+			}
+		})
+	}
+}
+
+func stmtTypeName(s Statement) string {
+	switch s.(type) {
+	case *DeclareVarStmt:
+		return "DeclareVarStmt"
+	case *SetVarStmt:
+		return "SetVarStmt"
+	case *IfStmt:
+		return "IfStmt"
+	case *WhileStmt:
+		return "WhileStmt"
+	case *BeginEndBlock:
+		return "BeginEndBlock"
+	case *BreakStmt:
+		return "BreakStmt"
+	case *ContinueStmt:
+		return "ContinueStmt"
+	case *BeginTryCatchStmt:
+		return "BeginTryCatchStmt"
+	case *GotoStmt:
+		return "GotoStmt"
+	case *ReturnStmt:
+		return "ReturnStmt"
+	case *WaitforStmt:
+		return "WaitforStmt"
+	case *ThrowStmt:
+		return "ThrowStmt"
+	case *PrintStmt:
+		return "PrintStmt"
+	case *ExecStmt:
+		return "ExecStmt"
+	case *SelectStmt:
+		return "SelectStmt"
+	default:
+		return "unknown"
+	}
+}
+
+// TestParseControlFlowDetails verifies specific fields of parsed
+// control flow statements.
+func TestParseControlFlowDetails(t *testing.T) {
+	t.Run("declare_var_fields", func(t *testing.T) {
+		batch, err := Parse("DECLARE @x INT = 42")
+		if err != nil {
+			t.Fatal(err)
+		}
+		dv := batch.Stmts[0].(*DeclareVarStmt)
+		if dv.Name != "@x" {
+			t.Errorf("expected Name=@x, got %s", dv.Name)
+		}
+		if dv.DataType != "INT" {
+			t.Errorf("expected DataType=INT, got %s", dv.DataType)
+		}
+		if dv.Default == nil {
+			t.Fatal("expected non-nil Default")
+		}
+	})
+
+	t.Run("set_var_fields", func(t *testing.T) {
+		batch, err := Parse("DECLARE @x INT; SET @x = 10")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sv := batch.Stmts[1].(*SetVarStmt)
+		if sv.Name != "@x" {
+			t.Errorf("expected Name=@x, got %s", sv.Name)
+		}
+		if sv.Expr == nil {
+			t.Fatal("expected non-nil Expr")
+		}
+	})
+
+	t.Run("if_with_else", func(t *testing.T) {
+		batch, err := Parse("IF 1 = 2 SELECT 'yes' ELSE SELECT 'no'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ifs := batch.Stmts[0].(*IfStmt)
+		if ifs.Condition == nil {
+			t.Fatal("expected non-nil Condition")
+		}
+		if ifs.Body == nil {
+			t.Fatal("expected non-nil Body")
+		}
+		if ifs.ElseBody == nil {
+			t.Fatal("expected non-nil ElseBody")
+		}
+	})
+
+	t.Run("if_without_else", func(t *testing.T) {
+		batch, err := Parse("IF 1 = 1 SELECT 'yes'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ifs := batch.Stmts[0].(*IfStmt)
+		if ifs.ElseBody != nil {
+			t.Error("expected nil ElseBody when no ELSE clause")
+		}
+	})
+
+	t.Run("while_fields", func(t *testing.T) {
+		batch, err := Parse("WHILE 1 = 1 BEGIN BREAK END")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ws := batch.Stmts[0].(*WhileStmt)
+		if ws.Condition == nil {
+			t.Fatal("expected non-nil Condition")
+		}
+		if ws.Body == nil {
+			t.Fatal("expected non-nil Body")
+		}
+	})
+
+	t.Run("begin_end_block", func(t *testing.T) {
+		batch, err := Parse("BEGIN SELECT 1; SELECT 2 END")
+		if err != nil {
+			t.Fatal(err)
+		}
+		be := batch.Stmts[0].(*BeginEndBlock)
+		if len(be.Stmts) != 2 {
+			t.Errorf("expected 2 statements in block, got %d", len(be.Stmts))
+		}
+	})
+
+	t.Run("try_catch_bodies", func(t *testing.T) {
+		batch, err := Parse(
+			"BEGIN TRY SELECT 1; SELECT 2 END TRY " +
+				"BEGIN CATCH SELECT 3 END CATCH")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tc := batch.Stmts[0].(*BeginTryCatchStmt)
+		if len(tc.TryBody) != 2 {
+			t.Errorf("expected 2 TRY statements, got %d", len(tc.TryBody))
+		}
+		if len(tc.CatchBody) != 1 {
+			t.Errorf("expected 1 CATCH statement, got %d", len(tc.CatchBody))
+		}
+	})
+
+	t.Run("goto_label", func(t *testing.T) {
+		batch, err := Parse("GOTO finish")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gs := batch.Stmts[0].(*GotoStmt)
+		if gs.Label != "finish" {
+			t.Errorf("expected Label=finish, got %s", gs.Label)
+		}
+	})
+
+	t.Run("return_with_value", func(t *testing.T) {
+		batch, err := Parse("RETURN 42")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs := batch.Stmts[0].(*ReturnStmt)
+		if rs.Value == nil || *rs.Value != 42 {
+			t.Errorf("expected Value=42, got %v", rs.Value)
+		}
+	})
+
+	t.Run("return_without_value", func(t *testing.T) {
+		batch, err := Parse("RETURN")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs := batch.Stmts[0].(*ReturnStmt)
+		if rs.Value != nil {
+			t.Errorf("expected nil Value, got %d", *rs.Value)
+		}
+	})
+
+	t.Run("waitfor_delay", func(t *testing.T) {
+		batch, err := Parse("WAITFOR DELAY '00:00:05'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wf := batch.Stmts[0].(*WaitforStmt)
+		if !wf.IsDelay {
+			t.Error("expected IsDelay=true")
+		}
+		if wf.Time != "00:00:05" {
+			t.Errorf("expected Time=00:00:05, got %s", wf.Time)
+		}
+	})
+
+	t.Run("throw_fields", func(t *testing.T) {
+		batch, err := Parse("THROW 50001, 'test error', 2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ts := batch.Stmts[0].(*ThrowStmt)
+		if ts.ErrNum != 50001 {
+			t.Errorf("expected ErrNum=50001, got %d", ts.ErrNum)
+		}
+		if ts.Message != "test error" {
+			t.Errorf("expected Message='test error', got %q", ts.Message)
+		}
+		if ts.State != 2 {
+			t.Errorf("expected State=2, got %d", ts.State)
+		}
+	})
+
+	t.Run("nested_if_while", func(t *testing.T) {
+		sql := "WHILE 1 = 1 BEGIN IF 1 = 2 BREAK; CONTINUE END"
+		batch, err := Parse(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ws := batch.Stmts[0].(*WhileStmt)
+		be := ws.Body.(*BeginEndBlock)
+		if len(be.Stmts) != 2 {
+			t.Fatalf("expected 2 stmts in WHILE body, got %d", len(be.Stmts))
+		}
+		ifs := be.Stmts[0].(*IfStmt)
+		if _, ok := ifs.Body.(*BreakStmt); !ok {
+			t.Errorf("expected IF body to be BreakStmt, got %T", ifs.Body)
+		}
+		if _, ok := be.Stmts[1].(*ContinueStmt); !ok {
+			t.Errorf("expected second stmt to be ContinueStmt, got %T", be.Stmts[1])
+		}
+	})
+}
+
+// TestParseControlFlowErrors verifies that invalid control flow syntax
+// produces parse errors with appropriate messages.
+func TestParseControlFlowErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "declare without @",
+			input: "DECLARE x INT",
+			want:  "expected @variable",
+		},
+		{
+			name:  "set without @",
+			input: "SET x = 1",
+			want:  "expected @variable",
+		},
+		{
+			name:  "unterminated begin end",
+			input: "BEGIN SELECT 1",
+			want:  "unterminated BEGIN...END",
+		},
+		{
+			name:  "unterminated begin try",
+			input: "BEGIN TRY SELECT 1",
+			want:  "unterminated BEGIN TRY",
+		},
+		{
+			name:  "try without catch",
+			input: "BEGIN TRY SELECT 1 END TRY",
+			want:  "expected",
+		},
+		{
+			name:  "goto without label",
+			input: "GOTO",
+			want:  "expected identifier",
+		},
+		{
+			name:  "waitfor without delay or time",
+			input: "WAITFOR 'abc'",
+			want:  "expected DELAY or TIME",
+		},
+		{
+			name:  "raiserror non-integer",
+			input: "RAISERROR 'not_a_number'",
+			want:  "expected error number",
+		},
+		{
+			name:  "throw missing state",
+			input: "THROW 50000, 'msg'",
+			want:  "expected",
+		},
+		{
+			name:  "throw non-integer errnum",
+			input: "THROW 'abc', 'msg', 1",
+			want:  "expected error number",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.input)
+			if err == nil {
+				t.Fatalf("expected error for %q", tc.input)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
