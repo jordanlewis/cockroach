@@ -1512,3 +1512,37 @@ func TestTranslateExecNoOp(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateBinaryLiteral(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "select binary literal",
+			input:    "SELECT 0xDEADBEEF",
+			expected: `SELECT '\xDEADBEEF'`,
+		},
+		{
+			name:     "insert binary literal",
+			input:    "INSERT INTO t (data) VALUES (0xCAFE)",
+			expected: `INSERT INTO t (data) VALUES ('\xCAFE')`,
+		},
+		{
+			name:     "binary literal in where",
+			input:    "SELECT * FROM t WHERE data = 0xFF",
+			expected: `SELECT * FROM t WHERE data = '\xFF'`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}

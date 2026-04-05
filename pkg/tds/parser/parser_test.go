@@ -2497,4 +2497,67 @@ func TestParseControlFlowErrors(t *testing.T) {
 	}
 }
 
+func TestParseBinaryLiteral(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		hexDigits string
+	}{
+		{name: "uppercase", input: "SELECT 0xDEADBEEF", hexDigits: "DEADBEEF"},
+		{name: "lowercase", input: "SELECT 0xdeadbeef", hexDigits: "deadbeef"},
+		{name: "mixed case", input: "SELECT 0xDeAdBeEf", hexDigits: "DeAdBeEf"},
+		{name: "short", input: "SELECT 0xFF", hexDigits: "FF"},
+		{name: "uppercase X", input: "SELECT 0XABCD", hexDigits: "ABCD"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch, err := Parse(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sel := batch.Stmts[0].(*SelectStmt)
+			bl, ok := sel.Columns[0].Expr.(*BinaryLit)
+			if !ok {
+				t.Fatalf("expected *BinaryLit, got %T", sel.Columns[0].Expr)
+			}
+			if bl.HexDigits != tc.hexDigits {
+				t.Errorf("expected HexDigits=%q, got %q", tc.hexDigits, bl.HexDigits)
+			}
+		})
+	}
+}
+
+func TestParseBinaryLiteralEmpty(t *testing.T) {
+	_, err := Parse("SELECT 0x")
+	if err == nil {
+		t.Fatal("expected error for empty hex literal")
+	}
+	if !strings.Contains(err.Error(), "empty hex literal") {
+		t.Errorf("error %q does not contain 'empty hex literal'", err.Error())
+	}
+}
+
+func TestParseBinaryLiteralInInsert(t *testing.T) {
+	sql := `INSERT INTO t (data) VALUES (0xCAFE)`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := batch.Stmts[0].(*InsertStmt)
+	bl, ok := ins.Values[0][0].(*BinaryLit)
+	if !ok {
+		t.Fatalf("expected *BinaryLit, got %T", ins.Values[0][0])
+	}
+	if bl.HexDigits != "CAFE" {
+		t.Errorf("expected HexDigits=CAFE, got %s", bl.HexDigits)
+	}
+}
+
+func TestBinaryLitString(t *testing.T) {
+	bl := &BinaryLit{HexDigits: "DEADBEEF"}
+	if bl.String() != "0xDEADBEEF" {
+		t.Errorf("expected 0xDEADBEEF, got %s", bl.String())
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

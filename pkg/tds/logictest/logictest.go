@@ -42,6 +42,7 @@ package logictest
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/big"
@@ -439,6 +440,10 @@ func decodeTypedValue(b []byte, ti tdswire.TypeInfo) string {
 	// VARCHAR/CHAR — plain bytes.
 	case tdswire.TypeBigVarChar, tdswire.TypeBigChar:
 		return string(b)
+
+	// VARBINARY/BINARY — display as hex-encoded string.
+	case tdswire.TypeBigVarBin, tdswire.TypeBigBinary:
+		return strings.ToUpper(hex.EncodeToString(b))
 
 	// DECIMAL/NUMERIC — sign byte + LE unscaled integer.
 	case tdswire.TypeDecimalN, tdswire.TypeNumericN:

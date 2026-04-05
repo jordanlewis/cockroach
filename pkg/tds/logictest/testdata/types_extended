@@ -122,6 +122,28 @@ exec
 CREATE TABLE binary_test (id INT, data VARBINARY)
 ----
 
+# Insert using T-SQL binary hex literal (0x...).
+exec
+INSERT INTO binary_test (id, data) VALUES (1, 0xDEADBEEF)
+----
+
+exec
+INSERT INTO binary_test (id, data) VALUES (2, 0xCAFE)
+----
+
+exec
+INSERT INTO binary_test (id, data) VALUES (3, 0xFF)
+----
+
+# Verify binary data round-trips correctly.
+query colnames
+SELECT id, data FROM binary_test ORDER BY id
+----
+id  data
+1  DEADBEEF
+2  CAFE
+3  FF
+
 # === DECIMAL / NUMERIC with precision ===
 
 exec
