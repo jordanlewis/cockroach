@@ -54,10 +54,14 @@ var (
 	reVersion = regexp.MustCompile(`(?i)^\s*SELECT\s+@@VERSION\s*;?\s*$`)
 
 	// reSpHelpDB matches sp_helpdb with an optional database name argument.
-	reSpHelpDB = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helpdb(?:\s+(\S+))?\s*;?\s*$`)
+	// The argument must not start with @ (named parameters are handled by
+	// the parser/executor path, not the catalog regex path).
+	reSpHelpDB = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helpdb(?:\s+([^@\s]\S*))?\s*;?\s*$`)
 
 	// reSpHelp matches sp_help with an optional table name argument.
-	reSpHelp = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_help(?:\s+(\S+))?\s*;?\s*$`)
+	// The argument must not start with @ (named parameters are handled by
+	// the parser/executor path, not the catalog regex path).
+	reSpHelp = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_help(?:\s+([^@\s]\S*))?\s*;?\s*$`)
 
 	// reSysobjects matches queries that reference the sysobjects system table.
 	reSysobjects = regexp.MustCompile(`(?i)\bFROM\s+(?:dbo\.)?sysobjects\b`)
@@ -67,15 +71,21 @@ var (
 
 	// reSpTables matches sp_tables with an optional table name argument.
 	// [Both] sp_tables returns metadata for tables/views.
-	reSpTables = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_tables(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+	// The non-quoted argument must not start with @ (named parameters are
+	// handled by the parser/executor path, not the catalog regex path).
+	reSpTables = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_tables(?:\s+('(?:[^']|'')*'|[^@\s]\S*))?\s*;?\s*$`)
 
 	// reSpColumns matches sp_columns with a required table name argument.
 	// [Both] sp_columns returns column metadata for a table.
-	reSpColumns = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_columns(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+	// The non-quoted argument must not start with @ (named parameters are
+	// handled by the parser/executor path, not the catalog regex path).
+	reSpColumns = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_columns(?:\s+('(?:[^']|'')*'|[^@\s]\S*))?\s*;?\s*$`)
 
 	// reSpHelptext matches sp_helptext with a required object name argument.
 	// [Both] sp_helptext returns the source text of a view or routine.
-	reSpHelptext = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helptext(?:\s+('(?:[^']|'')*'|\S+))?\s*;?\s*$`)
+	// The non-quoted argument must not start with @ (named parameters are
+	// handled by the parser/executor path, not the catalog regex path).
+	reSpHelptext = regexp.MustCompile(`(?i)^\s*(?:EXEC(?:UTE)?\s+)?sp_helptext(?:\s+('(?:[^']|'')*'|[^@\s]\S*))?\s*;?\s*$`)
 
 	// reSysusers matches queries that reference the sysusers system table.
 	reSysusers = regexp.MustCompile(`(?i)\bFROM\s+(?:dbo\.)?sysusers\b`)

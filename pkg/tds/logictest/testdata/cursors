@@ -1,0 +1,55 @@
+# Cursor support coverage tests.
+#
+# T-SQL cursors (DECLARE CURSOR, OPEN, FETCH NEXT, CLOSE, DEALLOCATE)
+# are not currently supported by the TDS frontend. These tests document
+# the expected errors so that future cursor implementation work has
+# clear test coverage to validate against.
+#
+# Cursor syntax reference (SQL Server / Sybase ASE):
+#   DECLARE cursor_name CURSOR FOR select_statement
+#   OPEN cursor_name
+#   FETCH NEXT FROM cursor_name [INTO @var1, @var2, ...]
+#   CLOSE cursor_name
+#   DEALLOCATE cursor_name
+
+# ============================================================
+# DECLARE CURSOR — parse error (parser expects @variable)
+# ============================================================
+
+# The TDS parser requires DECLARE names to start with @, so bare
+# cursor names like "mycursor" fail at parse time.
+exec error=(parse error)
+DECLARE mycursor CURSOR FOR SELECT 1
+----
+
+# ============================================================
+# OPEN — parse error (not a recognized statement)
+# ============================================================
+
+exec error=(parse error)
+OPEN mycursor
+----
+
+# ============================================================
+# FETCH NEXT — parse error (not a recognized statement)
+# ============================================================
+
+exec error=(parse error)
+FETCH NEXT FROM mycursor
+----
+
+# ============================================================
+# CLOSE — parse error (not a recognized statement)
+# ============================================================
+
+exec error=(parse error)
+CLOSE mycursor
+----
+
+# ============================================================
+# DEALLOCATE — parse error (not a recognized statement)
+# ============================================================
+
+exec error=(parse error)
+DEALLOCATE mycursor
+----

@@ -1,0 +1,122 @@
+# Stored procedure support coverage tests.
+#
+# Tests exercising CREATE PROCEDURE, EXEC with various calling
+# patterns (positional, named, OUTPUT parameters), and DROP PROCEDURE.
+# Many of these features are not yet supported — the tests document
+# the gaps with expected error directives.
+
+# ============================================================
+# CREATE PROCEDURE — parsed but unsupported
+# ============================================================
+
+exec error=(unsupported)
+CREATE PROCEDURE test_proc @id INT AS SELECT @id
+----
+
+exec error=(unsupported)
+CREATE PROCEDURE dbo.test_proc2 @name VARCHAR(50), @age INT AS SELECT @name, @age
+----
+
+# ============================================================
+# EXEC known system procedures — positional args
+# These are handled by the executor's execStoredProcedure.
+# ============================================================
+
+# Setup: create a table and view for testing.
+exec
+CREATE TABLE sp_proc_test (id INT NOT NULL, name VARCHAR(50))
+----
+
+exec
+INSERT INTO sp_proc_test (id, name) VALUES (1, 'alice'), (2, 'bob')
+----
+
+exec
+CREATE VIEW sp_proc_view AS SELECT id, name FROM sp_proc_test WHERE id > 0
+----
+
+# sp_tables with positional argument.
+exec
+EXEC sp_tables 'sp_proc_test'
+----
+
+# sp_columns with positional argument.
+exec
+EXEC sp_columns 'sp_proc_test'
+----
+
+# sp_helptext with positional argument.
+exec
+EXEC sp_helptext 'sp_proc_view'
+----
+
+# ============================================================
+# EXEC known system procedures — named parameters
+# Named parameters are parsed and dispatched through the
+# executor's execStoredProcedure, which uses getExecArgString
+# to resolve @param names.
+# ============================================================
+
+# sp_tables with named @table_name.
+exec
+EXEC sp_tables @table_name = 'sp_proc_test'
+----
+
+# sp_columns with named @table_name.
+exec
+EXEC sp_columns @table_name = 'sp_proc_test'
+----
+
+# sp_helptext with named @objname.
+exec
+EXEC sp_helptext @objname = 'sp_proc_view'
+----
+
+# Named parameter with no spaces around =.
+exec
+EXEC sp_tables @table_name='sp_proc_test'
+----
+
+# EXECUTE (full keyword) with named parameter.
+exec
+EXECUTE sp_columns @table_name = 'sp_proc_test'
+----
+
+# ============================================================
+# EXEC unknown procedures — expected errors
+# ============================================================
+
+exec error=(unsupported)
+EXEC sp_unknown_proc 'arg1'
+----
+
+exec error=(unsupported)
+EXEC my_custom_proc @id = 1, @name = 'test'
+----
+
+# ============================================================
+# EXEC with OUTPUT parameter syntax — parse error
+# OUTPUT parameters are not supported by the TDS parser.
+# ============================================================
+
+exec error=(parse error)
+EXEC sp_unknown @result OUTPUT
+----
+
+# ============================================================
+# DROP PROCEDURE
+# ============================================================
+
+# DROP PROCEDURE for a nonexistent procedure (IF EXISTS succeeds silently).
+exec
+DROP PROCEDURE IF EXISTS test_proc
+----
+
+# Cleanup.
+exec
+DROP VIEW sp_proc_view
+----
+
+exec
+DROP TABLE sp_proc_test
+----

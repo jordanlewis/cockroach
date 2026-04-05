@@ -69,6 +69,32 @@ EXEC sp_helptext 'nonexistent_object_xyz'
 ----
 
 # ============================================================
+# EXEC with named parameters — system stored procedures
+# Named parameters use @param=value syntax and are handled by
+# the parser/executor path (not the catalog regex path).
+# ============================================================
+
+# sp_tables with named @table_name parameter.
+exec
+EXEC sp_tables @table_name = 'exec_sp_test'
+----
+
+# sp_columns with named @table_name parameter.
+exec
+EXEC sp_columns @table_name = 'exec_sp_test'
+----
+
+# sp_tables with named parameter (no spaces around =).
+exec
+EXEC sp_tables @table_name='exec_sp_test'
+----
+
+# sp_columns with named parameter (no spaces around =).
+exec
+EXEC sp_columns @table_name='exec_sp_test'
+----
+
+# ============================================================
 # EXEC unknown procedure — error
 # Source: go-mssqldb queries_test.go ("exec bad")
 # ============================================================
