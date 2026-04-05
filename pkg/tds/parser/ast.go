@@ -676,6 +676,18 @@ func (e *StringLit) String() string {
 	return fmt.Sprintf("'%s'", escaped)
 }
 
+// BinaryLit represents a binary hex literal (0xDEADBEEF). HexDigits contains
+// only the hex characters without the leading "0x" prefix.
+type BinaryLit struct {
+	HexDigits string
+}
+
+func (*BinaryLit) exprNode() {}
+
+func (e *BinaryLit) String() string {
+	return fmt.Sprintf("0x%s", e.HexDigits)
+}
+
 // NullLit represents the NULL literal.
 type NullLit struct{}
 

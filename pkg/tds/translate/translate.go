@@ -915,6 +915,9 @@ func translateExpr(expr parser.Expr) string {
 	case *parser.StarExpr:
 		return "*"
 
+	case *parser.BinaryLit:
+		return fmt.Sprintf("'\\x%s'", e.HexDigits)
+
 	case *parser.IntLit:
 		return fmt.Sprintf("%d", e.Value)
 
