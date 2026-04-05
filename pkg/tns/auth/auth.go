@@ -156,8 +156,8 @@ type Handshaker struct {
 // Handshake performs the full TNS authentication sequence:
 //  1. CONNECT/ACCEPT packet exchange
 //  2. Native Services Negotiation (NSN/ANO) — optional, used by sqlplus
-//  3. Protocol negotiation
-//  4. Data type and charset negotiation
+//  3. Protocol negotiation (client sends, server responds)
+//  4. Data type negotiation (server sends proactively)
 //  5. O5LOGON challenge-response authentication
 //  6. NLS parameter exchange
 //
@@ -172,7 +172,11 @@ func (h *Handshaker) Handshake() error {
 	if err := h.handleProtocolNeg(); err != nil {
 		return errors.Wrap(err, "protocol negotiation")
 	}
-	if err := h.handleDataTypeNeg(); err != nil {
+	// In the TTC protocol, the server sends data type negotiation
+	// proactively after protocol negotiation — the client does not
+	// request it. This matches the behavior of real Oracle servers
+	// and is required for sqlplus compatibility.
+	if err := h.sendDataTypeNeg(); err != nil {
 		return errors.Wrap(err, "data type negotiation")
 	}
 	if err := h.handleAuth(); err != nil {
@@ -231,6 +235,10 @@ func (h *Handshaker) handleConnect() error {
 // handleProtocolNeg reads the protocol negotiation DATA packet and sends
 // a response. Protocol negotiation establishes the TTI capabilities each
 // side supports.
+//
+// The client sends: func_code(1) + version(1) + compat(1) + flags(1) +
+// platform_banner(null-terminated). The server responds with the same
+// structure including a server platform banner.
 func (h *Handshaker) handleProtocolNeg() error {
 	ttiPayload, err := h.readDataPayloadOrPending()
 	if err != nil {
@@ -247,38 +255,27 @@ func (h *Handshaker) handleProtocolNeg() error {
 		)
 	}
 
-	// Respond with our protocol negotiation. The response echoes the
-	// function code and includes our supported protocol version bytes.
-	resp := []byte{
+	// Respond with protocol version, compatibility flag, and a server
+	// platform banner (null-terminated) matching the format that Oracle
+	// clients like sqlplus expect.
+	serverBanner := "x86_64/Linux 2.4.xx\x00"
+	resp := make([]byte, 0, 4+len(serverBanner)+2)
+	resp = append(resp,
 		byte(TTIProtocolNeg),
-		0x06,       // protocol version
-		0x00, 0x00, // flags
-		0x00, 0x00, // server banner length (none)
-		byte(charsetID >> 8), byte(charsetID & 0xFF), // character set
-	}
+		0x06,                     // protocol version
+		0x00,                     // compatibility/options
+		0x00,                     // flags
+	)
+	resp = append(resp, serverBanner...)
+	resp = append(resp, byte(charsetID>>8), byte(charsetID&0xFF))
 	return h.writeDataPayload(resp)
 }
 
-// handleDataTypeNeg reads the data type negotiation packet and responds
-// with the server's supported types and character set.
-func (h *Handshaker) handleDataTypeNeg() error {
-	ttiPayload, err := h.readDataPayload()
-	if err != nil {
-		return err
-	}
-	if len(ttiPayload) < 1 {
-		return errors.New("empty data type negotiation payload")
-	}
-	funcCode := tnswire.TTIFuncCode(ttiPayload[0])
-	if funcCode != TTIDataTypeNeg {
-		return errors.Newf(
-			"expected data type negotiation (0x%02x), got 0x%02x",
-			byte(TTIDataTypeNeg), byte(funcCode),
-		)
-	}
-
-	// Respond with server's data type capabilities. The payload encodes the
-	// character set (AL32UTF8 = 873) and the server's supported data types.
+// sendDataTypeNeg sends the server's data type negotiation to the client.
+// In the TTC protocol, the server sends this proactively after protocol
+// negotiation — the client does not send a separate request for it. This
+// is required for sqlplus compatibility.
+func (h *Handshaker) sendDataTypeNeg() error {
 	resp := encodeDataTypeNegResponse()
 	return h.writeDataPayload(resp)
 }
