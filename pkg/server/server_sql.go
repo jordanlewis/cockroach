@@ -1730,8 +1730,13 @@ func (s *SQLServer) preStart(
 	// Set up dynamic TDS server management. The TDS server is started
 	// and stopped in response to the server.tds.enabled cluster setting,
 	// allowing operators to enable TDS on a running server without restart.
-	if err := s.watchTDS(ctx, stopper); err != nil {
-		return err
+	// TDS binds to a fixed port and should only run on the system tenant;
+	// secondary SQL servers (shared-process virtual clusters) must not
+	// attempt to bind the same port.
+	if s.execCfg.Codec.ForSystemTenant() {
+		if err := s.watchTDS(ctx, stopper); err != nil {
+			return err
+		}
 	}
 
 	// NB: While the pgServer is started at this point, the
@@ -2364,6 +2369,7 @@ func (s *SQLServer) startTDS(ctx context.Context) error {
 	log.Ops.Infof(ctx, "TDS server listening on %s", srv.Addr())
 	return nil
 }
+
 // MetricsRegistry returns the application-level metrics registry.
 func (s *SQLServer) MetricsRegistry() *metric.Registry {
 	return s.metricsRegistry
