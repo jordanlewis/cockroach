@@ -262,9 +262,9 @@ func (h *Handshaker) handleProtocolNeg() error {
 	resp := make([]byte, 0, 4+len(serverBanner)+2)
 	resp = append(resp,
 		byte(TTIProtocolNeg),
-		0x06,                     // protocol version
-		0x00,                     // compatibility/options
-		0x00,                     // flags
+		0x06, // protocol version
+		0x00, // compatibility/options
+		0x00, // flags
 	)
 	resp = append(resp, serverBanner...)
 	resp = append(resp, byte(charsetID>>8), byte(charsetID&0xFF))
@@ -459,6 +459,121 @@ func encodeDataTypeNegResponse() []byte {
 		0x01,       // compiletime charset form
 		0x00, 0x01, // ncharset ID (AL16UTF16 = 2000, but simplified)
 	)
+	return buf
+}
+
+// BuildServerProtoNegResponse builds the complete server protocol negotiation
+// response including the capability arrays. This is sent to the client as
+// func code 0x01 with embedded charset and capability data.
+func BuildServerProtoNegResponse() []byte {
+	serverBanner := "x86_64/Linux 2.4.xx\x00"
+	resp := make([]byte, 0, 256)
+	resp = append(resp,
+		byte(TTIProtocolNeg),
+		0x06, // TTC protocol version 6
+		0x00, // skipped/compat byte
+	)
+	resp = append(resp, serverBanner...)
+
+	// Character set: AL32UTF8 (873) in little-endian.
+	resp = append(resp, byte(charsetID&0xFF), byte(charsetID>>8))
+	// Server flags.
+	resp = append(resp, 0x01)
+	// Character set element count (little-endian): 0.
+	resp = append(resp, 0x00, 0x00)
+
+	// Capability data block (FDO). Contains sub-array lengths at positions
+	// 5 and 6, plus national charset at offset 6+arr[5]+arr[6]+3.
+	capDataBlock := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, // bytes 0-4: FDO info
+		0x00,       // byte 5: sub-array 1 length
+		0x00,       // byte 6: sub-array 2 length
+		0x00, 0x00, // bytes 7-8: padding
+		0x07, 0xD0, // bytes 9-10: ncharset (AL16UTF16=2000, big-endian)
+	}
+	// Capability data length (big-endian).
+	resp = append(resp, byte(len(capDataBlock)>>8), byte(len(capDataBlock)&0xFF))
+	resp = append(resp, capDataBlock...)
+
+	// Server compiletime capabilities — feature flags describing what
+	// the server supports. Values based on go-ora defaults for Oracle 12c+.
+	resp = append(resp, byte(len(serverCompileTimeCaps)))
+	resp = append(resp, serverCompileTimeCaps...)
+
+	// Server runtime capabilities.
+	resp = append(resp, byte(len(serverRuntimeCaps)))
+	resp = append(resp, serverRuntimeCaps...)
+
+	return resp
+}
+
+// serverCompileTimeCaps defines the server's compiletime capabilities.
+// Each position has a specific meaning in the TTC protocol; key positions
+// include [7] (TTC version) and [27] (type representation format).
+var serverCompileTimeCaps = []byte{
+	6, 1, 0, 0, 0, 0, 0, 12,
+	1, 1, 1, 1, 1, 1, 0, 41,
+	144, 3, 7, 3, 0, 1, 0, 79,
+	1, 55, 4, 1, 0, 0, 0, 28,
+	0, 0, 10, 160, 3, 179, 0, 15,
+	6,
+}
+
+// serverRuntimeCaps defines the server's runtime capabilities.
+var serverRuntimeCaps = []byte{2, 1, 0, 0, 0, 0, 0}
+
+// ExportServerCompileTimeCaps returns a copy of the compile-time caps for testing.
+func ExportServerCompileTimeCaps() []byte {
+	return append([]byte(nil), serverCompileTimeCaps...)
+}
+
+// ExportServerRuntimeCaps returns a copy of the runtime caps for testing.
+func ExportServerRuntimeCaps() []byte {
+	return append([]byte(nil), serverRuntimeCaps...)
+}
+
+// BuildServerDTY builds the server's TTIDTY (data type negotiation) response.
+// This is sent after the protocol negotiation response. The server sends
+// timezone data and type representation entries.
+func BuildServerDTY() []byte {
+	buf := make([]byte, 0, 64)
+	buf = append(buf, byte(TTIDataTypeNeg))
+
+	// Timezone data (11 bytes) — sent when RuntimeCap[1] bit 0 is set.
+	buf = append(buf,
+		128, 0, 0, 0,
+		60, // hours + 60 (UTC: 0+60=60)
+		60, // minutes + 60 (UTC: 0+60=60)
+		60, // seconds + 60 (UTC: 0+60=60)
+		128, 0, 0, 0,
+	)
+	// Timezone version (4 bytes) — sent when CompileTimeCaps[37] bit 1 is set.
+	buf = append(buf, 0, 0, 0, 21)
+
+	// Type representation entries. Since CompileTimeCaps[27]=1 (non-zero),
+	// we use 2-byte big-endian format. We send a minimal set of core types.
+	typeReps := [][3]int16{
+		{1, 1, 1},     // VARCHAR2
+		{2, 2, 10},    // NUMBER
+		{8, 8, 1},     // LONG
+		{12, 12, 10},  // DATE
+		{23, 23, 1},   // RAW
+		{24, 24, 1},   // LONG RAW
+		{96, 96, 1},   // CHAR
+		{100, 100, 1}, // BINARY_FLOAT
+		{101, 101, 1}, // BINARY_DOUBLE
+		{112, 112, 1}, // CLOB
+		{113, 113, 1}, // BLOB
+	}
+	for _, tr := range typeReps {
+		for _, v := range tr {
+			buf = append(buf, byte(v>>8), byte(v&0xFF))
+		}
+		buf = append(buf, 0, 0) // trailing zero per entry
+	}
+	// Terminator: 0x0000.
+	buf = append(buf, 0, 0)
+
 	return buf
 }
 

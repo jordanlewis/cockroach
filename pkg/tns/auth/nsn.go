@@ -82,13 +82,13 @@ func (h *Handshaker) handleNSN() error {
 	// We don't need to fully parse the client's service proposals.
 	// Just build a response that accepts the supervisor and declines
 	// everything else.
-	resp := buildNSNResponse(serviceCount)
+	resp := BuildNSNResponse(serviceCount)
 	return h.writeDataPayload(resp)
 }
 
-// buildNSNResponse constructs the server's NSN response that declines
+// BuildNSNResponse constructs the server's NSN response that declines
 // all optional security services.
-func buildNSNResponse(clientServiceCount int) []byte {
+func BuildNSNResponse(clientServiceCount int) []byte {
 	// We respond with 4 services regardless of what the client sent,
 	// as Oracle clients expect all 4 service types in the response.
 	const numServices = 4

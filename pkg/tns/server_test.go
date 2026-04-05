@@ -526,6 +526,186 @@ func (l *loggingRW) Write(b []byte) (int, error) {
 	return l.rw.Write(b)
 }
 
+// TestTNSSqlplusDiagnostic performs a step-by-step handshake with sqlplus,
+// controlling each phase manually to identify exactly where the protocol
+// diverges. After the protocol negotiation response, it waits to see what
+// the client sends next (TTIDTY, MARKER, or something else).
+func TestTNSSqlplusDiagnostic(t *testing.T) {
+	if _, err := exec.LookPath("sqlplus"); err != nil {
+		t.Skip("sqlplus not found in PATH")
+	}
+
+	listener, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+
+	// Start sqlplus in background.
+	go func() {
+		connectStr := fmt.Sprintf("test/test@//localhost:%s/ORCL", port)
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "sqlplus", "-L", connectStr)
+		cmd.Stdin = strings.NewReader("exit\n")
+		out, cmdErr := cmd.CombinedOutput()
+		t.Logf("sqlplus output:\n%s", string(out))
+		if cmdErr != nil {
+			t.Logf("sqlplus error: %v", cmdErr)
+		}
+	}()
+
+	// Accept connection.
+	type acceptResult struct {
+		conn net.Conn
+		err  error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		c, acceptErr := listener.Accept()
+		acceptCh <- acceptResult{conn: c, err: acceptErr}
+	}()
+	var conn net.Conn
+	select {
+	case result := <-acceptCh:
+		require.NoError(t, result.err)
+		conn = result.conn
+	case <-time.After(10 * time.Second):
+		t.Fatal("no connection from sqlplus within 10s")
+	}
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(15*time.Second)))
+
+	// Wrap conn with raw I/O logging to see exactly what goes on the wire.
+	logConn := &loggingRW{rw: conn, t: t}
+	_ = logConn // use logConn for tnswire calls below
+
+	// Phase 1: CONNECT/ACCEPT
+	hdr, payload, err := tnswire.ReadPacket(conn)
+	require.NoError(t, err)
+	require.Equal(t, tnswire.PacketTypeConnect, hdr.Type)
+	connPkt, err := tnswire.DecodeConnect(payload)
+	require.NoError(t, err)
+	t.Logf("CONNECT: version=%d, flags=0x%02x 0x%02x, data=%q",
+		connPkt.Version, connPkt.ConnectFlags0, connPkt.ConnectFlags1, connPkt.ConnectData)
+
+	negotiatedVersion := uint16(auth.ProtocolVersion)
+	if connPkt.Version < negotiatedVersion {
+		negotiatedVersion = connPkt.Version
+	}
+	acceptPayload := tnswire.EncodeAccept(tnswire.AcceptPacket{
+		Version:        negotiatedVersion,
+		ServiceOptions: connPkt.ServiceOptions,
+		SDUSize:        auth.DefaultSDUSize,
+		TDUSize:        auth.DefaultTDUSize,
+		ValueOfOne:     1,
+		ConnectFlags0:  connPkt.ConnectFlags0,
+		ConnectFlags1:  connPkt.ConnectFlags1,
+	})
+	require.NoError(t, tnswire.WritePacket(conn, tnswire.PacketTypeAccept, acceptPayload))
+	t.Log("Sent ACCEPT")
+
+	// Phase 2: NSN
+	hdr, payload, err = tnswire.ReadPacket(conn)
+	require.NoError(t, err)
+	require.Equal(t, tnswire.PacketTypeData, hdr.Type)
+	dataPkt, err := tnswire.DecodeData(payload)
+	require.NoError(t, err)
+	t.Logf("NSN payload (%d bytes): %s", len(dataPkt.Payload), hex.EncodeToString(dataPkt.Payload[:min(32, len(dataPkt.Payload))]))
+
+	// Send NSN response (use Handshaker's NSN handler indirectly by building response).
+	nsnResp := buildFullNSNResponse()
+	writeDataPayloadRaw(t, conn, nsnResp)
+	t.Log("Sent NSN response")
+
+	// Phase 3: Protocol negotiation.
+	hdr, payload, err = tnswire.ReadPacket(conn)
+	require.NoError(t, err)
+	require.Equal(t, tnswire.PacketTypeData, hdr.Type)
+	dataPkt, err = tnswire.DecodeData(payload)
+	require.NoError(t, err)
+	t.Logf("Proto neg payload (%d bytes):\n%s", len(dataPkt.Payload), hex.Dump(dataPkt.Payload))
+
+	// 4-byte header (matching sqlplus format) + LE charset + full caps.
+	// sqlplus sends 4 bytes before banner (01 06 05 00); we mirror that
+	// structure in the response.
+	serverBanner := "x86_64/Linux 2.4.xx\x00"
+	protoResp := make([]byte, 0, 128)
+	protoResp = append(protoResp,
+		byte(auth.TTIProtocolNeg),
+		0x06, // protocol version
+		0x00, // compat byte (go-ora always sends 0)
+		0x00, // extra byte (sqlplus sends 4 bytes before banner)
+	)
+	protoResp = append(protoResp, serverBanner...)
+	protoResp = append(protoResp, byte(873&0xFF), byte(873>>8)) // charset LE
+	protoResp = append(protoResp, 0x01)                         // flags
+	protoResp = append(protoResp, 0x00, 0x00)                   // elem_count LE
+	// FDO block (capability data).
+	fdo := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xD0}
+	protoResp = append(protoResp, byte(len(fdo)>>8), byte(len(fdo)&0xFF)) // fdo_len BE
+	protoResp = append(protoResp, fdo...)
+	// Compiletime capabilities.
+	cc := auth.ExportServerCompileTimeCaps()
+	protoResp = append(protoResp, byte(len(cc)))
+	protoResp = append(protoResp, cc...)
+	// Runtime capabilities.
+	rc := auth.ExportServerRuntimeCaps()
+	protoResp = append(protoResp, byte(len(rc)))
+	protoResp = append(protoResp, rc...)
+	writeDataPayloadRaw(t, conn, protoResp)
+	t.Logf("Sent proto neg response (%d bytes):\n%s", len(protoResp), hex.Dump(protoResp))
+
+	// Send full DTY after proto neg.
+	dtyResp := auth.BuildServerDTY()
+	writeDataPayloadRaw(t, conn, dtyResp)
+	t.Logf("Sent DTY response (%d bytes):\n%s", len(dtyResp), hex.Dump(dtyResp))
+
+	// Phase 4: Read client's next message, handle MARKER with reset.
+	for attempt := 0; attempt < 3; attempt++ {
+		t.Logf("Waiting for client's next message (attempt %d)...", attempt)
+		hdr, payload, err = tnswire.ReadPacket(conn)
+		if err != nil {
+			t.Logf("ReadPacket error: %v", err)
+			break
+		}
+		t.Logf("Client sent: type=%d (%s), length=%d", hdr.Type, hdr.Type, hdr.Length)
+		if hdr.Type == tnswire.PacketTypeData {
+			dataPkt, err = tnswire.DecodeData(payload)
+			require.NoError(t, err)
+			t.Logf("DATA payload (%d bytes):\n%s", len(dataPkt.Payload), hex.Dump(dataPkt.Payload))
+			if len(dataPkt.Payload) > 0 {
+				t.Logf("TTI func code: 0x%02x", dataPkt.Payload[0])
+			}
+			break
+		} else if hdr.Type == tnswire.PacketTypeMarker {
+			t.Logf("MARKER payload: %s", hex.EncodeToString(payload))
+			// Respond with MARKER to complete the reset handshake.
+			markerResp := tnswire.EncodeMarker(tnswire.MarkerPacket{
+				Type: tnswire.MarkerType(payload[0]),
+				Data: 0x00,
+			})
+			require.NoError(t, tnswire.WritePacket(conn, tnswire.PacketTypeMarker, markerResp))
+			t.Log("Sent MARKER response")
+		}
+	}
+}
+
+// buildFullNSNResponse builds an NSN response that properly declines all
+// optional services. This matches the auth.buildNSNResponse format with
+// supervisor, auth, encryption, and data integrity services.
+func buildFullNSNResponse() []byte {
+	return auth.BuildNSNResponse(4)
+}
+
+func writeDataPayloadRaw(t *testing.T, conn net.Conn, ttiPayload []byte) {
+	t.Helper()
+	dataPayload := tnswire.EncodeData(tnswire.DataPacket{
+		Flags:   0,
+		Payload: ttiPayload,
+	})
+	require.NoError(t, tnswire.WritePacket(conn, tnswire.PacketTypeData, dataPayload))
+}
+
 // decodeKVPairs decodes auth KV pairs from the O5LOGON protocol.
 func decodeKVPairs(t *testing.T, data []byte) map[string]string {
 	t.Helper()
