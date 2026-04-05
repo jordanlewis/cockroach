@@ -227,11 +227,12 @@ zero
 # ============================================================
 
 # ============================================================
-# Error 1: DECLARE without @ prefix
-# The parser requires variable names to start with @.
+# Error 1: DECLARE without @ prefix and without CURSOR keyword
+# The parser requires variable names to start with @ (for variables)
+# or to be followed by CURSOR (for cursor declarations).
 # ============================================================
 
-exec error=(expected @variable)
+exec error=(expected CURSOR)
 DECLARE x INT
 ----
 

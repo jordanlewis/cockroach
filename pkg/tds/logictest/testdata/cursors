@@ -13,7 +13,7 @@
 # ============================================================
 
 exec
-CREATE TABLE cursor_test (id INT PRIMARY KEY, name VARCHAR(50))
+CREATE TABLE cursor_test (id INT NOT NULL, name VARCHAR(50))
 ----
 
 exec
