@@ -24,6 +24,7 @@ const (
 	tokenInt
 	tokenFloat
 	tokenString
+	tokenBinaryLit // 0x... hex byte literal
 
 	// Punctuation.
 	tokenLParen
@@ -525,9 +526,25 @@ func (l *lexer) scanBracketIdent() token {
 	return token{typ: tokenIdent, val: val, pos: start}
 }
 
-// scanNumber scans an integer or floating-point literal.
+// scanNumber scans an integer, floating-point, or binary hex literal (0x...).
+// T-SQL binary literals use the form 0xDEADBEEF to represent VARBINARY values.
 func (l *lexer) scanNumber() token {
 	start := l.pos
+
+	// Check for hex literal: 0x...
+	if l.input[l.pos] == '0' && l.pos+1 < len(l.input) &&
+		(l.input[l.pos+1] == 'x' || l.input[l.pos+1] == 'X') {
+		l.pos += 2 // skip "0x"
+		hexStart := l.pos
+		for l.pos < len(l.input) && isHexDigit(l.input[l.pos]) {
+			l.pos++
+		}
+		if l.pos == hexStart {
+			return token{typ: tokenError, val: "empty hex literal", pos: start}
+		}
+		return token{typ: tokenBinaryLit, val: l.input[hexStart:l.pos], pos: start}
+	}
+
 	for l.pos < len(l.input) && isDigit(l.input[l.pos]) {
 		l.pos++
 	}
@@ -601,6 +618,10 @@ func (l *lexer) skipWhitespaceAndComments() {
 
 func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
+}
+
+func isHexDigit(ch byte) bool {
+	return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
 }
 
 func isIdentStart(ch byte) bool {

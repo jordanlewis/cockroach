@@ -1880,6 +1880,10 @@ func (p *parser) parsePrimary() (Expr, error) {
 	tok := p.lex.peek()
 
 	switch tok.typ {
+	case tokenBinaryLit:
+		p.lex.next()
+		return &BinaryLit{HexDigits: tok.val}, nil
+
 	case tokenInt:
 		p.lex.next()
 		val, err := strconv.ParseInt(tok.val, 10, 64)
