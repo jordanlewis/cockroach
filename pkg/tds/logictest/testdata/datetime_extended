@@ -1,0 +1,184 @@
+# Extended date/time tests: DATEADD/DATEDIFF edge cases, date arithmetic.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference: date functions
+#   - SQL Server T-SQL reference: DATEADD, DATEDIFF, DATEPART, DATENAME
+
+# ============================================================
+# DATEADD with various dateparts
+# ============================================================
+
+# Add years.
+query
+SELECT DATEADD(year, 5, '2020-06-15')
+----
+2025-06-15 00:00:00+00
+
+# Add months.
+query
+SELECT DATEADD(month, 3, '2026-01-15')
+----
+2026-04-15 00:00:00+00
+
+# Add hours.
+query
+SELECT DATEADD(hour, 12, '2026-01-01 06:00:00')
+----
+2026-01-01 18:00:00+00
+
+# Add minutes.
+query
+SELECT DATEADD(minute, 90, '2026-01-01 00:00:00')
+----
+2026-01-01 01:30:00+00
+
+# Negative interval (subtract days).
+query
+SELECT DATEADD(day, -7, '2026-01-15')
+----
+2026-01-08 00:00:00+00
+
+# ============================================================
+# DATEDIFF with various dateparts
+# ============================================================
+
+# Days between dates.
+query
+SELECT DATEDIFF(day, '2026-01-01', '2026-02-01')
+----
+31
+
+# Months between dates.
+query
+SELECT DATEDIFF(month, '2026-01-15', '2026-04-15')
+----
+3
+
+# Years between dates.
+query
+SELECT DATEDIFF(year, '2020-01-01', '2026-01-01')
+----
+6
+
+# Hours between datetimes.
+query
+SELECT DATEDIFF(hour, '2026-01-01 00:00:00', '2026-01-01 12:30:00')
+----
+12
+
+# ============================================================
+# DATEPART — extract date components
+# ============================================================
+
+query
+SELECT DATEPART(year, '2026-07-04')
+----
+2026
+
+query
+SELECT DATEPART(month, '2026-07-04')
+----
+7
+
+query
+SELECT DATEPART(day, '2026-07-04')
+----
+4
+
+query
+SELECT DATEPART(hour, '2026-07-04 15:30:45')
+----
+15
+
+query
+SELECT DATEPART(minute, '2026-07-04 15:30:45')
+----
+30
+
+query
+SELECT DATEPART(second, '2026-07-04 15:30:45')
+----
+45
+
+# ============================================================
+# DATENAME — text representation of date parts
+# ============================================================
+
+query
+SELECT DATENAME(month, '2026-01-15')
+----
+January
+
+query
+SELECT DATENAME(month, '2026-12-25')
+----
+December
+
+# ============================================================
+# EOMONTH — end of month
+# ============================================================
+
+# February in non-leap year.
+query
+SELECT EOMONTH('2026-02-15')
+----
+2026-02-28
+
+# February in leap year.
+query
+SELECT EOMONTH('2024-02-10')
+----
+2024-02-29
+
+# December.
+query
+SELECT EOMONTH('2026-12-01')
+----
+2026-12-31
+
+# ============================================================
+# Date functions in expressions
+# ============================================================
+
+# Year difference between two dates.
+query
+SELECT YEAR('2026-06-15') - YEAR('2020-01-01')
+----
+6
+
+# Add days and extract month.
+query
+SELECT MONTH(DATEADD(day, 60, '2026-01-01'))
+----
+3
+
+# ============================================================
+# Date comparison
+# ============================================================
+
+exec
+CREATE TABLE dt_cmp (id INT, created DATE)
+----
+
+exec
+INSERT INTO dt_cmp (id, created) VALUES (1, '2026-01-01')
+----
+
+exec
+INSERT INTO dt_cmp (id, created) VALUES (2, '2026-06-15')
+----
+
+exec
+INSERT INTO dt_cmp (id, created) VALUES (3, '2026-12-31')
+----
+
+query colnames
+SELECT id FROM dt_cmp WHERE created > '2026-03-01' ORDER BY id
+----
+id
+2
+3
+
+exec
+DROP TABLE dt_cmp
+----

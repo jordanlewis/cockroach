@@ -1,0 +1,185 @@
+# Window function tests: OVER, PARTITION BY, ORDER BY, ranking.
+#
+# Window functions are standard SQL and pass through to CockroachDB.
+# The TDS parser handles the OVER clause with PARTITION BY and ORDER BY.
+# These tests verify that the T-SQL syntax is correctly parsed and
+# translated for common window function patterns.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference: window functions
+#   - SQL Server T-SQL reference: OVER clause
+
+# ============================================================
+# Setup
+# ============================================================
+
+exec
+CREATE TABLE wf_data (id INT, dept VARCHAR(20), name VARCHAR(50), salary INT)
+----
+
+exec
+INSERT INTO wf_data (id, dept, name, salary) VALUES (1, 'eng', 'alice', 80000), (2, 'eng', 'bob', 90000), (3, 'eng', 'carol', 85000), (4, 'sales', 'dave', 70000), (5, 'sales', 'eve', 75000), (6, 'hr', 'frank', 65000)
+----
+
+# ============================================================
+# ROW_NUMBER() — unique row ordering
+# ============================================================
+
+query colnames
+SELECT name, ROW_NUMBER() OVER (ORDER BY salary DESC) AS rn FROM wf_data
+----
+name  rn
+bob  1
+carol  2
+alice  3
+eve  4
+dave  5
+frank  6
+
+# ============================================================
+# ROW_NUMBER() with PARTITION BY
+# ============================================================
+
+query colnames
+SELECT dept, name, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) AS dept_rank FROM wf_data ORDER BY dept, dept_rank
+----
+dept  name  dept_rank
+eng  bob  1
+eng  carol  2
+eng  alice  3
+hr  frank  1
+sales  eve  1
+sales  dave  2
+
+# ============================================================
+# RANK() — ranking with gaps for ties
+# ============================================================
+
+exec
+CREATE TABLE wf_rank (id INT, score INT)
+----
+
+exec
+INSERT INTO wf_rank (id, score) VALUES (1, 100), (2, 90), (3, 90), (4, 80)
+----
+
+query colnames
+SELECT id, score, RANK() OVER (ORDER BY score DESC) AS rnk FROM wf_rank ORDER BY id
+----
+id  score  rnk
+1  100  1
+2  90  2
+3  90  2
+4  80  4
+
+exec
+DROP TABLE wf_rank
+----
+
+# ============================================================
+# DENSE_RANK() — ranking without gaps
+# ============================================================
+
+exec
+CREATE TABLE wf_dense (id INT, score INT)
+----
+
+exec
+INSERT INTO wf_dense (id, score) VALUES (1, 100), (2, 90), (3, 90), (4, 80)
+----
+
+query colnames
+SELECT id, score, DENSE_RANK() OVER (ORDER BY score DESC) AS drnk FROM wf_dense ORDER BY id
+----
+id  score  drnk
+1  100  1
+2  90  2
+3  90  2
+4  80  3
+
+exec
+DROP TABLE wf_dense
+----
+
+# ============================================================
+# SUM() OVER — running total
+# ============================================================
+
+query colnames
+SELECT name, salary, SUM(salary) OVER (ORDER BY salary) AS running_total FROM wf_data ORDER BY salary
+----
+name  salary  running_total
+frank  65000  65000
+dave  70000  135000
+eve  75000  210000
+alice  80000  290000
+carol  85000  375000
+bob  90000  465000
+
+# ============================================================
+# SUM() OVER with PARTITION BY — per-department totals
+# ============================================================
+
+query colnames
+SELECT dept, name, salary, SUM(salary) OVER (PARTITION BY dept) AS dept_total FROM wf_data ORDER BY dept, name
+----
+dept  name  salary  dept_total
+eng  alice  80000  255000
+eng  bob  90000  255000
+eng  carol  85000  255000
+hr  frank  65000  65000
+sales  dave  70000  145000
+sales  eve  75000  145000
+
+# ============================================================
+# AVG() OVER — per-department average
+# ============================================================
+
+query colnames
+SELECT name, salary, AVG(salary) OVER (PARTITION BY dept) AS dept_avg FROM wf_data ORDER BY name
+----
+name  salary  dept_avg
+alice  80000  85000
+bob  90000  85000
+carol  85000  85000
+dave  70000  72500
+eve  75000  72500
+frank  65000  65000
+
+# ============================================================
+# COUNT() OVER — windowed count
+# ============================================================
+
+query colnames
+SELECT name, COUNT(*) OVER (PARTITION BY dept) AS dept_size FROM wf_data ORDER BY name
+----
+name  dept_size
+alice  3
+bob  3
+carol  3
+dave  2
+eve  2
+frank  1
+
+# ============================================================
+# MIN() / MAX() OVER
+# ============================================================
+
+query colnames
+SELECT name, salary, MIN(salary) OVER (PARTITION BY dept) AS dept_min, MAX(salary) OVER (PARTITION BY dept) AS dept_max FROM wf_data ORDER BY name
+----
+name  salary  dept_min  dept_max
+alice  80000  80000  90000
+bob  90000  80000  90000
+carol  85000  80000  90000
+dave  70000  70000  75000
+eve  75000  70000  75000
+frank  65000  65000  65000
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE wf_data
+----

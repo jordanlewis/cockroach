@@ -1,0 +1,169 @@
+# @@IDENTITY, SCOPE_IDENTITY(), and @@ROWCOUNT tracking tests.
+#
+# These system variables should reflect DML operations performed
+# within the current session. Sybase ASE and SQL Server both support
+# @@IDENTITY and @@ROWCOUNT; SCOPE_IDENTITY() is SQL Server-specific.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference: @@identity, @@rowcount
+#   - SQL Server T-SQL reference: @@IDENTITY, SCOPE_IDENTITY()
+
+# ============================================================
+# @@ROWCOUNT tracks last statement's affected row count
+# ============================================================
+
+# At session start, @@ROWCOUNT is 0.
+query
+SELECT @@ROWCOUNT
+----
+0
+
+# Create a table for row counting tests.
+exec
+CREATE TABLE rc_test (id INT NOT NULL, val VARCHAR(50))
+----
+
+# INSERT one row — @@ROWCOUNT should be 1.
+exec
+INSERT INTO rc_test (id, val) VALUES (1, 'first')
+----
+
+query
+SELECT @@ROWCOUNT
+----
+1
+
+# INSERT multiple rows — @@ROWCOUNT should be 3.
+exec
+INSERT INTO rc_test (id, val) VALUES (2, 'second'), (3, 'third'), (4, 'fourth')
+----
+
+query
+SELECT @@ROWCOUNT
+----
+3
+
+# UPDATE matching rows — @@ROWCOUNT reflects updated count.
+exec
+UPDATE rc_test SET val = 'modified' WHERE id <= 2
+----
+
+query
+SELECT @@ROWCOUNT
+----
+2
+
+# UPDATE with no matching rows — @@ROWCOUNT should be 0.
+exec
+UPDATE rc_test SET val = 'nope' WHERE id = 999
+----
+
+query
+SELECT @@ROWCOUNT
+----
+0
+
+# DELETE specific rows — @@ROWCOUNT reflects deleted count.
+exec
+DELETE FROM rc_test WHERE id >= 3
+----
+
+query
+SELECT @@ROWCOUNT
+----
+2
+
+# SELECT also sets @@ROWCOUNT to number of rows returned.
+query
+SELECT id FROM rc_test ORDER BY id
+----
+1
+2
+
+query
+SELECT @@ROWCOUNT
+----
+2
+
+# Clean up.
+exec
+DROP TABLE rc_test
+----
+
+# ============================================================
+# @@IDENTITY tracks last identity value inserted
+# ============================================================
+
+# Create table with IDENTITY column.
+exec
+CREATE TABLE id_test (id INT IDENTITY(1,1), name VARCHAR(50))
+----
+
+# Before any INSERT, @@IDENTITY is NULL.
+query
+SELECT @@IDENTITY
+----
+NULL
+
+# Insert first row — @@IDENTITY should become 1.
+exec
+INSERT INTO id_test (name) VALUES ('alice')
+----
+
+query
+SELECT @@IDENTITY
+----
+1
+
+# Insert second row — @@IDENTITY should become 2.
+exec
+INSERT INTO id_test (name) VALUES ('bob')
+----
+
+query
+SELECT @@IDENTITY
+----
+2
+
+# SCOPE_IDENTITY() should return the same as @@IDENTITY.
+query
+SELECT SCOPE_IDENTITY()
+----
+2
+
+# Verify the table contents match the identity values.
+query colnames
+SELECT id, name FROM id_test ORDER BY id
+----
+id  name
+1  alice
+2  bob
+
+# Clean up.
+exec
+DROP TABLE id_test
+----
+
+# ============================================================
+# @@IDENTITY persists after non-identity INSERT
+# ============================================================
+
+# @@IDENTITY should still reflect the last identity insert
+# even after a non-identity DML.
+exec
+CREATE TABLE no_id (val INT)
+----
+
+exec
+INSERT INTO no_id (val) VALUES (999)
+----
+
+# @@IDENTITY should still be 2 from the previous IDENTITY INSERT.
+query
+SELECT @@IDENTITY
+----
+2
+
+exec
+DROP TABLE no_id
+----

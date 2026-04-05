@@ -1,0 +1,102 @@
+# Common Table Expression (CTE) and derived table tests.
+#
+# WITH ... AS defines a named temporary result set that exists for the
+# duration of a single query. CTEs are standard SQL and pass through
+# to CockroachDB after T-SQL expression translation.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference: common table expressions
+#   - SQL Server T-SQL reference: WITH common_table_expression
+
+# ============================================================
+# Setup
+# ============================================================
+
+exec
+CREATE TABLE cte_emp (id INT, name VARCHAR(50), manager_id INT, salary INT)
+----
+
+exec
+INSERT INTO cte_emp (id, name, manager_id, salary) VALUES (1, 'alice', NULL, 100000), (2, 'bob', 1, 80000), (3, 'carol', 1, 85000), (4, 'dave', 2, 70000), (5, 'eve', 2, 75000), (6, 'frank', 3, 72000)
+----
+
+# ============================================================
+# Simple CTE
+# ============================================================
+
+query colnames
+WITH high_earners AS (SELECT name, salary FROM cte_emp WHERE salary > 80000) SELECT name, salary FROM high_earners ORDER BY salary DESC
+----
+name  salary
+alice  100000
+carol  85000
+
+# ============================================================
+# CTE with aggregation
+# ============================================================
+
+query colnames
+WITH dept_stats AS (SELECT manager_id, COUNT(*) AS cnt, SUM(salary) AS total FROM cte_emp WHERE manager_id IS NOT NULL GROUP BY manager_id) SELECT manager_id, cnt, total FROM dept_stats ORDER BY manager_id
+----
+manager_id  cnt  total
+1  2  165000
+2  2  145000
+3  1  72000
+
+# ============================================================
+# CTE used in JOIN
+# ============================================================
+
+query colnames
+WITH managers AS (SELECT id, name FROM cte_emp WHERE id IN (SELECT DISTINCT manager_id FROM cte_emp WHERE manager_id IS NOT NULL)) SELECT m.name AS manager, e.name AS report FROM managers m INNER JOIN cte_emp e ON m.id = e.manager_id ORDER BY m.name, e.name
+----
+manager  report
+alice  bob
+alice  carol
+bob  dave
+bob  eve
+carol  frank
+
+# ============================================================
+# Multiple CTEs
+# ============================================================
+
+query colnames
+WITH team_alice AS (SELECT id, name FROM cte_emp WHERE manager_id = 1), team_bob AS (SELECT id, name FROM cte_emp WHERE manager_id = 2) SELECT 'alice_team' AS team, name FROM team_alice UNION ALL SELECT 'bob_team', name FROM team_bob ORDER BY team, name
+----
+team  name
+alice_team  bob
+alice_team  carol
+bob_team  dave
+bob_team  eve
+
+# ============================================================
+# Derived table (subquery in FROM)
+# ============================================================
+
+query colnames
+SELECT d.name, d.salary_rank FROM (SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) AS salary_rank FROM cte_emp) d WHERE d.salary_rank <= 3 ORDER BY d.salary_rank
+----
+name  salary_rank
+alice  1
+carol  2
+bob  3
+
+# ============================================================
+# Derived table with aggregation
+# ============================================================
+
+query colnames
+SELECT team_size, COUNT(*) AS num_managers FROM (SELECT manager_id, COUNT(*) AS team_size FROM cte_emp WHERE manager_id IS NOT NULL GROUP BY manager_id) sub GROUP BY team_size ORDER BY team_size
+----
+team_size  num_managers
+1  1
+2  2
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE cte_emp
+----

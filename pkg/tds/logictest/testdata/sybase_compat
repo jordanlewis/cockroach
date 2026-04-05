@@ -1,0 +1,166 @@
+# Sybase ASE compatibility tests.
+#
+# Tests features specific to Sybase ASE that the TDS frontend should handle.
+# These cover Sybase-specific syntax, types, and functions that may differ
+# from SQL Server behavior.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference manual
+#   - FreeTDS test patterns (LGPL)
+
+# ============================================================
+# Sybase ASE date/time types
+# ============================================================
+
+# BIGDATETIME (Sybase 15.5+) maps to TIMESTAMP.
+exec
+CREATE TABLE syb_dt (id INT, bdt BIGDATETIME, bt BIGTIME)
+----
+
+exec
+DROP TABLE syb_dt
+----
+
+# ============================================================
+# Sybase ASE string types: UNICHAR, UNIVARCHAR, UNITEXT
+# ============================================================
+
+exec
+CREATE TABLE syb_unicode (id INT, uc UNICHAR(20), uvc UNIVARCHAR(100), ut UNITEXT)
+----
+
+exec
+INSERT INTO syb_unicode (id, uc, uvc) VALUES (1, 'fixed', 'variable')
+----
+
+query colnames
+SELECT id, uc, uvc FROM syb_unicode WHERE id = 1
+----
+id  uc  uvc
+1  fixed  variable
+
+exec
+DROP TABLE syb_unicode
+----
+
+# ============================================================
+# Sybase ASE unsigned integer types
+# ============================================================
+
+# UNSIGNED INT maps to INT8 (wider type to avoid overflow).
+exec
+CREATE TABLE syb_unsigned (id INT, ui UNSIGNED INT, usi UNSIGNED SMALLINT, ubi UNSIGNED BIGINT)
+----
+
+exec
+INSERT INTO syb_unsigned (id, ui, usi) VALUES (1, 3000000000, 60000)
+----
+
+query colnames
+SELECT id, ui, usi FROM syb_unsigned WHERE id = 1
+----
+id  ui  usi
+1  3000000000  60000
+
+exec
+DROP TABLE syb_unsigned
+----
+
+# ============================================================
+# N-prefix strings (Unicode string literals)
+# ============================================================
+
+# N'...' should be accepted and treated as regular strings.
+query
+SELECT N'hello unicode'
+----
+hello unicode
+
+query
+SELECT N'résumé'
+----
+résumé
+
+query
+SELECT N'日本語'
+----
+日本語
+
+# ============================================================
+# LIST() function (Sybase ASE aggregate)
+# LIST() → string_agg() translation
+# ============================================================
+
+exec
+CREATE TABLE list_test (id INT, category VARCHAR(20))
+----
+
+exec
+INSERT INTO list_test (id, category) VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')
+----
+
+query
+SELECT LIST(category, ', ') FROM list_test
+----
+alpha, beta, gamma
+
+exec
+DROP TABLE list_test
+----
+
+# ============================================================
+# Sybase ASE ROWS LIMIT syntax
+# The Sybase ASE extension: SELECT ... ROWS LIMIT x [OFFSET y]
+# ============================================================
+
+exec
+CREATE TABLE rows_limit (id INT, val VARCHAR(10))
+----
+
+exec
+INSERT INTO rows_limit (id, val) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')
+----
+
+# ROWS LIMIT 3 — return first 3 rows.
+query colnames
+SELECT id, val FROM rows_limit ORDER BY id ROWS LIMIT 3
+----
+id  val
+1  a
+2  b
+3  c
+
+exec
+DROP TABLE rows_limit
+----
+
+# ============================================================
+# RAISERROR — Sybase ASE syntax with error number
+# ============================================================
+
+exec error=(Custom Sybase error)
+RAISERROR 50001, 'Custom Sybase error'
+----
+
+# ============================================================
+# SELECT TOP N (both Sybase and SQL Server)
+# ============================================================
+
+exec
+CREATE TABLE top_test (id INT, val VARCHAR(10))
+----
+
+exec
+INSERT INTO top_test (id, val) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')
+----
+
+query colnames
+SELECT TOP 2 id, val FROM top_test ORDER BY id
+----
+id  val
+1  a
+2  b
+
+exec
+DROP TABLE top_test
+----

@@ -1,0 +1,121 @@
+# Extended variable tests: variables in DML, complex expressions, scope.
+#
+# T-SQL variables (@var) are declared with DECLARE and assigned with SET
+# or SELECT @var = expr. They persist for the duration of the batch/session.
+#
+# Sources:
+#   - Sybase ASE 16.0 reference: local variables
+#   - SQL Server T-SQL reference: variables
+
+# ============================================================
+# Variables in INSERT statements
+# ============================================================
+
+exec
+CREATE TABLE var_test (id INT, val VARCHAR(100))
+----
+
+query colnames
+DECLARE @id INT = 1; DECLARE @val VARCHAR(100) = 'hello'; INSERT INTO var_test (id, val) VALUES (@id, @val); SELECT id, val FROM var_test WHERE id = 1
+----
+id  val
+1  hello
+
+# ============================================================
+# Variables in WHERE clauses
+# ============================================================
+
+exec
+INSERT INTO var_test (id, val) VALUES (2, 'world')
+----
+
+exec
+INSERT INTO var_test (id, val) VALUES (3, 'test')
+----
+
+query colnames
+DECLARE @target INT = 2; SELECT id, val FROM var_test WHERE id = @target
+----
+id  val
+2  world
+
+# ============================================================
+# Variables in UPDATE statements
+# ============================================================
+
+exec
+DECLARE @new_val VARCHAR(100) = 'updated'; DECLARE @which INT = 3; UPDATE var_test SET val = @new_val WHERE id = @which
+----
+
+query colnames
+SELECT id, val FROM var_test WHERE id = 3
+----
+id  val
+3  updated
+
+# ============================================================
+# Variable arithmetic
+# ============================================================
+
+query
+DECLARE @a INT = 5; DECLARE @b INT = 10; SELECT @a * @b + 1
+----
+51
+
+# ============================================================
+# Variable reassignment
+# ============================================================
+
+query
+DECLARE @x INT = 0; SET @x = @x + 10; SET @x = @x + 20; SELECT @x
+----
+30
+
+# ============================================================
+# Variable with ISNULL
+# ============================================================
+
+query
+DECLARE @num INT = 42; SELECT ISNULL(@num, 0)
+----
+42
+
+# ============================================================
+# Variable in CASE expression
+# ============================================================
+
+query
+DECLARE @status INT = 1; SELECT CASE @status WHEN 0 THEN 'inactive' WHEN 1 THEN 'active' ELSE 'unknown' END
+----
+active
+
+# ============================================================
+# Variable used across multiple statements
+# ============================================================
+
+query
+DECLARE @counter INT = 0; SET @counter = @counter + 1; SET @counter = @counter + 1; SET @counter = @counter + 1; SELECT @counter AS final
+----
+3
+
+# ============================================================
+# NULL variable behavior
+# ============================================================
+
+query
+DECLARE @x INT; SELECT @x
+----
+NULL
+
+query
+DECLARE @x INT; SET @x = NULL; SELECT ISNULL(@x, -1)
+----
+-1
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE var_test
+----

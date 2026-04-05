@@ -1,0 +1,99 @@
+# OUTPUT clause tests: INSERT/UPDATE/DELETE with OUTPUT → RETURNING.
+#
+# The OUTPUT clause returns data from modified rows. In T-SQL, it uses
+# inserted.* and deleted.* pseudo-tables. The TDS frontend translates
+# OUTPUT to RETURNING, stripping the inserted./deleted. prefixes.
+#
+# [SQL Server] OUTPUT is SQL Server 2005+. Sybase ASE does not have OUTPUT.
+#
+# Note: The TDS executor processes DML with RETURNING but does not send
+# result set tokens (ColMetaData/Row) back to the client for DML. The
+# OUTPUT clause is translated correctly and the DML executes, but the
+# returned values are discarded. These tests verify the DML succeeds.
+#
+# Sources:
+#   - SQL Server T-SQL reference: OUTPUT clause
+#   - go-mssqldb test patterns (BSD-3-Clause)
+
+# ============================================================
+# Setup
+# ============================================================
+
+exec
+CREATE TABLE out_test (id INT NOT NULL, name VARCHAR(50), status INT)
+----
+
+# ============================================================
+# INSERT ... OUTPUT inserted.*
+# ============================================================
+
+# OUTPUT on INSERT — the insert executes successfully with RETURNING.
+exec
+INSERT INTO out_test (id, name, status) OUTPUT inserted.id, inserted.name VALUES (1, 'alice', 1)
+----
+
+exec
+INSERT INTO out_test (id, name, status) OUTPUT inserted.id, inserted.name, inserted.status VALUES (2, 'bob', 0)
+----
+
+# Verify both rows were inserted.
+query colnames
+SELECT id, name, status FROM out_test ORDER BY id
+----
+id  name  status
+1  alice  1
+2  bob  0
+
+# ============================================================
+# UPDATE ... OUTPUT inserted.*
+# ============================================================
+
+exec
+UPDATE out_test SET status = 1 OUTPUT inserted.id, inserted.status WHERE id = 2
+----
+
+# Verify the update took effect.
+query colnames
+SELECT id, status FROM out_test WHERE id = 2
+----
+id  status
+2  1
+
+# ============================================================
+# DELETE ... OUTPUT deleted.*
+# ============================================================
+
+exec
+DELETE FROM out_test OUTPUT deleted.id, deleted.name WHERE id = 1
+----
+
+# Verify the row was deleted.
+query colnames
+SELECT id, name, status FROM out_test ORDER BY id
+----
+id  name  status
+2  bob  1
+
+# ============================================================
+# INSERT with OUTPUT and wildcard
+# ============================================================
+
+exec
+INSERT INTO out_test (id, name, status) OUTPUT inserted.* VALUES (3, 'carol', 0)
+----
+
+# Verify final state.
+query colnames
+SELECT id, name, status FROM out_test ORDER BY id
+----
+id  name  status
+2  bob  1
+3  carol  0
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE out_test
+----

@@ -1,0 +1,108 @@
+# Extended MERGE statement tests.
+#
+# MERGE INTO ... USING ... ON ... WHEN MATCHED / NOT MATCHED is translated
+# to INSERT ... ON CONFLICT ... DO UPDATE SET ... in CockroachDB.
+# This is a SQL Server 2008+ feature (not available in Sybase ASE).
+#
+# Sources:
+#   - SQL Server T-SQL reference: MERGE statement
+#   - go-mssqldb test patterns (BSD-3-Clause)
+
+# ============================================================
+# Setup: target and source tables
+# ============================================================
+
+exec
+CREATE TABLE merge_target (id INT NOT NULL, name VARCHAR(50), status INT)
+----
+
+exec
+ALTER TABLE merge_target ADD CONSTRAINT pk_merge_target PRIMARY KEY (id)
+----
+
+exec
+CREATE TABLE merge_source (id INT, name VARCHAR(50), status INT)
+----
+
+exec
+INSERT INTO merge_target (id, name, status) VALUES (1, 'existing_1', 0)
+----
+
+exec
+INSERT INTO merge_target (id, name, status) VALUES (2, 'existing_2', 0)
+----
+
+exec
+INSERT INTO merge_source (id, name, status) VALUES (2, 'updated_2', 1)
+----
+
+exec
+INSERT INTO merge_source (id, name, status) VALUES (3, 'new_3', 1)
+----
+
+exec
+INSERT INTO merge_source (id, name, status) VALUES (4, 'new_4', 1)
+----
+
+# ============================================================
+# MERGE with both WHEN MATCHED and WHEN NOT MATCHED
+# ============================================================
+
+# id=2 should be updated (matched), id=3,4 should be inserted (not matched).
+# id=1 should remain unchanged (not in source).
+exec
+MERGE INTO merge_target AS t USING merge_source AS s ON t.id = s.id WHEN MATCHED THEN UPDATE SET name = s.name, status = s.status WHEN NOT MATCHED THEN INSERT (id, name, status) VALUES (s.id, s.name, s.status)
+----
+
+query colnames
+SELECT id, name, status FROM merge_target ORDER BY id
+----
+id  name  status
+1  existing_1  0
+2  updated_2  1
+3  new_3  1
+4  new_4  1
+
+# ============================================================
+# MERGE — INSERT only (WHEN NOT MATCHED only)
+# ============================================================
+
+exec
+CREATE TABLE merge_ins_only (id INT NOT NULL, val VARCHAR(50))
+----
+
+exec
+ALTER TABLE merge_ins_only ADD CONSTRAINT pk_merge_ins PRIMARY KEY (id)
+----
+
+exec
+INSERT INTO merge_ins_only (id, val) VALUES (1, 'one')
+----
+
+# Source has id=1 (exists) and id=2 (new). Only id=2 should be inserted.
+exec
+MERGE INTO merge_ins_only AS t USING (SELECT 1 AS id, 'updated' AS val UNION ALL SELECT 2, 'two') AS s ON t.id = s.id WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val)
+----
+
+query colnames
+SELECT id, val FROM merge_ins_only ORDER BY id
+----
+id  val
+1  one
+2  two
+
+exec
+DROP TABLE merge_ins_only
+----
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE merge_source
+----
+
+exec
+DROP TABLE merge_target
+----
