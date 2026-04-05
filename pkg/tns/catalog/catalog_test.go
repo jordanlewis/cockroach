@@ -17,64 +17,23 @@ func newTestCatalog() *Catalog {
 func TestHandleDual(t *testing.T) {
 	c := newTestCatalog()
 
-	tests := []struct {
-		name       string
-		sql        string
-		wantResult bool // true = static result, false = rewrite
-		wantSQL    string
-		wantValue  string // for static result, first row first col
-	}{
-		{
-			name:       "select 1 from dual",
-			sql:        "SELECT 1 FROM DUAL",
-			wantResult: false,
-			wantSQL:    "SELECT 1",
-		},
-		{
-			name:       "select expression from dual",
-			sql:        "SELECT 1+1 FROM DUAL",
-			wantResult: false,
-			wantSQL:    "SELECT 1+1",
-		},
-		{
-			name:       "select string from dual",
-			sql:        "SELECT 'hello' FROM DUAL",
-			wantResult: false,
-			wantSQL:    "SELECT 'hello'",
-		},
-		{
-			name:       "case insensitive dual",
-			sql:        "select 42 from dual",
-			wantResult: false,
-			wantSQL:    "select 42",
-		},
-		{
-			name:       "trailing semicolon",
-			sql:        "SELECT 1 FROM DUAL;",
-			wantResult: false,
-			wantSQL:    "SELECT 1",
-		},
+	// General DUAL queries (no SYS_CONTEXT or USER keyword) should NOT be
+	// handled by the catalog. They fall through to the Oracle translator,
+	// which handles both FROM DUAL stripping and Oracle function mapping
+	// (LENGTHB, CEIL, etc.).
+	tests := []string{
+		"SELECT 1 FROM DUAL",
+		"SELECT 1+1 FROM DUAL",
+		"SELECT 'hello' FROM DUAL",
+		"select 42 from dual",
+		"SELECT 1 FROM DUAL;",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := c.Handle(tt.sql)
-			if !resp.Handled {
-				t.Fatalf("expected Handled=true")
-			}
-			if tt.wantResult {
-				if resp.Result == nil {
-					t.Fatalf("expected static Result")
-				}
-				if tt.wantValue != "" && resp.Result.Rows[0][0] != tt.wantValue {
-					t.Errorf("got value %q, want %q",
-						resp.Result.Rows[0][0], tt.wantValue)
-				}
-			} else {
-				if resp.RewriteSQL != tt.wantSQL {
-					t.Errorf("got RewriteSQL %q, want %q",
-						resp.RewriteSQL, tt.wantSQL)
-				}
+	for _, sql := range tests {
+		t.Run(sql, func(t *testing.T) {
+			resp := c.Handle(sql)
+			if resp.Handled {
+				t.Fatalf("expected Handled=false for general DUAL query")
 			}
 		})
 	}

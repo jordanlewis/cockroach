@@ -336,18 +336,26 @@ func (c *Catalog) handleDual(sql string) Response {
 		return c.handleSysContext(sql)
 	}
 
-	// General DUAL handling: strip FROM DUAL and rewrite Oracle-specific
-	// pseudo-columns. The result is valid CockroachDB SQL.
-	rewritten := fromDualRe.ReplaceAllString(sql, "")
-	rewritten = strings.TrimSpace(rewritten)
-
-	// Replace standalone USER keyword with current_user.
-	rewritten = replaceUserKeyword(rewritten)
-
-	return Response{
-		Handled:    true,
-		RewriteSQL: rewritten,
+	// Handle standalone USER keyword in DUAL queries. USER is an Oracle
+	// pseudo-column that the Oracle parser doesn't know about, so the
+	// catalog must rewrite it.
+	upper := strings.ToUpper(sql)
+	if userKeywordRe.MatchString(upper) && !strings.Contains(upper, "CURRENT_USER") {
+		rewritten := fromDualRe.ReplaceAllString(sql, "")
+		rewritten = strings.TrimSpace(rewritten)
+		rewritten = replaceUserKeyword(rewritten)
+		return Response{
+			Handled:    true,
+			RewriteSQL: rewritten,
+		}
 	}
+
+	// For all other DUAL queries, fall through to the normal Oracle
+	// translator. This ensures Oracle function names (LENGTHB, INSTR,
+	// NVL, DECODE, etc.) are properly mapped to their CockroachDB
+	// equivalents. The translator already strips DUAL from the FROM
+	// clause.
+	return Response{Handled: false}
 }
 
 // replaceUserKeyword replaces the Oracle USER pseudo-column with

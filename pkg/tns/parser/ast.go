@@ -39,15 +39,15 @@ type Expr interface {
 
 // SelectStmt represents a SELECT statement.
 type SelectStmt struct {
-	Distinct   bool
-	Columns    []SelectColumn
-	From       []TableExpr
-	Where      Expr
-	GroupBy    []Expr
-	Having     Expr
-	OrderBy    []OrderByItem
-	Limit      Expr   // for FETCH FIRST n ROWS ONLY or ROWNUM-based limits
-	ForUpdate  bool
+	Distinct  bool
+	Columns   []SelectColumn
+	From      []TableExpr
+	Where     Expr
+	GroupBy   []Expr
+	Having    Expr
+	OrderBy   []OrderByItem
+	Limit     Expr // for FETCH FIRST n ROWS ONLY or ROWNUM-based limits
+	ForUpdate bool
 }
 
 func (*SelectStmt) statementNode() {}
@@ -453,20 +453,20 @@ func (b *BinaryExpr) String() string {
 type BinaryOp string
 
 const (
-	OpAdd     BinaryOp = "+"
-	OpSub     BinaryOp = "-"
-	OpMul     BinaryOp = "*"
-	OpDiv     BinaryOp = "/"
-	OpEq      BinaryOp = "="
-	OpNeq     BinaryOp = "<>"
-	OpLt      BinaryOp = "<"
-	OpGt      BinaryOp = ">"
-	OpLte     BinaryOp = "<="
-	OpGte     BinaryOp = ">="
-	OpAnd     BinaryOp = "AND"
-	OpOr      BinaryOp = "OR"
-	OpLike    BinaryOp = "LIKE"
-	OpConcat  BinaryOp = "||"
+	OpAdd    BinaryOp = "+"
+	OpSub    BinaryOp = "-"
+	OpMul    BinaryOp = "*"
+	OpDiv    BinaryOp = "/"
+	OpEq     BinaryOp = "="
+	OpNeq    BinaryOp = "<>"
+	OpLt     BinaryOp = "<"
+	OpGt     BinaryOp = ">"
+	OpLte    BinaryOp = "<="
+	OpGte    BinaryOp = ">="
+	OpAnd    BinaryOp = "AND"
+	OpOr     BinaryOp = "OR"
+	OpLike   BinaryOp = "LIKE"
+	OpConcat BinaryOp = "||"
 )
 
 // UnaryExpr represents a unary operation.
@@ -508,11 +508,12 @@ func (e *IsNullExpr) String() string {
 	return fmt.Sprintf("(%s IS NULL)", e.Expr)
 }
 
-// InExpr represents expr [NOT] IN (values...).
+// InExpr represents expr [NOT] IN (values...) or expr [NOT] IN (subquery).
 type InExpr struct {
-	Expr   Expr
-	Values []Expr
-	Not    bool
+	Expr     Expr
+	Values   []Expr      // value list form
+	Subquery *SelectStmt // subquery form (mutually exclusive with Values)
+	Not      bool
 }
 
 func (*InExpr) exprNode() {}
@@ -525,11 +526,15 @@ func (e *InExpr) String() string {
 		b.WriteString(" NOT")
 	}
 	b.WriteString(" IN (")
-	for i, v := range e.Values {
-		if i > 0 {
-			b.WriteString(", ")
+	if e.Subquery != nil {
+		b.WriteString(e.Subquery.String())
+	} else {
+		for i, v := range e.Values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(v.String())
 		}
-		b.WriteString(v.String())
 	}
 	b.WriteString("))")
 	return b.String()
@@ -599,9 +604,9 @@ func (f *FuncCallExpr) String() string {
 
 // CaseExpr represents a CASE expression.
 type CaseExpr struct {
-	Operand Expr       // nil for searched CASE
+	Operand Expr // nil for searched CASE
 	Whens   []CaseWhen
-	Else    Expr       // nil if no ELSE
+	Else    Expr // nil if no ELSE
 }
 
 func (*CaseExpr) exprNode() {}

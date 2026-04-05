@@ -8,6 +8,7 @@ package tns
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/security/username"
@@ -387,6 +388,14 @@ func formatDatumForTNS(d tree.Datum) []byte {
 	if dd, ok := d.(*tree.DDecimal); ok {
 		dd.Decimal.Reduce(&dd.Decimal)
 		return []byte(dd.Decimal.Text('f'))
+	}
+	if df, ok := d.(*tree.DFloat); ok {
+		f := float64(*df)
+		// Format integer-valued floats without a decimal point to match
+		// Oracle's NUMBER display behavior (e.g. CEIL(5) → "5" not "5.0").
+		if f == math.Trunc(f) && !math.IsInf(f, 0) && !math.IsNaN(f) {
+			return []byte(fmt.Sprintf("%.0f", f))
+		}
 	}
 	return []byte(tree.AsStringWithFlags(d, tree.FmtExport))
 }
