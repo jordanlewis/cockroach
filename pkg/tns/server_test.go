@@ -9,8 +9,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"net"
+	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
@@ -160,15 +166,13 @@ func dialAndAuth(t *testing.T, addr string) net.Conn {
 	require.NoError(t, err)
 	require.Equal(t, tnswire.PacketTypeAccept, hdr.Type)
 
-	// 2. Protocol negotiation.
+	// 2. Protocol negotiation — client sends, server responds.
 	protoNeg := []byte{byte(auth.TTIProtocolNeg), 0x06, 0x00, 0x00, 0x00, 0x00}
 	writeDataPayload(t, conn, protoNeg)
-	readDataPayload(t, conn) // read server response
+	readDataPayload(t, conn) // read server's protocol neg response
 
-	// 3. Data type negotiation.
-	dtNeg := []byte{byte(auth.TTIDataTypeNeg), 0x00, 0x00}
-	writeDataPayload(t, conn, dtNeg)
-	readDataPayload(t, conn) // read server response
+	// 3. Data type negotiation — server sends proactively, client just reads.
+	readDataPayload(t, conn) // read server's data type neg
 
 	// 4. O5LOGON auth — send initial auth request.
 	authReq := buildAuthRequest("testuser")
@@ -382,6 +386,144 @@ func encodeKVPairs(pairs map[string]string) []byte {
 		off += len(v)
 	}
 	return buf
+}
+
+// TestTNSSqlplusConnect is a diagnostic test that traces the TNS handshake
+// with a real sqlplus client. It steps through each handshake phase, logging
+// every packet, to identify where the protocol diverges from what sqlplus
+// expects.
+func TestTNSSqlplusConnect(t *testing.T) {
+	if _, err := exec.LookPath("sqlplus"); err != nil {
+		t.Skip("sqlplus not found in PATH")
+	}
+
+	// Start a TNS server.
+	srv := tns.NewServer(tns.ServerConfig{
+		ListenAddr: ":0",
+		Insecure:   true,
+	})
+	ctx := context.Background()
+	require.NoError(t, srv.Start(ctx))
+	defer srv.Stop()
+
+	addr := srv.Addr().String()
+	_, port, _ := net.SplitHostPort(addr)
+
+	// Run sqlplus in a background goroutine with a timeout.
+	type sqlplusResult struct {
+		output []byte
+		err    error
+	}
+	resultCh := make(chan sqlplusResult, 1)
+	go func() {
+		connectStr := fmt.Sprintf("test/test@//localhost:%s/ORCL", port)
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "sqlplus", "-L", connectStr)
+		cmd.Stdin = strings.NewReader("SELECT 1 FROM DUAL;\nexit\n")
+		out, err := cmd.CombinedOutput()
+		resultCh <- sqlplusResult{output: out, err: err}
+	}()
+
+	// Wait for sqlplus to finish.
+	select {
+	case result := <-resultCh:
+		t.Logf("sqlplus output:\n%s", string(result.output))
+		if result.err != nil {
+			t.Logf("sqlplus error: %v", result.err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("sqlplus timed out — likely hanging during handshake")
+	}
+}
+
+// TestTNSSqlplusRawHandshake traces the full TNS handshake with sqlplus
+// by wrapping the connection with a logger that dumps every byte. This
+// shows exactly where the protocol diverges from what sqlplus expects.
+func TestTNSSqlplusRawHandshake(t *testing.T) {
+	if _, err := exec.LookPath("sqlplus"); err != nil {
+		t.Skip("sqlplus not found in PATH")
+	}
+
+	listener, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+
+	// Start sqlplus in background.
+	go func() {
+		connectStr := fmt.Sprintf("test/test@//localhost:%s/ORCL", port)
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "sqlplus", "-L", connectStr)
+		cmd.Stdin = strings.NewReader("exit\n")
+		out, cmdErr := cmd.CombinedOutput()
+		t.Logf("sqlplus output:\n%s", string(out))
+		if cmdErr != nil {
+			t.Logf("sqlplus error: %v", cmdErr)
+		}
+	}()
+
+	// Accept the connection with a timeout.
+	type acceptResult struct {
+		conn net.Conn
+		err  error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		c, acceptErr := listener.Accept()
+		acceptCh <- acceptResult{conn: c, err: acceptErr}
+	}()
+
+	var conn net.Conn
+	select {
+	case result := <-acceptCh:
+		require.NoError(t, result.err)
+		conn = result.conn
+	case <-time.After(10 * time.Second):
+		t.Fatal("no connection from sqlplus within 10s")
+	}
+	defer func() { _ = conn.Close() }()
+
+	require.NoError(t, conn.SetDeadline(time.Now().Add(15*time.Second)))
+
+	// Wrap with a logging ReadWriter.
+	lc := &loggingRW{rw: conn, t: t}
+
+	// Run the full handshake using auth.Handshaker.
+	h := &auth.Handshaker{
+		Conn: lc,
+	}
+	err = h.Handshake()
+	if err != nil {
+		t.Logf("Handshake error: %v", err)
+	} else {
+		t.Logf("Handshake succeeded! Username=%q", h.Username)
+	}
+}
+
+// loggingRW wraps an io.ReadWriter and logs every Read and Write call
+// with hex dumps.
+type loggingRW struct {
+	rw io.ReadWriter
+	t  *testing.T
+}
+
+func (l *loggingRW) Read(b []byte) (int, error) {
+	n, err := l.rw.Read(b)
+	if n > 0 {
+		l.t.Logf("← READ %d bytes:\n%s", n, hex.Dump(b[:n]))
+	}
+	if err != nil {
+		l.t.Logf("← READ error: %v", err)
+	}
+	return n, err
+}
+
+func (l *loggingRW) Write(b []byte) (int, error) {
+	l.t.Logf("→ WRITE %d bytes:\n%s", len(b), hex.Dump(b))
+	return l.rw.Write(b)
 }
 
 // decodeKVPairs decodes auth KV pairs from the O5LOGON protocol.
