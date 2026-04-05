@@ -315,6 +315,10 @@ func translateColumnDef(b *strings.Builder, col parser.ColumnDef) {
 		// CockroachDB, so we skip the explicit NULL for them.
 		b.WriteString(" NULL")
 	}
+
+	if col.PrimaryKey {
+		b.WriteString(" PRIMARY KEY")
+	}
 }
 
 // translateInsert converts a T-SQL INSERT INTO statement to CRDB syntax.

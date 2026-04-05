@@ -417,7 +417,7 @@ func (p *parser) parseCreateTable() (*CreateTableStmt, error) {
 
 // parseColumnDef parses a column definition:
 //
-//	<name> <type>[(<args>)] [IDENTITY(seed,incr)] [DEFAULT <expr>] [NULL | NOT NULL]
+//	<name> <type>[(<args>)] [IDENTITY(seed,incr)] [DEFAULT <expr>] [NULL | NOT NULL] [PRIMARY KEY]
 //	<name> AS <expr>  (computed column)
 func (p *parser) parseColumnDef() (ColumnDef, error) {
 	name, err := p.expectIdent()
@@ -492,6 +492,15 @@ func (p *parser) parseColumnDef() (ColumnDef, error) {
 		p.lex.next()
 		t := true
 		col.Nullable = &t
+	}
+
+	// Parse optional inline PRIMARY KEY constraint.
+	if p.lex.peek().typ == tokenPRIMARY {
+		p.lex.next() // consume PRIMARY
+		if err := p.expect(tokenKEY); err != nil {
+			return ColumnDef{}, err
+		}
+		col.PrimaryKey = true
 	}
 	return col, nil
 }

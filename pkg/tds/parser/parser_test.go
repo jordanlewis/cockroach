@@ -1647,6 +1647,43 @@ func TestParseIdentityWithNotNull(t *testing.T) {
 	}
 }
 
+func TestParseInlinePrimaryKey(t *testing.T) {
+	sql := `CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+	if !ct.Columns[0].PrimaryKey {
+		t.Error("expected first column to have PrimaryKey=true")
+	}
+	if ct.Columns[1].PrimaryKey {
+		t.Error("expected second column to have PrimaryKey=false")
+	}
+}
+
+func TestParseIdentityNotNullPrimaryKey(t *testing.T) {
+	sql := `CREATE TABLE t (id INT IDENTITY(1,1) NOT NULL PRIMARY KEY, data VARCHAR(50))`
+	batch, err := Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := batch.Stmts[0].(*CreateTableStmt)
+	col := ct.Columns[0]
+	if col.Identity == nil {
+		t.Fatal("expected IDENTITY")
+	}
+	if col.Nullable == nil || *col.Nullable != false {
+		t.Error("expected NOT NULL")
+	}
+	if !col.PrimaryKey {
+		t.Error("expected PrimaryKey=true")
+	}
+}
+
 func TestParseUnsignedTypes(t *testing.T) {
 	sql := `CREATE TABLE t (
 		a UNSIGNED INT NOT NULL,

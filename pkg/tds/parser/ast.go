@@ -58,6 +58,7 @@ type ColumnDef struct {
 	Identity     *IdentityDef // IDENTITY(seed, increment)
 	DefaultExpr  Expr         // DEFAULT <expr>
 	ComputedExpr Expr         // AS <expr> (computed column, no DataType)
+	PrimaryKey   bool         // inline PRIMARY KEY constraint
 }
 
 // IdentityDef represents the IDENTITY(seed, increment) clause on a column.
@@ -83,6 +84,9 @@ func (c *ColumnDef) String() string {
 		} else {
 			s += " NOT NULL"
 		}
+	}
+	if c.PrimaryKey {
+		s += " PRIMARY KEY"
 	}
 	return s
 }

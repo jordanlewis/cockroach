@@ -231,16 +231,14 @@ DROP TABLE gt_bit_type
 ----
 
 # ============================================================
-# Table with IDENTITY column
+# Table with IDENTITY column and inline PRIMARY KEY
 # Source: jTDS testColMetaData() — "numeric(10,0) identity primary key"
 # Source: thda/tds TestIdentity() — "int identity"
 # ============================================================
 
-# Note: IDENTITY(1,1) without explicit NOT NULL triggers a parser
-# conflict. Use NOT NULL explicitly.
 exec
 CREATE TABLE gt_identity_tbl (
-  id INT IDENTITY(1,1) NOT NULL,
+  id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
   data VARCHAR(50)
 )
 ----
@@ -313,6 +311,37 @@ SELECT COUNT(*) FROM gt_binary_types
 
 exec
 DROP TABLE gt_binary_types
+----
+
+# ============================================================
+# Inline PRIMARY KEY without IDENTITY
+# Source: jTDS Tds5Test — common "id int primary key" pattern
+# ============================================================
+
+exec
+CREATE TABLE gt_pk_only (
+  id INT NOT NULL PRIMARY KEY,
+  val VARCHAR(50)
+)
+----
+
+exec
+INSERT INTO gt_pk_only VALUES (1, 'first')
+----
+
+exec
+INSERT INTO gt_pk_only VALUES (2, 'second')
+----
+
+query colnames
+SELECT id, val FROM gt_pk_only ORDER BY id
+----
+id  val
+1  first
+2  second
+
+exec
+DROP TABLE gt_pk_only
 ----
 
 # ============================================================
