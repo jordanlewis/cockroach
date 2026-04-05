@@ -139,6 +139,14 @@ func (p *parser) parseStatement() (Statement, error) {
 		return p.parseRaiserror()
 	case tokenEXEC:
 		return p.parseExec()
+	case tokenOPEN:
+		return p.parseOpenCursor()
+	case tokenFETCH:
+		return p.parseFetchCursor()
+	case tokenCLOSE:
+		return p.parseCloseCursor()
+	case tokenDEALLOCATE:
+		return p.parseDeallocateCursor()
 	case tokenTHROW:
 		return p.parseThrow()
 	case tokenRETURN:
@@ -1128,17 +1136,24 @@ func (p *parser) parseBeginEndBody() (*BeginEndBlock, error) {
 
 // parseDeclare parses:
 //
-//	DECLARE @var TYPE [= expr]          (scalar variable)
-//	DECLARE @var TABLE (<column_defs>)  (table variable)
+//	DECLARE @var TYPE [= expr]                     (scalar variable)
+//	DECLARE @var TABLE (<column_defs>)             (table variable)
+//	DECLARE cursor_name CURSOR FOR select_stmt     (cursor)
 func (p *parser) parseDeclare() (Statement, error) {
 	p.lex.next() // consume DECLARE
 	name, err := p.expectIdent()
 	if err != nil {
 		return nil, err
 	}
+
+	// Cursor declaration: DECLARE name CURSOR FOR select_stmt.
+	// Cursor names are bare identifiers (no @ prefix).
 	if !strings.HasPrefix(name, "@") {
-		return nil, p.error(fmt.Sprintf(
-			"expected @variable name after DECLARE, got %q", name))
+		if p.lex.peek().typ != tokenCURSOR {
+			return nil, p.error(fmt.Sprintf(
+				"expected CURSOR after DECLARE %s (cursor names don't use @)", name))
+		}
+		return p.parseDeclareCursor(name)
 	}
 
 	// Table variable: DECLARE @t TABLE (columns...)
@@ -1181,6 +1196,86 @@ func (p *parser) parseDeclare() (Statement, error) {
 		stmt.Default = expr
 	}
 	return stmt, nil
+}
+
+// parseDeclareCursor parses the remainder of DECLARE name CURSOR FOR select_stmt.
+// The DECLARE token and cursor name have already been consumed.
+func (p *parser) parseDeclareCursor(name string) (Statement, error) {
+	p.lex.next() // consume CURSOR
+	if err := p.expect(tokenFOR); err != nil {
+		return nil, err
+	}
+	query, err := p.parseSelectOrCompound()
+	if err != nil {
+		return nil, err
+	}
+	return &DeclareCursorStmt{Name: name, Query: query}, nil
+}
+
+// parseOpenCursor parses: OPEN cursor_name
+func (p *parser) parseOpenCursor() (Statement, error) {
+	p.lex.next() // consume OPEN
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return &OpenCursorStmt{Name: name}, nil
+}
+
+// parseFetchCursor parses: FETCH NEXT FROM cursor_name [INTO @v1, @v2, ...]
+func (p *parser) parseFetchCursor() (Statement, error) {
+	p.lex.next() // consume FETCH
+	if err := p.expect(tokenNEXT); err != nil {
+		return nil, err
+	}
+	if err := p.expect(tokenFROM); err != nil {
+		return nil, err
+	}
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &FetchCursorStmt{Name: name}
+	// Optional INTO clause: INTO @var1, @var2, ...
+	if p.lex.peek().typ == tokenINTO {
+		p.lex.next() // consume INTO
+		for {
+			varName, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			if !strings.HasPrefix(varName, "@") {
+				return nil, p.error(fmt.Sprintf(
+					"expected @variable in FETCH INTO, got %q", varName))
+			}
+			stmt.Into = append(stmt.Into, varName)
+			if p.lex.peek().typ != tokenComma {
+				break
+			}
+			p.lex.next() // consume comma
+		}
+	}
+	return stmt, nil
+}
+
+// parseCloseCursor parses: CLOSE cursor_name
+func (p *parser) parseCloseCursor() (Statement, error) {
+	p.lex.next() // consume CLOSE
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return &CloseCursorStmt{Name: name}, nil
+}
+
+// parseDeallocateCursor parses: DEALLOCATE cursor_name
+func (p *parser) parseDeallocateCursor() (Statement, error) {
+	p.lex.next() // consume DEALLOCATE
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return &DeallocateCursorStmt{Name: name}, nil
 }
 
 // parseSetVar parses: SET @var = expr
@@ -2756,7 +2851,8 @@ func isKeywordToken(typ tokenType) bool {
 		tokenIDENTITY, tokenDEFAULT,
 		tokenCOMPUTE,
 		tokenDECLARE, tokenWHILE, tokenBREAK, tokenCONTINUE,
-		tokenPRINT:
+		tokenPRINT,
+		tokenCURSOR, tokenOPEN, tokenCLOSE, tokenDEALLOCATE:
 		return true
 	}
 	return false

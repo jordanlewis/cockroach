@@ -206,6 +206,16 @@ func Statement(stmt parser.Statement) (string, error) {
 		return "", nil
 	case *parser.BeginTryCatchStmt:
 		return "", nil
+	case *parser.DeclareCursorStmt:
+		return "", nil
+	case *parser.OpenCursorStmt:
+		return "", nil
+	case *parser.FetchCursorStmt:
+		return "", nil
+	case *parser.CloseCursorStmt:
+		return "", nil
+	case *parser.DeallocateCursorStmt:
+		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported statement type: %T", stmt)
 	}

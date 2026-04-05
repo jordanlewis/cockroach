@@ -192,6 +192,12 @@ const (
 	tokenUNPIVOT
 	tokenFOR
 
+	// Cursor keywords.
+	tokenCURSOR
+	tokenOPEN
+	tokenCLOSE
+	tokenDEALLOCATE
+
 	// WAITFOR sub-keyword.
 	tokenDELAY
 
@@ -342,6 +348,12 @@ var keywords = map[string]tokenType{
 	"PIVOT":   tokenPIVOT,
 	"UNPIVOT": tokenUNPIVOT,
 	"FOR":     tokenFOR,
+
+	// Cursor keywords.
+	"CURSOR":     tokenCURSOR,
+	"OPEN":       tokenOPEN,
+	"CLOSE":      tokenCLOSE,
+	"DEALLOCATE": tokenDEALLOCATE,
 
 	// WAITFOR sub-keyword.
 	"DELAY": tokenDELAY,

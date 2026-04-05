@@ -1,55 +1,200 @@
-# Cursor support coverage tests.
+# Cursor lifecycle tests.
 #
-# T-SQL cursors (DECLARE CURSOR, OPEN, FETCH NEXT, CLOSE, DEALLOCATE)
-# are not currently supported by the TDS frontend. These tests document
-# the expected errors so that future cursor implementation work has
-# clear test coverage to validate against.
+# T-SQL cursors: DECLARE CURSOR FOR, OPEN, FETCH NEXT FROM, CLOSE, DEALLOCATE.
+# Cursor state persists across batches on the same connection, so each
+# operation uses a separate exec or query directive.
 #
-# Cursor syntax reference (SQL Server / Sybase ASE):
-#   DECLARE cursor_name CURSOR FOR select_statement
-#   OPEN cursor_name
-#   FETCH NEXT FROM cursor_name [INTO @var1, @var2, ...]
-#   CLOSE cursor_name
-#   DEALLOCATE cursor_name
+# IMPORTANT: FETCH NEXT must use `query` (not `exec`) because the logictest
+# exec directive always returns empty string — only query returns rows.
 
 # ============================================================
-# DECLARE CURSOR — parse error (parser expects @variable)
+# Basic DECLARE CURSOR (parse only, no output)
 # ============================================================
 
-# The TDS parser requires DECLARE names to start with @, so bare
-# cursor names like "mycursor" fail at parse time.
-exec error=(parse error)
-DECLARE mycursor CURSOR FOR SELECT 1
+exec
+DECLARE c1 CURSOR FOR SELECT 1 AS val
 ----
 
 # ============================================================
-# OPEN — parse error (not a recognized statement)
+# Full cursor lifecycle: 3 rows
 # ============================================================
 
-exec error=(parse error)
-OPEN mycursor
+exec
+CREATE TABLE cursor_test (id INT NOT NULL, label VARCHAR(20) NOT NULL)
+----
+
+exec
+INSERT INTO cursor_test VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')
+----
+
+exec
+DECLARE cur1 CURSOR FOR SELECT id, label FROM cursor_test ORDER BY id
+----
+
+exec
+OPEN cur1
+----
+
+query
+FETCH NEXT FROM cur1
+----
+1  alpha
+
+query
+FETCH NEXT FROM cur1
+----
+2  beta
+
+query
+FETCH NEXT FROM cur1
+----
+3  gamma
+
+exec
+CLOSE cur1
+----
+
+exec
+DEALLOCATE cur1
 ----
 
 # ============================================================
-# FETCH NEXT — parse error (not a recognized statement)
+# Cursor with WHERE clause filtering
 # ============================================================
 
-exec error=(parse error)
-FETCH NEXT FROM mycursor
+exec
+DECLARE cur2 CURSOR FOR SELECT id, label FROM cursor_test WHERE id >= 2 ORDER BY id
+----
+
+exec
+OPEN cur2
+----
+
+query
+FETCH NEXT FROM cur2
+----
+2  beta
+
+query
+FETCH NEXT FROM cur2
+----
+3  gamma
+
+exec
+CLOSE cur2
+----
+
+exec
+DEALLOCATE cur2
 ----
 
 # ============================================================
-# CLOSE — parse error (not a recognized statement)
+# Single-row cursor
 # ============================================================
 
-exec error=(parse error)
-CLOSE mycursor
+exec
+DECLARE cur3 CURSOR FOR SELECT label FROM cursor_test WHERE id = 1
+----
+
+exec
+OPEN cur3
+----
+
+query
+FETCH NEXT FROM cur3
+----
+alpha
+
+exec
+CLOSE cur3
+----
+
+exec
+DEALLOCATE cur3
 ----
 
 # ============================================================
-# DEALLOCATE — parse error (not a recognized statement)
+# FETCH past end of result set (returns no rows)
 # ============================================================
 
-exec error=(parse error)
-DEALLOCATE mycursor
+exec
+DECLARE cur4 CURSOR FOR SELECT id FROM cursor_test WHERE id = 1
+----
+
+exec
+OPEN cur4
+----
+
+query
+FETCH NEXT FROM cur4
+----
+1
+
+# Second fetch — past end, no rows returned.
+query
+FETCH NEXT FROM cur4
+----
+
+exec
+CLOSE cur4
+----
+
+exec
+DEALLOCATE cur4
+----
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+exec
+DROP TABLE cursor_test
+----
+
+# ============================================================
+# ERROR CASES
+# ============================================================
+
+# --- OPEN a cursor that was never declared ---
+
+exec error=(not declared)
+OPEN no_such_cursor
+----
+
+# --- FETCH from a cursor that was never declared ---
+
+exec error=(not declared)
+FETCH NEXT FROM no_such_cursor
+----
+
+# --- CLOSE a cursor that was never declared ---
+
+exec error=(not declared)
+CLOSE no_such_cursor
+----
+
+# --- DEALLOCATE a cursor that was never declared ---
+
+exec error=(not declared)
+DEALLOCATE no_such_cursor
+----
+
+# --- FETCH from a declared but unopened cursor ---
+
+exec
+DECLARE cur_err CURSOR FOR SELECT 1
+----
+
+exec error=(not open)
+FETCH NEXT FROM cur_err
+----
+
+# --- CLOSE a declared but unopened cursor ---
+
+exec error=(not open)
+CLOSE cur_err
+----
+
+exec
+DEALLOCATE cur_err
 ----

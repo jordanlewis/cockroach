@@ -2179,6 +2179,31 @@ func TestParseControlFlow(t *testing.T) {
 			input:    "PRINT 'hello'",
 			stmtType: "*parser.PrintStmt",
 		},
+		{
+			name:     "declare cursor",
+			input:    "DECLARE mycur CURSOR FOR SELECT 1",
+			stmtType: "*parser.DeclareCursorStmt",
+		},
+		{
+			name:     "open cursor",
+			input:    "OPEN mycur",
+			stmtType: "*parser.OpenCursorStmt",
+		},
+		{
+			name:     "fetch next from cursor",
+			input:    "FETCH NEXT FROM mycur",
+			stmtType: "*parser.FetchCursorStmt",
+		},
+		{
+			name:     "close cursor",
+			input:    "CLOSE mycur",
+			stmtType: "*parser.CloseCursorStmt",
+		},
+		{
+			name:     "deallocate cursor",
+			input:    "DEALLOCATE mycur",
+			stmtType: "*parser.DeallocateCursorStmt",
+		},
 	}
 
 	for _, tc := range tests {
@@ -2231,6 +2256,16 @@ func stmtTypeName(s Statement) string {
 		return "ExecStmt"
 	case *SelectStmt:
 		return "SelectStmt"
+	case *DeclareCursorStmt:
+		return "DeclareCursorStmt"
+	case *OpenCursorStmt:
+		return "OpenCursorStmt"
+	case *FetchCursorStmt:
+		return "FetchCursorStmt"
+	case *CloseCursorStmt:
+		return "CloseCursorStmt"
+	case *DeallocateCursorStmt:
+		return "DeallocateCursorStmt"
 	default:
 		return "unknown"
 	}
@@ -2403,6 +2438,111 @@ func TestParseControlFlowDetails(t *testing.T) {
 		}
 	})
 
+	t.Run("declare_cursor_fields", func(t *testing.T) {
+		batch, err := Parse("DECLARE mycur CURSOR FOR SELECT id, name FROM users")
+		if err != nil {
+			t.Fatal(err)
+		}
+		dc := batch.Stmts[0].(*DeclareCursorStmt)
+		if dc.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", dc.Name)
+		}
+		if dc.Query == nil {
+			t.Fatal("expected non-nil Query")
+		}
+		if _, ok := dc.Query.(*SelectStmt); !ok {
+			t.Errorf("expected Query to be *SelectStmt, got %T", dc.Query)
+		}
+	})
+
+	t.Run("open_cursor_fields", func(t *testing.T) {
+		batch, err := Parse("OPEN mycur")
+		if err != nil {
+			t.Fatal(err)
+		}
+		oc := batch.Stmts[0].(*OpenCursorStmt)
+		if oc.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", oc.Name)
+		}
+	})
+
+	t.Run("fetch_cursor_fields", func(t *testing.T) {
+		batch, err := Parse("FETCH NEXT FROM mycur")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fc := batch.Stmts[0].(*FetchCursorStmt)
+		if fc.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", fc.Name)
+		}
+		if len(fc.Into) != 0 {
+			t.Errorf("expected no INTO vars, got %v", fc.Into)
+		}
+	})
+
+	t.Run("fetch_cursor_into", func(t *testing.T) {
+		batch, err := Parse("FETCH NEXT FROM mycur INTO @a, @b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fc := batch.Stmts[0].(*FetchCursorStmt)
+		if fc.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", fc.Name)
+		}
+		if len(fc.Into) != 2 || fc.Into[0] != "@a" || fc.Into[1] != "@b" {
+			t.Errorf("expected Into=[@a, @b], got %v", fc.Into)
+		}
+	})
+
+	t.Run("close_cursor_fields", func(t *testing.T) {
+		batch, err := Parse("CLOSE mycur")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cc := batch.Stmts[0].(*CloseCursorStmt)
+		if cc.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", cc.Name)
+		}
+	})
+
+	t.Run("deallocate_cursor_fields", func(t *testing.T) {
+		batch, err := Parse("DEALLOCATE mycur")
+		if err != nil {
+			t.Fatal(err)
+		}
+		dac := batch.Stmts[0].(*DeallocateCursorStmt)
+		if dac.Name != "mycur" {
+			t.Errorf("expected Name=mycur, got %s", dac.Name)
+		}
+	})
+
+	t.Run("cursor_lifecycle_batch", func(t *testing.T) {
+		sql := "DECLARE c1 CURSOR FOR SELECT 1; OPEN c1; " +
+			"FETCH NEXT FROM c1; CLOSE c1; DEALLOCATE c1"
+		batch, err := Parse(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(batch.Stmts) != 5 {
+			t.Fatalf("expected 5 statements, got %d", len(batch.Stmts))
+		}
+		if _, ok := batch.Stmts[0].(*DeclareCursorStmt); !ok {
+			t.Errorf("stmt 0: expected DeclareCursorStmt, got %T", batch.Stmts[0])
+		}
+		if _, ok := batch.Stmts[1].(*OpenCursorStmt); !ok {
+			t.Errorf("stmt 1: expected OpenCursorStmt, got %T", batch.Stmts[1])
+		}
+		if _, ok := batch.Stmts[2].(*FetchCursorStmt); !ok {
+			t.Errorf("stmt 2: expected FetchCursorStmt, got %T", batch.Stmts[2])
+		}
+		if _, ok := batch.Stmts[3].(*CloseCursorStmt); !ok {
+			t.Errorf("stmt 3: expected CloseCursorStmt, got %T", batch.Stmts[3])
+		}
+		if _, ok := batch.Stmts[4].(*DeallocateCursorStmt); !ok {
+			t.Errorf("stmt 4: expected DeallocateCursorStmt, got %T", batch.Stmts[4])
+		}
+	})
+
 	t.Run("nested_if_while", func(t *testing.T) {
 		sql := "WHILE 1 = 1 BEGIN IF 1 = 2 BREAK; CONTINUE END"
 		batch, err := Parse(sql)
@@ -2435,7 +2575,7 @@ func TestParseControlFlowErrors(t *testing.T) {
 		{
 			name:  "declare without @",
 			input: "DECLARE x INT",
-			want:  "expected @variable",
+			want:  "expected CURSOR",
 		},
 		{
 			name:  "set without @",
