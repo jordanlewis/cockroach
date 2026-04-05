@@ -245,14 +245,19 @@ carol  5500  12500
 dave  7000  12500
 eve  8000  8000
 
-# --- PIVOT (parsed but not yet translatable) ---
+# --- PIVOT ---
 
-query error=(unsupported: PIVOT)
-SELECT engineering, sales, marketing FROM (SELECT dept_id, salary FROM emp) src PIVOT (SUM(salary) FOR dept_id IN (10, 20, 30)) pvt
+query colnames
+SELECT [10], [20], [30] FROM (SELECT dept_id, salary FROM emp) src PIVOT (SUM(salary) FOR dept_id IN (10, 20, 30)) pvt
 ----
+10  20  30
+11000  12500  8000
 
-# --- UNPIVOT (parsed but not yet translatable) ---
+# --- UNPIVOT ---
 
-query error=(unsupported: UNPIVOT)
+query colnames
 SELECT dept, val FROM (SELECT 100 AS engineering, 200 AS sales) src UNPIVOT (val FOR dept IN (engineering, sales)) unpvt
 ----
+dept  val
+engineering  100
+sales  200

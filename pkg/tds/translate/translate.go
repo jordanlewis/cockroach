@@ -55,6 +55,8 @@
 //   - SYSDATETIME, GETUTCDATE, EOMONTH, ISDATE, NEWID
 //   - COUNT_BIG, STDEV/STDEVP, VAR/VARP, CHECKSUM_AGG
 //   - OBJECT_ID, DB_NAME, SCHEMA_NAME, USER_NAME, HOST_NAME, APP_NAME
+//   - PIVOT → conditional aggregation (SUM(CASE WHEN ... THEN ... END))
+//   - UNPIVOT → CROSS JOIN LATERAL with VALUES
 //   - CREATE PROCEDURE/FUNCTION/TRIGGER (parsed but rejected)
 //   - VARCHAR(MAX)/NVARCHAR(MAX)
 //   - DROP INDEX idx ON tbl syntax, PATINDEX, QUOTENAME
@@ -109,8 +111,11 @@ func Statement(stmt parser.Statement) (string, error) {
 	case *parser.InsertStmt:
 		return translateInsert(s)
 	case *parser.SelectStmt:
-		if err := checkUnsupportedTableOps(s.From); err != nil {
-			return "", err
+		if idx := findPivotRef(s.From); idx >= 0 {
+			return translateSelectWithPivot(s, idx), nil
+		}
+		if idx := findUnpivotRef(s.From); idx >= 0 {
+			return translateSelectWithUnpivot(s, idx), nil
 		}
 		if s.IntoTable != "" {
 			return translateSelectInto(s), nil
@@ -512,18 +517,172 @@ func TranslateComputeQueries(s *parser.SelectStmt) []string {
 	return queries
 }
 
-// checkUnsupportedTableOps checks if any table reference in the FROM clause
-// uses PIVOT or UNPIVOT, which are not yet translatable to CockroachDB SQL.
-func checkUnsupportedTableOps(refs []parser.TableRef) error {
-	for _, ref := range refs {
+// findPivotRef returns the index of the first FROM table reference that has a
+// PIVOT clause, or -1 if none.
+func findPivotRef(refs []parser.TableRef) int {
+	for i, ref := range refs {
 		if ref.Pivot != nil {
-			return fmt.Errorf("unsupported: PIVOT is not available in CockroachDB TDS")
-		}
-		if ref.Unpivot != nil {
-			return fmt.Errorf("unsupported: UNPIVOT is not available in CockroachDB TDS")
+			return i
 		}
 	}
-	return nil
+	return -1
+}
+
+// findUnpivotRef returns the index of the first FROM table reference that has
+// an UNPIVOT clause, or -1 if none.
+func findUnpivotRef(refs []parser.TableRef) int {
+	for i, ref := range refs {
+		if ref.Unpivot != nil {
+			return i
+		}
+	}
+	return -1
+}
+
+// translateSelectWithPivot translates a SELECT that uses a PIVOT table
+// operator. PIVOT is expanded into conditional aggregation:
+//
+//	SELECT ... FROM src PIVOT(SUM(salary) FOR dept_id IN (10, 20, 30)) pvt
+//	→ SELECT SUM(CASE WHEN dept_id = 10 THEN salary END) AS "10", ... FROM src
+//
+// [SQL Server] PIVOT is SQL Server 2005+. Sybase ASE does not support PIVOT.
+func translateSelectWithPivot(s *parser.SelectStmt, pivotIdx int) string {
+	ref := s.From[pivotIdx]
+	pivot := ref.Pivot
+
+	var b strings.Builder
+	b.WriteString("SELECT ")
+
+	aggFunc := strings.ToUpper(pivot.AggFunc)
+	forCol := quoteIdent(pivot.ForCol)
+	aggCol := translateExpr(pivot.AggCol)
+
+	for i, val := range pivot.InValues {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		valStr := translateExpr(val)
+		fmt.Fprintf(&b, "%s(CASE WHEN %s = %s THEN %s END) AS %s",
+			aggFunc, forCol, valStr, aggCol, quoteIdent(valStr))
+	}
+
+	// FROM: emit the PIVOT source (subquery or table name).
+	b.WriteString(" FROM ")
+	sourceRef := parser.TableRef{
+		Name:     ref.Name,
+		Subquery: ref.Subquery,
+	}
+	b.WriteString(translateTableRef(sourceRef))
+
+	if s.Where != nil {
+		fmt.Fprintf(&b, " WHERE %s", translateExpr(s.Where))
+	}
+	if len(s.OrderBy) > 0 {
+		b.WriteString(" ORDER BY ")
+		for i, ob := range s.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(ob.Expr))
+			if ob.Desc {
+				b.WriteString(" DESC")
+			} else {
+				b.WriteString(" ASC")
+			}
+		}
+	}
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Fetch)
+	} else if s.Top != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Top)
+	}
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+	}
+	return b.String()
+}
+
+// translateSelectWithUnpivot translates a SELECT that uses an UNPIVOT table
+// operator. UNPIVOT is expanded into CROSS JOIN LATERAL with VALUES:
+//
+//	SELECT val, dept FROM src UNPIVOT(val FOR dept IN (eng, sales)) u
+//	→ SELECT val, dept FROM src
+//	  CROSS JOIN LATERAL (VALUES (eng, 'eng'), (sales, 'sales'))
+//	  AS u(val, dept) WHERE u.val IS NOT NULL
+//
+// [SQL Server] UNPIVOT is SQL Server 2005+. Sybase ASE does not support UNPIVOT.
+func translateSelectWithUnpivot(s *parser.SelectStmt, unpivotIdx int) string {
+	ref := s.From[unpivotIdx]
+	unpivot := ref.Unpivot
+
+	var b strings.Builder
+	b.WriteString("SELECT ")
+
+	for i, col := range s.Columns {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(translateExpr(col.Expr))
+		if col.Alias != "" {
+			fmt.Fprintf(&b, " AS %s", quoteIdent(col.Alias))
+		}
+	}
+
+	// FROM: emit the source, then CROSS JOIN LATERAL VALUES.
+	b.WriteString(" FROM ")
+	sourceRef := parser.TableRef{
+		Name:     ref.Name,
+		Subquery: ref.Subquery,
+	}
+	b.WriteString(translateTableRef(sourceRef))
+
+	b.WriteString(" CROSS JOIN LATERAL (VALUES ")
+	for i, col := range unpivot.InCols {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "(%s, '%s')", quoteIdent(col), col)
+	}
+
+	alias := ref.Alias
+	if alias == "" {
+		alias = "_unpvt"
+	}
+	fmt.Fprintf(&b, ") AS %s(%s, %s)",
+		quoteIdent(alias),
+		quoteIdent(unpivot.ValueCol),
+		quoteIdent(unpivot.ForCol))
+
+	// UNPIVOT excludes NULL values by default.
+	fmt.Fprintf(&b, " WHERE %s.%s IS NOT NULL",
+		quoteIdent(alias), quoteIdent(unpivot.ValueCol))
+
+	if s.Where != nil {
+		fmt.Fprintf(&b, " AND %s", translateExpr(s.Where))
+	}
+	if len(s.OrderBy) > 0 {
+		b.WriteString(" ORDER BY ")
+		for i, ob := range s.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(translateExpr(ob.Expr))
+			if ob.Desc {
+				b.WriteString(" DESC")
+			} else {
+				b.WriteString(" ASC")
+			}
+		}
+	}
+	if s.Fetch != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Fetch)
+	} else if s.Top != nil {
+		fmt.Fprintf(&b, " LIMIT %d", *s.Top)
+	}
+	if s.Offset != nil {
+		fmt.Fprintf(&b, " OFFSET %d", *s.Offset)
+	}
+	return b.String()
 }
 
 // translateJoinClause converts a single JoinClause to CRDB SQL.

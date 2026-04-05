@@ -1411,6 +1411,77 @@ func TestTranslateComputeQueries(t *testing.T) {
 		queries[0])
 }
 
+func TestTranslatePivot(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name: "basic pivot",
+			input: "SELECT [10], [20], [30] FROM (SELECT dept_id, salary FROM emp) src " +
+				"PIVOT (SUM(salary) FOR dept_id IN (10, 20, 30)) pvt",
+			expected: `SELECT SUM(CASE WHEN dept_id = 10 THEN salary END) AS "10", ` +
+				`SUM(CASE WHEN dept_id = 20 THEN salary END) AS "20", ` +
+				`SUM(CASE WHEN dept_id = 30 THEN salary END) AS "30" ` +
+				`FROM (SELECT dept_id, salary FROM emp)`,
+		},
+		{
+			name: "pivot from table",
+			input: "SELECT [a], [b] FROM data " +
+				"PIVOT (COUNT(val) FOR category IN (a, b)) p",
+			expected: `SELECT COUNT(CASE WHEN category = a THEN val END) AS a, ` +
+				`COUNT(CASE WHEN category = b THEN val END) AS b ` +
+				`FROM data`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
+func TestTranslateUnpivot(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name: "basic unpivot",
+			input: "SELECT dept, val FROM (SELECT 100 AS engineering, 200 AS sales) src " +
+				"UNPIVOT (val FOR dept IN (engineering, sales)) unpvt",
+			expected: `SELECT dept, val FROM (SELECT 100 AS engineering, 200 AS sales) ` +
+				`CROSS JOIN LATERAL (VALUES (engineering, 'engineering'), (sales, 'sales')) ` +
+				`AS unpvt(val, dept) WHERE unpvt.val IS NOT NULL`,
+		},
+		{
+			name: "unpivot from table",
+			input: "SELECT label, value FROM scores " +
+				"UNPIVOT (value FOR label IN (math, science, english)) u",
+			expected: `SELECT label, value FROM scores ` +
+				`CROSS JOIN LATERAL (VALUES (math, 'math'), (science, 'science'), (english, 'english')) ` +
+				`AS u(value, label) WHERE u.value IS NOT NULL`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+			results, err := Batch(batch)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tt.expected, results[0])
+		})
+	}
+}
+
 func TestTranslateExecUnsupported(t *testing.T) {
 	tests := []struct {
 		name  string
