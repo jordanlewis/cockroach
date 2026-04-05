@@ -629,6 +629,11 @@ func TestTranslateFunctionMappings(t *testing.T) {
 			expected: "SELECT length('hello')",
 		},
 		{
+			name:     "DATALENGTH",
+			input:    "SELECT DATALENGTH('hello')",
+			expected: "SELECT octet_length('hello')",
+		},
+		{
 			name:     "CHARINDEX",
 			input:    "SELECT CHARINDEX('world', 'hello world')",
 			expected: "SELECT strpos('hello world', 'world')",

@@ -28,6 +28,12 @@ SELECT LEN('hello')
 ----
 5
 
+# DATALENGTH — returns byte count of the expression → octet_length().
+query
+SELECT DATALENGTH('hello')
+----
+5
+
 # CHARINDEX — T-SQL string search function.
 # CHARINDEX(substr, str) → strpos(str, substr) (args swapped).
 query

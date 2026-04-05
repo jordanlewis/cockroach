@@ -1133,6 +1133,12 @@ func translateFuncCall(e *parser.FuncCallExpr) string {
 		args := translateArgs(e.Args)
 		return fmt.Sprintf("length(%s)", strings.Join(args, ", "))
 
+	case "DATALENGTH":
+		// [Both] DATALENGTH(expr) → octet_length(expr)
+		// Returns the number of bytes used to represent the expression.
+		args := translateArgs(e.Args)
+		return fmt.Sprintf("octet_length(%s)", strings.Join(args, ", "))
+
 	case "CHARINDEX":
 		// [Both] CHARINDEX(substr, str) → strpos(str, substr)
 		// Note: argument order is swapped.
