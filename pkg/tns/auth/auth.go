@@ -157,9 +157,10 @@ type Handshaker struct {
 //  1. CONNECT/ACCEPT packet exchange
 //  2. Native Services Negotiation (NSN/ANO) — optional, used by sqlplus
 //  3. Protocol negotiation (client sends, server responds)
-//  4. Data type negotiation (client sends, server responds)
-//  5. O5LOGON challenge-response authentication
-//  6. NLS parameter exchange
+//  4. Data type negotiation (server sends proactively)
+//  5. MARKER drain (sqlplus sends reset MARKERs after DTY)
+//  6. O5LOGON challenge-response authentication
+//  7. NLS parameter exchange
 //
 // On success, it populates h.ConnectData and h.Username and returns nil.
 func (h *Handshaker) Handshake() error {
@@ -172,8 +173,16 @@ func (h *Handshaker) Handshake() error {
 	if err := h.handleProtocolNeg(); err != nil {
 		return errors.Wrap(err, "protocol negotiation")
 	}
-	if err := h.handleDataTypeNeg(); err != nil {
+	// In the TTC protocol, the server sends data type negotiation
+	// proactively after protocol negotiation — the client does not
+	// request it.
+	if err := h.sendDataTypeNeg(); err != nil {
 		return errors.Wrap(err, "data type negotiation")
+	}
+	// sqlplus sends MARKER (reset) packets after DTY before starting
+	// auth. Drain them so handleAuth sees the first DATA packet.
+	if err := h.drainMarkers(); err != nil {
+		return errors.Wrap(err, "post-DTY marker drain")
 	}
 	if err := h.handleAuth(); err != nil {
 		return errors.Wrap(err, "authentication")
@@ -257,27 +266,51 @@ func (h *Handshaker) handleProtocolNeg() error {
 	return h.writeDataPayload(resp)
 }
 
-// handleDataTypeNeg reads the client's data type negotiation request
-// and sends the server's DTY response. In the TTC protocol, the client
-// sends DTY after protocol negotiation, and the server responds.
-func (h *Handshaker) handleDataTypeNeg() error {
-	ttiPayload, err := h.readDataPayload()
-	if err != nil {
-		return err
-	}
-	if len(ttiPayload) < 1 {
-		return errors.New("empty data type negotiation payload")
-	}
-	funcCode := tnswire.TTIFuncCode(ttiPayload[0])
-	if funcCode != TTIDataTypeNeg {
-		return errors.Newf(
-			"expected data type negotiation (0x%02x), got 0x%02x",
-			byte(TTIDataTypeNeg), byte(funcCode),
-		)
-	}
-
+// sendDataTypeNeg sends the server's data type negotiation to the client.
+// In the TTC protocol, the server sends this proactively after protocol
+// negotiation — the client does not send a separate request for it.
+func (h *Handshaker) sendDataTypeNeg() error {
 	resp := BuildServerDTY()
 	return h.writeDataPayload(resp)
+}
+
+// drainMarkers reads packets until it gets a DATA packet, responding to
+// any MARKER (reset) packets along the way. sqlplus 19c sends MARKER
+// packets after receiving DTY before starting authentication. The first
+// DATA packet is saved as pendingPayload for the next readDataPayload
+// call.
+func (h *Handshaker) drainMarkers() error {
+	const maxMarkers = 5
+	for i := 0; i < maxMarkers; i++ {
+		hdr, payload, err := tnswire.ReadPacket(h.Conn)
+		if err != nil {
+			return err
+		}
+		if hdr.Type == tnswire.PacketTypeData {
+			dataPkt, err := tnswire.DecodeData(payload)
+			if err != nil {
+				return err
+			}
+			h.pendingPayload = dataPkt.Payload
+			return nil
+		}
+		if hdr.Type == tnswire.PacketTypeMarker {
+			markerResp := tnswire.EncodeMarker(tnswire.MarkerPacket{
+				Type: tnswire.MarkerType(payload[0]),
+				Data: 0x00,
+			})
+			if err := tnswire.WritePacket(
+				h.Conn, tnswire.PacketTypeMarker, markerResp,
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		return errors.Newf(
+			"expected DATA or MARKER packet, got %s", hdr.Type,
+		)
+	}
+	return errors.New("too many MARKER packets from client")
 }
 
 // handleAuth performs the O5LOGON challenge-response authentication. The
@@ -287,8 +320,10 @@ func (h *Handshaker) handleDataTypeNeg() error {
 //  3. Client sends encrypted password response
 //  4. Server decrypts and verifies the password
 func (h *Handshaker) handleAuth() error {
-	// Step 1: Read client's initial auth request.
-	ttiPayload, err := h.readDataPayload()
+	// Step 1: Read client's initial auth request. Use
+	// readDataPayloadOrPending because drainMarkers may have already
+	// read the first DATA packet and stashed it.
+	ttiPayload, err := h.readDataPayloadOrPending()
 	if err != nil {
 		return err
 	}
