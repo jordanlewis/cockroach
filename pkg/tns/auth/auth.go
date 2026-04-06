@@ -238,7 +238,9 @@ func (h *Handshaker) handleConnect() error {
 //
 // The client sends: func_code(1) + version(1) + compat(1) + flags(1) +
 // platform_banner(null-terminated). The server responds with the same
-// structure including a server platform banner.
+// structure plus character set, FDO capability data, and compile-time
+// and runtime capability arrays. The capability arrays are required by
+// sqlplus 19c (ORA-28547 without them).
 func (h *Handshaker) handleProtocolNeg() error {
 	ttiPayload, err := h.readDataPayloadOrPending()
 	if err != nil {
@@ -255,19 +257,7 @@ func (h *Handshaker) handleProtocolNeg() error {
 		)
 	}
 
-	// Respond with protocol version, compatibility flag, and a server
-	// platform banner (null-terminated) matching the format that Oracle
-	// clients like sqlplus expect.
-	serverBanner := "x86_64/Linux 2.4.xx\x00"
-	resp := make([]byte, 0, 4+len(serverBanner)+2)
-	resp = append(resp,
-		byte(TTIProtocolNeg),
-		0x06, // protocol version
-		0x00, // compatibility/options
-		0x00, // flags
-	)
-	resp = append(resp, serverBanner...)
-	resp = append(resp, byte(charsetID>>8), byte(charsetID&0xFF))
+	resp := BuildServerProtoNegResponse()
 	return h.writeDataPayload(resp)
 }
 
@@ -276,7 +266,7 @@ func (h *Handshaker) handleProtocolNeg() error {
 // negotiation — the client does not send a separate request for it. This
 // is required for sqlplus compatibility.
 func (h *Handshaker) sendDataTypeNeg() error {
-	resp := encodeDataTypeNegResponse()
+	resp := BuildServerDTY()
 	return h.writeDataPayload(resp)
 }
 
@@ -442,26 +432,6 @@ func (h *Handshaker) writeDataPayload(ttiPayload []byte) error {
 	return tnswire.WritePacket(h.Conn, tnswire.PacketTypeData, dataPayload)
 }
 
-// encodeDataTypeNegResponse builds the server's data type negotiation response.
-// It advertises AL32UTF8 (charset ID 873) and the standard Oracle data types.
-func encodeDataTypeNegResponse() []byte {
-	// The response starts with the function code, then encodes the server's
-	// character set and a list of supported data type representations.
-	buf := make([]byte, 0, 64)
-	buf = append(buf, byte(TTIDataTypeNeg))
-
-	// Character set: AL32UTF8 (873).
-	buf = append(buf, byte(charsetID>>8), byte(charsetID&0xFF))
-
-	// Server flags and capabilities (simplified).
-	buf = append(buf,
-		0x01,       // server charset form (1 = implicit)
-		0x01,       // compiletime charset form
-		0x00, 0x01, // ncharset ID (AL16UTF16 = 2000, but simplified)
-	)
-	return buf
-}
-
 // BuildServerProtoNegResponse builds the complete server protocol negotiation
 // response including the capability arrays. This is sent to the client as
 // func code 0x01 with embedded charset and capability data.
@@ -471,7 +441,8 @@ func BuildServerProtoNegResponse() []byte {
 	resp = append(resp,
 		byte(TTIProtocolNeg),
 		0x06, // TTC protocol version 6
-		0x00, // skipped/compat byte
+		0x00, // compat byte
+		0x00, // flags
 	)
 	resp = append(resp, serverBanner...)
 
