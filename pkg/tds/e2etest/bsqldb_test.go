@@ -48,24 +48,6 @@ func TestBsqldbE2E(t *testing.T) {
 	bsqldbEnv := []string{"FREETDS_CONF=" + confPath}
 	bsqldbArgs := []string{"-S", "testserver", "-U", "root", "-P", "", "-D", "defaultdb"}
 
-	// Verify bsqldb can connect to the test server. If it can't resolve the
-	// server name from freetds.conf or connect, skip rather than fail —
-	// this mirrors how TestPymssqlE2E skips when pymssql isn't importable.
-	probeOut, probeErr := runExternalTool(t, bsqldbPath,
-		bsqldbArgs, "SELECT 1\ngo\n", bsqldbEnv, 15*time.Second)
-	if probeErr != nil {
-		if strings.Contains(probeOut, "server name not found") ||
-			strings.Contains(probeOut, "connection refused") ||
-			strings.Contains(probeOut, "could not connect") ||
-			strings.Contains(probeOut, "Unable to connect") ||
-			strings.Contains(probeOut, "Login failed") {
-			t.Skipf("bsqldb cannot connect to test server: %v\noutput: %s", probeErr, probeOut)
-		}
-		// For other errors (e.g. SQL errors), log and continue — the
-		// connection itself may be fine.
-		t.Logf("bsqldb probe returned error (continuing): %v\noutput: %s", probeErr, probeOut)
-	}
-
 	runBsqldb := func(t *testing.T, script string) string {
 		t.Helper()
 		out, err := runExternalTool(t, bsqldbPath,
