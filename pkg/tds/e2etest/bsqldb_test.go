@@ -45,7 +45,7 @@ func TestBsqldbE2E(t *testing.T) {
 
 	confPath := writeFreeTDSConf(t, env.host, env.port)
 
-	bsqldbEnv := []string{"FREETDS_CONF=" + confPath}
+	bsqldbEnv := []string{"FREETDSCONF=" + confPath}
 	bsqldbArgs := []string{"-S", "testserver", "-U", "root", "-P", "", "-D", "defaultdb"}
 
 	runBsqldb := func(t *testing.T, script string) string {
