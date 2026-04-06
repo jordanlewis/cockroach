@@ -79,3 +79,10 @@ CLAUDE.local.md
 .claude/commands/
 .beads/
 .runtime/
+
+# Gas Town (added by gt)
+.claude/
+.logs/
+__pycache__/
+state.json
+CLAUDE.md
