@@ -89,7 +89,6 @@ func newRunner(t *testing.T, addr string) *testRunner {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	require.NoError(t, err)
-	require.NoError(t, conn.SetDeadline(time.Now().Add(60*time.Second)))
 
 	// 1. CONNECT
 	connectPayload := tnswire.EncodeConnect(tnswire.ConnectPacket{
@@ -101,8 +100,10 @@ func newRunner(t *testing.T, addr string) *testRunner {
 		ConnectData: "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)" +
 			"(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=ORCL)))",
 	})
+	require.NoError(t, conn.SetWriteDeadline(time.Now().Add(perOpTimeout)))
 	require.NoError(t, tnswire.WritePacket(conn, tnswire.PacketTypeConnect, connectPayload))
 
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(perOpTimeout)))
 	hdr, _, err := tnswire.ReadPacket(conn)
 	require.NoError(t, err)
 	require.Equal(t, tnswire.PacketTypeAccept, hdr.Type)
@@ -112,9 +113,8 @@ func newRunner(t *testing.T, addr string) *testRunner {
 	writeDataPayload(t, conn, protoNeg)
 	readDataPayload(t, conn)
 
-	// 3. Data type negotiation.
-	dtNeg := []byte{byte(auth.TTIDataTypeNeg), 0x00, 0x00}
-	writeDataPayload(t, conn, dtNeg)
+	// 3. Data type negotiation — the server sends DTY proactively
+	// after protocol negotiation (no client request needed).
 	readDataPayload(t, conn)
 
 	// 4. O5LOGON auth.
@@ -311,8 +311,15 @@ func extractError(t *testing.T, payload []byte) string {
 
 // --- Wire protocol helpers ---
 
+// perOpTimeout is the deadline applied to each individual read or write
+// on the TNS test connection. Unlike a single connection-wide deadline,
+// this resets before every operation so that long-running test files
+// (many queries) don't hit a cumulative timeout.
+const perOpTimeout = 30 * time.Second
+
 func writeDataPayload(t *testing.T, conn net.Conn, ttiPayload []byte) {
 	t.Helper()
+	require.NoError(t, conn.SetWriteDeadline(time.Now().Add(perOpTimeout)))
 	dataPayload := tnswire.EncodeData(tnswire.DataPacket{
 		Flags:   0,
 		Payload: ttiPayload,
@@ -322,6 +329,7 @@ func writeDataPayload(t *testing.T, conn net.Conn, ttiPayload []byte) {
 
 func readDataPayload(t *testing.T, conn net.Conn) []byte {
 	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(perOpTimeout)))
 	hdr, payload, err := tnswire.ReadPacket(conn)
 	require.NoError(t, err)
 	require.Equal(t, tnswire.PacketTypeData, hdr.Type)
