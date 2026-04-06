@@ -173,22 +173,10 @@ func handleNSN(conn net.Conn, payload []byte) error {
 	}
 	fmt.Printf("  NSN: %d service groups\n", numServices)
 
-	// Build server NSN response: DEADBEEF + minimal "accept no services" response.
-	// The response echoes the service count but selects index 0 (none) for each.
-	//
-	// Format: DEADBEEF <len:2> <version:2> <options:2> <num_services:2>
-	// For each service: <service_type:2> <selected_index:2>
-	//
-	// This tells the client we don't support encryption, data integrity, etc.
-	resp := make([]byte, 0, 64)
-	resp = append(resp, 0xDE, 0xAD, 0xBE, 0xEF)
-
-	// NSN response body: version + options + num_services = 6 bytes.
-	bodyLen := 6
-	resp = append(resp, byte(bodyLen>>8), byte(bodyLen))
-	resp = append(resp, 0x00, 0x00) // version
-	resp = append(resp, 0x00, 0x00) // options
-	resp = append(resp, 0x00, 0x00) // num services = 0 (reject all)
+	// Use the auth package's BuildNSNResponse which constructs a full
+	// response with 4 services (supervisor, auth, encryption, data
+	// integrity) declining all optional services.
+	resp := auth.BuildNSNResponse(numServices)
 
 	fmt.Printf("  -> Sending NSN response (%d bytes)\n", len(resp))
 	fmt.Println(hex.Dump(resp))
@@ -287,7 +275,7 @@ func sendAuthChallenge(conn net.Conn) error {
 
 	kvPairs := map[string]string{
 		"AUTH_SESSKEY":              hex.EncodeToString(sessKey),
-		"AUTH_VFR_DATA":            hex.EncodeToString(salt),
+		"AUTH_VFR_DATA":             hex.EncodeToString(salt),
 		"AUTH_GLOBALLY_UNIQUE_DBID": "CockroachDB",
 	}
 	challengePayload := append(

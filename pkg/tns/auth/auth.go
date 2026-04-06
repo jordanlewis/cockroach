@@ -157,7 +157,7 @@ type Handshaker struct {
 //  1. CONNECT/ACCEPT packet exchange
 //  2. Native Services Negotiation (NSN/ANO) — optional, used by sqlplus
 //  3. Protocol negotiation (client sends, server responds)
-//  4. Data type negotiation (server sends proactively)
+//  4. Data type negotiation (client sends, server responds)
 //  5. O5LOGON challenge-response authentication
 //  6. NLS parameter exchange
 //
@@ -172,11 +172,7 @@ func (h *Handshaker) Handshake() error {
 	if err := h.handleProtocolNeg(); err != nil {
 		return errors.Wrap(err, "protocol negotiation")
 	}
-	// In the TTC protocol, the server sends data type negotiation
-	// proactively after protocol negotiation — the client does not
-	// request it. This matches the behavior of real Oracle servers
-	// and is required for sqlplus compatibility.
-	if err := h.sendDataTypeNeg(); err != nil {
+	if err := h.handleDataTypeNeg(); err != nil {
 		return errors.Wrap(err, "data type negotiation")
 	}
 	if err := h.handleAuth(); err != nil {
@@ -261,11 +257,25 @@ func (h *Handshaker) handleProtocolNeg() error {
 	return h.writeDataPayload(resp)
 }
 
-// sendDataTypeNeg sends the server's data type negotiation to the client.
-// In the TTC protocol, the server sends this proactively after protocol
-// negotiation — the client does not send a separate request for it. This
-// is required for sqlplus compatibility.
-func (h *Handshaker) sendDataTypeNeg() error {
+// handleDataTypeNeg reads the client's data type negotiation request
+// and sends the server's DTY response. In the TTC protocol, the client
+// sends DTY after protocol negotiation, and the server responds.
+func (h *Handshaker) handleDataTypeNeg() error {
+	ttiPayload, err := h.readDataPayload()
+	if err != nil {
+		return err
+	}
+	if len(ttiPayload) < 1 {
+		return errors.New("empty data type negotiation payload")
+	}
+	funcCode := tnswire.TTIFuncCode(ttiPayload[0])
+	if funcCode != TTIDataTypeNeg {
+		return errors.Newf(
+			"expected data type negotiation (0x%02x), got 0x%02x",
+			byte(TTIDataTypeNeg), byte(funcCode),
+		)
+	}
+
 	resp := BuildServerDTY()
 	return h.writeDataPayload(resp)
 }

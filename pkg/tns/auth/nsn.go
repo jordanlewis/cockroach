@@ -43,6 +43,10 @@ const (
 	nsnTLVStatus  = 6 // 2-byte status code
 )
 
+// nsnHeaderSize is the size of the NSN header: DEADBEEF(4) +
+// totalLen(2) + version(4) + serviceCount(2) + flags(1) = 13 bytes.
+const nsnHeaderSize = 13
+
 // nsnSupervisorStatusOK is the status value the supervisor service
 // must return for the client to accept the negotiation.
 const nsnSupervisorStatusOK = 31
@@ -73,8 +77,9 @@ func (h *Handshaker) handleNSN() error {
 		return nil
 	}
 
-	// Parse NSN header: DEADBEEF(4) + length(2) + version(4) + count(2) + flags(1) = 13 bytes.
-	if len(ttiPayload) < 13 {
+	// Parse NSN header: DEADBEEF(4) + totalLen(2) + version(4) +
+	// serviceCount(2) + flags(1) = 13 bytes.
+	if len(ttiPayload) < nsnHeaderSize {
 		return errors.Newf("NSN packet too short: %d bytes", len(ttiPayload))
 	}
 	serviceCount := int(binary.BigEndian.Uint16(ttiPayload[10:12]))
@@ -99,23 +104,30 @@ func BuildNSNResponse(clientServiceCount int) []byte {
 	//   8-byte service header (type:2 + sub-count:2 + error:4)
 	//   + service-specific TLV data
 	//
-	// Supervisor (type 4):   8 + version(8) + status(6) + UB2Array(22) = 44
-	// Auth (type 1):         8 + version(8) + status(6)                = 22
-	// Encryption (type 2):   8 + version(8) + algoID(5)                = 21
-	// Data integrity (type 3): 8 + version(8) + algoID(5)              = 21
+	// Supervisor (type 4):     8 + version(8) + status(6) + UB2Array(22) = 44
+	// Auth (type 1):           8 + version(8) + status(6)                = 22
+	// Encryption (type 2):     8 + version(8) + algoID(5)                = 21
+	// Data integrity (type 3): 8 + version(8) + algoID(5)                = 21
 	//
 	// Total services = 44 + 22 + 21 + 21 = 108
+	//
+	// Header: DEADBEEF(4) + totalLen(2) + version(4) + serviceCount(2)
+	//         + flags(1) = 13 bytes
 	// Total = 13 (header) + 108 (services) = 121
+	//
+	// The length field is the total NSN packet size. Confirmed by
+	// observing sqlplus 19.8 sending 0x0095 = 149 for a 149-byte
+	// payload, with services starting at offset 13.
 	const totalLen = 121
 
 	buf := make([]byte, 0, totalLen)
 
-	// ANO header.
+	// NSN header.
 	buf = append(buf, nsnMagic[:]...)
-	buf = appendUint16(buf, totalLen)    // total length
-	buf = appendUint32(buf, 0)           // version
+	buf = appendUint16(buf, totalLen)    // total packet length
+	buf = appendUint32(buf, 0)           // ANO version
 	buf = appendUint16(buf, numServices) // service count
-	buf = append(buf, 0x00)              // error flags
+	buf = append(buf, 0x00)              // flags
 
 	// Service 1: Supervisor (type 4).
 	buf = appendServiceHeader(buf, nsnServiceSupervisor, 3)

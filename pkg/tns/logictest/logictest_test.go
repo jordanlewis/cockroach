@@ -113,9 +113,10 @@ func newRunner(t *testing.T, addr string) *testRunner {
 	writeDataPayload(t, conn, protoNeg)
 	readDataPayload(t, conn)
 
-	// 3. Data type negotiation — the server sends DTY proactively
-	// after protocol negotiation (no client request needed).
-	readDataPayload(t, conn)
+	// 3. Data type negotiation — client sends, server responds.
+	clientDTY := []byte{byte(auth.TTIDataTypeNeg), 0x00}
+	writeDataPayload(t, conn, clientDTY)
+	readDataPayload(t, conn) // read server's data type neg response
 
 	// 4. O5LOGON auth.
 	authReq := buildAuthRequest("testuser")

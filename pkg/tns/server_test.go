@@ -171,8 +171,10 @@ func dialAndAuth(t *testing.T, addr string) net.Conn {
 	writeDataPayload(t, conn, protoNeg)
 	readDataPayload(t, conn) // read server's protocol neg response
 
-	// 3. Data type negotiation — server sends proactively, client just reads.
-	readDataPayload(t, conn) // read server's data type neg
+	// 3. Data type negotiation — client sends, server responds.
+	clientDTY := []byte{byte(auth.TTIDataTypeNeg), 0x00}
+	writeDataPayload(t, conn, clientDTY)
+	readDataPayload(t, conn) // read server's data type neg response
 
 	// 4. O5LOGON auth — send initial auth request.
 	authReq := buildAuthRequest("testuser")
@@ -655,12 +657,19 @@ func TestTNSSqlplusDiagnostic(t *testing.T) {
 	writeDataPayloadRaw(t, conn, protoResp)
 	t.Logf("Sent proto neg response (%d bytes):\n%s", len(protoResp), hex.Dump(protoResp))
 
-	// Send full DTY after proto neg.
+	// Phase 3b: Read client's DTY, then send server DTY response.
+	hdr, payload, err = tnswire.ReadPacket(conn)
+	require.NoError(t, err)
+	require.Equal(t, tnswire.PacketTypeData, hdr.Type)
+	dataPkt, err = tnswire.DecodeData(payload)
+	require.NoError(t, err)
+	t.Logf("Client DTY payload (%d bytes):\n%s", len(dataPkt.Payload), hex.Dump(dataPkt.Payload))
+
 	dtyResp := auth.BuildServerDTY()
 	writeDataPayloadRaw(t, conn, dtyResp)
 	t.Logf("Sent DTY response (%d bytes):\n%s", len(dtyResp), hex.Dump(dtyResp))
 
-	// Phase 4: Read client's next message, handle MARKER with reset.
+	// Phase 4: Read client's next message (should be auth request).
 	for attempt := 0; attempt < 3; attempt++ {
 		t.Logf("Waiting for client's next message (attempt %d)...", attempt)
 		hdr, payload, err = tnswire.ReadPacket(conn)
